@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package shopa.points.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/points-svc/api/v1;pointsv1";
+
+service PointsService {
+  // 注册事件消费后初始化积分账户（幂等）。
+  rpc InitPointsAccountIfAbsent(InitPointsAccountIfAbsentReq) returns (InitPointsAccountIfAbsentRes);
+  // 根据用户 ID 查询积分余额。
+  rpc GetPointsByUserId(GetPointsByUserIdReq) returns (GetPointsByUserIdRes);
+}
+
+message InitPointsAccountIfAbsentReq {
+  uint64 user_id = 1;
+}
+
+message InitPointsAccountIfAbsentRes {
+  bool created = 1;
+  uint64 balance = 2;
+}
+
+message GetPointsByUserIdReq {
+  uint64 user_id = 1;
+}
+
+message GetPointsByUserIdRes {
+  uint64 user_id = 1;
+  uint64 balance = 2;
+  uint32 status = 3;
+}

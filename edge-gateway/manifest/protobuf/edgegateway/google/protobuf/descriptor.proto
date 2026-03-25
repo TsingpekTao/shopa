@@ -1,0 +1,10 @@
+syntax = "proto2";
+
+package google.protobuf;
+
+option go_package = "google.golang.org/protobuf/types/descriptorpb";
+
+// Minimal descriptor definitions required by google/api/annotations.proto.
+message MethodOptions {
+  extensions 72295728 to max;
+}

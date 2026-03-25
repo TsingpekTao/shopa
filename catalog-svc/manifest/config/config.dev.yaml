@@ -1,0 +1,55 @@
+﻿# catalog-svc configuration (dev environment).
+# Start command example:
+#   gf run main.go --gf.gcfg.file=config.dev.yaml
+
+# HTTP server configuration (OpenAPI/Swagger + optional REST APIs).
+server:
+  address: ":8004"
+  openapiPath: "/api.json"
+  swaggerPath: "/swagger"
+
+grpc:
+  address: ":9004"
+  name: "catalog.svc"
+  logStdout: true
+
+# Application identity, used for key prefix and tracing labels.
+app:
+  env: "dev"
+  project: "shopa"
+  service: "catalog-svc"
+
+# External dependencies.
+database:
+  default:
+    link: "mysql:dev_user:dev_password@tcp(dev-mysql:3306)/shopa_catalog_svc_dev?charset=utf8mb4&parseTime=true&loc=Local"
+
+redis:
+  default:
+    address: "dev-redis:6379"
+    db: 0
+    pass: "replace-with-dev-redis-password"
+
+mq:
+  rabbitmq:
+    enabled: false
+    url: "amqp://guest:guest@dev-rabbitmq:5672/"
+    exchange: "shopa.events"
+
+# Service-to-service addresses (for RPC/http client usage, can be overridden per env).
+upstream:
+  edgeGateway: "edge-gateway:8000"
+  iam: "iam-svc:8001"
+  userProfile: "user-profile-svc:8001"
+
+# Object storage / media placeholders.
+storage:
+  provider: "local"
+  endpoint: ""
+  accessKey: ""
+  secretKey: ""
+  bucket: "shopa"
+
+logger:
+  level: "all"
+  stdout: true

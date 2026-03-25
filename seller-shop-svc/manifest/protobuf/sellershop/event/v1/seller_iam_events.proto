@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package shopa.sellershop.event.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/seller-shop-svc/api/event/v1;sellereventv1";
+
+import "google/protobuf/timestamp.proto";
+
+message EventMeta {
+  string event_id = 1;
+  string request_id = 2;
+  string producer = 3;
+  google.protobuf.Timestamp occurred_at = 4;
+}
+
+message SellerRoleAssignRequested {
+  EventMeta meta = 1;
+  uint64 user_id = 2;
+  string application_no = 3;
+  string entity_no = 4;
+  string shop_no = 5;
+  uint64 scope_id = 6;
+}
+
+message SellerRoleRevokeRequested {
+  EventMeta meta = 1;
+  uint64 user_id = 2;
+  string shop_no = 3;
+  uint64 scope_id = 4;
+  string reason_code = 5;
+}
+
+message SellerRoleAssigned {
+  EventMeta meta = 1;
+  string request_event_id = 2;
+  uint64 user_id = 3;
+  string shop_no = 4;
+  uint64 scope_id = 5;
+}
+
+message SellerRoleAssignFailed {
+  EventMeta meta = 1;
+  string request_event_id = 2;
+  uint64 user_id = 3;
+  string shop_no = 4;
+  uint64 scope_id = 5;
+  string error_code = 6;
+  string error_message = 7;
+}
+
+message SellerRoleRevoked {
+  EventMeta meta = 1;
+  string request_event_id = 2;
+  uint64 user_id = 3;
+  string shop_no = 4;
+  uint64 scope_id = 5;
+}
+
+message SellerRoleRevokeFailed {
+  EventMeta meta = 1;
+  string request_event_id = 2;
+  uint64 user_id = 3;
+  string shop_no = 4;
+  uint64 scope_id = 5;
+  string error_code = 6;
+  string error_message = 7;
+}

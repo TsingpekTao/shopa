@@ -1,0 +1,54 @@
+﻿syntax = "proto3";
+
+package shopa.catalog.event.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/catalog-svc/api/event/v1;catalogeventv1";
+
+import "google/protobuf/timestamp.proto";
+
+message EventMeta {
+  string event_id = 1;
+  string request_id = 2;
+  string producer = 3;
+  google.protobuf.Timestamp occurred_at = 4;
+}
+
+message ProductSubmitted {
+  EventMeta meta = 1;
+  string spu_no = 2;
+  string shop_no = 3;
+}
+
+message ProductApproved {
+  EventMeta meta = 1;
+  string spu_no = 2;
+  string shop_no = 3;
+}
+
+message ProductRejected {
+  EventMeta meta = 1;
+  string spu_no = 2;
+  string shop_no = 3;
+  string reject_reason_code = 4;
+}
+
+message ProductOnShelf {
+  EventMeta meta = 1;
+  string spu_no = 2;
+  string shop_no = 3;
+}
+
+message ProductOffShelf {
+  EventMeta meta = 1;
+  string spu_no = 2;
+  string shop_no = 3;
+  string reason_code = 4;
+}
+
+message ProductDeleted {
+  EventMeta meta = 1;
+  string spu_no = 2;
+  string shop_no = 3;
+  repeated string sku_nos = 4;
+  string reason_code = 5;
+}

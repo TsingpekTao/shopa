@@ -1,0 +1,17 @@
+go 1.24.3
+
+use (
+	./aftersale-svc
+	./cart-svc
+	./catalog-svc
+	./edge-gateway
+	./fulfillment-svc
+	./iam-svc
+	./inventory-svc
+	./media-svc
+	./order-svc
+	./points-svc
+	./review-svc
+	./seller-shop-svc
+	./user-profile-svc
+)

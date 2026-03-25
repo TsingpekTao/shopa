@@ -1,0 +1,87 @@
+﻿# Production environment configuration.
+# Docker/K8s should set: GF_GCFG_FILE=config.prod.yaml
+
+server:
+  address: ":8001"
+  openapiPath: "/api.json"
+  swaggerPath: "/swagger"
+
+app:
+  env: "prod"
+  project: "shopa"
+  service: "iam"
+
+iam:
+  jwt:
+    secret: "replace-with-prod-jwt-secret"
+    accessExpireSeconds: 900
+    refreshExpireSeconds: 1209600
+  register:
+    defaultUsernamePrefix: "用户_"
+  security:
+    loginFailMax: 5
+    mfaOnIpChange: true
+  snowflake:
+    node: 11
+
+jwt:
+  secret: "replace-with-prod-jwt-secret"
+  accessExpireSeconds: 900
+  refreshExpireSeconds: 1209600
+security:
+  loginFailMax: 5
+  mfaOnIpChange: true
+snowflake:
+  node: 11
+
+database:
+  default:
+    # Recommend injecting from secret manager in real production.
+    link: "mysql:prod_user:prod_password@tcp(prod-mysql:3306)/shopa_prod?charset=utf8mb4&parseTime=true&loc=Local"
+
+redis:
+  default:
+    address: "prod-redis:6379"
+    db: 0
+    pass: "replace-with-prod-redis-password"
+
+sms:
+  provider: "aliyun"
+  aliyun:
+    accessKeyId: "replace-with-prod-ak"
+    accessKeySecret: "replace-with-prod-sk"
+    signName: "replace-with-sign-name"
+    endpoint: "dysmsapi.aliyuncs.com"
+
+risk:
+  provider: "http"
+  endpoint: "https://risk.example.com/v1/check"
+  appId: "replace-with-risk-app-id"
+  appSecret: "replace-with-risk-app-secret"
+  timeoutMs: 1200
+
+mq:
+  rabbitmq:
+    enabled: true
+    url: "amqp://prod_user:prod_password@prod-rabbitmq:5672/"
+    exchange: "shopa.user.events"
+    routingKeyUserRegistered: "iam.user.registered"
+
+geoip:
+  enabled: true
+  mmdbPath: "/app/data/GeoLite2-City.mmdb"
+
+oauth:
+  wechat:
+    appId: "replace-with-wechat-app-id"
+    appSecret: "replace-with-wechat-app-secret"
+    redirectUri: "https://shopa.example.com/oauth/wechat/callback"
+  alipay:
+    appId: "replace-with-alipay-app-id"
+    privateKey: "replace-with-alipay-private-key"
+    publicKey: "replace-with-alipay-public-key"
+    redirectUri: "https://shopa.example.com/oauth/alipay/callback"
+
+logger:
+  level: "warn"
+  stdout: true

@@ -1,0 +1,300 @@
+﻿syntax = "proto3";
+
+package shopa.media.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/media-svc/api/v1;mediav1";
+
+import "google/protobuf/timestamp.proto";
+
+// Metadata convention for write RPCs:
+// - x-idempotency-key: required
+// - x-request-id: recommended
+// - x-user-id: recommended for ownership/audit
+service MediaService {
+  rpc InitUpload(InitUploadReq) returns (InitUploadRes);
+  rpc CompleteUpload(CompleteUploadReq) returns (CompleteUploadRes);
+
+  // Only for PRIVATE scenes. PUBLIC scenes return the fixed public URL.
+  rpc IssueReadUrl(IssueReadUrlReq) returns (IssueReadUrlRes);
+
+  rpc GetAssetProcessStatus(GetAssetProcessStatusReq) returns (GetAssetProcessStatusRes);
+  rpc BatchGetAssetProcessStatus(BatchGetAssetProcessStatusReq) returns (BatchGetAssetProcessStatusRes);
+
+  rpc BatchBindAssetsToBiz(BatchBindAssetsToBizReq) returns (BatchBindAssetsToBizRes);
+  rpc ReplaceBizAssetBindings(ReplaceBizAssetBindingsReq) returns (ReplaceBizAssetBindingsRes);
+  rpc BatchUnbindAssetsFromBiz(BatchUnbindAssetsFromBizReq) returns (BatchUnbindAssetsFromBizRes);
+  rpc GetBizAssets(GetBizAssetsReq) returns (GetBizAssetsRes);
+}
+
+// Internal-only APIs used by trusted workers/services.
+// This service must not be exposed to public gateway routes.
+service MediaInternalService {
+  // Creates derived assets under a parent asset (for OCR/preview/splitting pipeline).
+  rpc CreateDerivedAsset(CreateDerivedAssetReq) returns (CreateDerivedAssetRes);
+  // Updates processing status/progress on any asset.
+  rpc UpdateAssetProcessStatus(UpdateAssetProcessStatusReq) returns (UpdateAssetProcessStatusRes);
+}
+
+enum AclType {
+  ACL_TYPE_UNSPECIFIED = 0;
+  ACL_TYPE_PUBLIC_READ = 1;
+  ACL_TYPE_PRIVATE = 2;
+}
+
+enum AssetRole {
+  ASSET_ROLE_UNSPECIFIED = 0;
+  ASSET_ROLE_ORIGINAL = 1;
+  ASSET_ROLE_DERIVED = 2;
+}
+
+enum DerivedKind {
+  DERIVED_KIND_UNSPECIFIED = 0;
+  DERIVED_KIND_PREVIEW_IMAGE = 1;
+  DERIVED_KIND_OCR_TEXT = 2;
+  DERIVED_KIND_THUMBNAIL = 3;
+  DERIVED_KIND_EMBEDDING = 4;
+}
+
+enum ProcessStatus {
+  PROCESS_STATUS_UNSPECIFIED = 0;
+  PROCESS_STATUS_PENDING = 1;
+  PROCESS_STATUS_PROCESSING = 2;
+  PROCESS_STATUS_SUCCESS = 3;
+  PROCESS_STATUS_FAILED = 4;
+  PROCESS_STATUS_PARTIAL_SUCCESS = 5;
+}
+
+enum RiskStatus {
+  RISK_STATUS_UNSPECIFIED = 0;
+  RISK_STATUS_PENDING = 1;
+  RISK_STATUS_PASSED = 2;
+  RISK_STATUS_REJECTED = 3;
+}
+
+message UploadTicket {
+  string method = 1;
+  string upload_url = 2;
+  map<string, string> headers = 3;
+  google.protobuf.Timestamp expired_at = 4;
+}
+
+message Asset {
+  uint64 asset_id = 1;
+  uint64 parent_asset_id = 2;
+  uint64 root_asset_id = 3;
+
+  string scene_code = 4;
+  AclType acl_type = 5;
+  AssetRole asset_role = 6;
+  DerivedKind derived_kind = 7;
+
+  string file_name = 8;
+  string mime_type = 9;
+  uint64 size_bytes = 10;
+  string checksum_sha256 = 11;
+  string etag = 12;
+
+  // Physical storage details are intentionally hidden in external contract.
+  reserved 13, 14, 15;
+  string public_url = 16;
+
+  RiskStatus risk_status = 17;
+  ProcessStatus process_status = 18;
+  uint32 process_progress = 19;
+  string process_error_code = 20;
+  string process_error_message = 21;
+  google.protobuf.Timestamp processed_at = 22;
+
+  google.protobuf.Timestamp created_at = 23;
+  google.protobuf.Timestamp updated_at = 24;
+}
+
+message DerivedAssetSummary {
+  uint64 asset_id = 1;
+  uint64 parent_asset_id = 2;
+  DerivedKind derived_kind = 3;
+  string mime_type = 4;
+  string public_url = 5;
+  ProcessStatus process_status = 6;
+}
+
+message BindingItem {
+  uint64 asset_id = 1;
+  int32 sort_order = 2;
+  string binding_field = 3;
+}
+
+// SimpleBindingItem is used for replace-all operations where binding_field is fixed
+// at request level to avoid ambiguity.
+message SimpleBindingItem {
+  uint64 asset_id = 1;
+  int32 sort_order = 2;
+}
+
+message BizAssetBinding {
+  uint64 binding_id = 1;
+  string scene_code = 2;
+  string biz_type = 3;
+  string biz_no = 4;
+  string binding_field = 5;
+  uint64 asset_id = 6;
+  int32 sort_order = 7;
+  bool is_active = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
+}
+
+message BizAsset {
+  BizAssetBinding binding = 1;
+  Asset asset = 2;
+}
+
+message InitUploadReq {
+  // Scene policy controls validation, ACL and risk behavior.
+  string scene_code = 1;
+  // Optional trace fields for audit only. They DO NOT create bindings.
+  optional string biz_type = 2;
+  optional string biz_no = 3;
+
+  string file_name = 4;
+  string mime_type = 5;
+  uint64 size_bytes = 6;
+  string checksum_sha256 = 7;
+
+  // External upload is always an ORIGINAL root asset.
+  // Derived asset creation is internal-only via MediaInternalService.
+  reserved 8, 9, 10;
+}
+
+message InitUploadRes {
+  Asset asset = 1;
+  UploadTicket upload_ticket = 2;
+}
+
+message CompleteUploadReq {
+  uint64 asset_id = 1;
+  string etag = 2;
+  uint64 size_bytes = 3;
+  string mime_type = 4;
+  string checksum_sha256 = 5;
+}
+
+message CompleteUploadRes {
+  Asset asset = 1;
+}
+
+message IssueReadUrlReq {
+  uint64 asset_id = 1;
+  uint32 ttl_seconds = 2;
+}
+
+message IssueReadUrlRes {
+  uint64 asset_id = 1;
+  string url = 2;
+  bool is_public = 3;
+  google.protobuf.Timestamp expired_at = 4;
+}
+
+message GetAssetProcessStatusReq {
+  uint64 asset_id = 1;
+}
+
+message GetAssetProcessStatusRes {
+  uint64 asset_id = 1;
+  ProcessStatus process_status = 2;
+  uint32 process_progress = 3;
+  string process_error_code = 4;
+  string process_error_message = 5;
+  repeated DerivedAssetSummary derived_assets = 6;
+}
+
+message BatchGetAssetProcessStatusReq {
+  repeated uint64 asset_ids = 1;
+}
+
+message BatchGetAssetProcessStatusRes {
+  repeated GetAssetProcessStatusRes statuses = 1;
+}
+
+message BatchBindAssetsToBizReq {
+  string scene_code = 1;
+  string biz_type = 2;
+  string biz_no = 3;
+  repeated BindingItem items = 4;
+}
+
+message BatchBindAssetsToBizRes {
+  repeated BizAssetBinding bindings = 1;
+}
+
+message ReplaceBizAssetBindingsReq {
+  string scene_code = 1;
+  string biz_type = 2;
+  string biz_no = 3;
+  string binding_field = 4;
+  repeated SimpleBindingItem items = 5;
+}
+
+message ReplaceBizAssetBindingsRes {
+  repeated BizAssetBinding bindings = 1;
+}
+
+message BatchUnbindAssetsFromBizReq {
+  string scene_code = 1;
+  string biz_type = 2;
+  string biz_no = 3;
+  string binding_field = 4;
+  repeated uint64 asset_ids = 5;
+}
+
+message BatchUnbindAssetsFromBizRes {
+  uint64 affected_rows = 1;
+}
+
+message GetBizAssetsReq {
+  string scene_code = 1;
+  string biz_type = 2;
+  string biz_no = 3;
+  string binding_field = 4;
+  bool include_inactive = 5;
+}
+
+message GetBizAssetsRes {
+  repeated BizAsset assets = 1;
+}
+
+message CreateDerivedAssetReq {
+  uint64 parent_asset_id = 1;
+  string scene_code = 2;
+  DerivedKind derived_kind = 3;
+
+  string file_name = 4;
+  string mime_type = 5;
+  uint64 size_bytes = 6;
+  string checksum_sha256 = 7;
+  string etag = 8;
+
+  // Internal physical storage metadata.
+  string storage_provider = 9;
+  string bucket = 10;
+  string object_key = 11;
+
+  string public_url = 12;
+}
+
+message CreateDerivedAssetRes {
+  Asset asset = 1;
+}
+
+message UpdateAssetProcessStatusReq {
+  uint64 asset_id = 1;
+  ProcessStatus process_status = 2;
+  uint32 process_progress = 3;
+  string process_error_code = 4;
+  string process_error_message = 5;
+  google.protobuf.Timestamp processed_at = 6;
+}
+
+message UpdateAssetProcessStatusRes {
+  bool updated = 1;
+}

@@ -1,0 +1,326 @@
+syntax = "proto3";
+
+package shopa.sellershop.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/seller-shop-svc/api/v1;sellershopv1";
+
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/timestamp.proto";
+
+// Metadata convention for write RPCs:
+// - x-idempotency-key: required
+// - x-request-id: recommended
+// - x-operator-user-id: required for admin write RPCs (gateway inject)
+
+service SellerApplicationService {
+  rpc CreateApplicationDraft(CreateApplicationDraftReq) returns (CreateApplicationDraftRes);
+  rpc UpdateApplicationDraft(UpdateApplicationDraftReq) returns (UpdateApplicationDraftRes);
+  rpc SubmitApplication(SubmitApplicationReq) returns (SubmitApplicationRes);
+  rpc ResubmitApplication(ResubmitApplicationReq) returns (ResubmitApplicationRes);
+
+  rpc GetMyApplication(GetMyApplicationReq) returns (GetMyApplicationRes);
+  rpc ListMyApplications(ListMyApplicationsReq) returns (ListMyApplicationsRes);
+}
+
+service AdminSellerService {
+  rpc ListApplications(ListApplicationsReq) returns (ListApplicationsRes);
+  rpc GetApplicationDetail(GetApplicationDetailReq) returns (GetApplicationDetailRes);
+
+  rpc ApproveApplication(ApproveApplicationReq) returns (ApproveApplicationRes);
+  rpc RejectApplication(RejectApplicationReq) returns (RejectApplicationRes);
+
+  rpc FreezeShop(FreezeShopReq) returns (FreezeShopRes);
+  rpc CloseShop(CloseShopReq) returns (CloseShopRes);
+}
+
+service InternalShopService {
+  rpc GetShopByNo(GetShopByNoReq) returns (GetShopByNoRes);
+  rpc BatchGetShopsByNo(BatchGetShopsByNoReq) returns (BatchGetShopsByNoRes);
+  rpc ListShopsByOwnerUserId(ListShopsByOwnerUserIdReq) returns (ListShopsByOwnerUserIdRes);
+  rpc IsUserShopOwner(IsUserShopOwnerReq) returns (IsUserShopOwnerRes);
+}
+
+enum ApplicationStatus {
+  APPLICATION_STATUS_UNSPECIFIED = 0;
+  APPLICATION_STATUS_DRAFT = 1;
+  APPLICATION_STATUS_SUBMITTED = 2;
+  APPLICATION_STATUS_REVIEWING = 3;
+  APPLICATION_STATUS_APPROVED = 4;
+  APPLICATION_STATUS_REJECTED = 5;
+  APPLICATION_STATUS_CANCELLED = 6;
+  APPLICATION_STATUS_SYSTEM_REJECTED = 7;
+}
+
+enum ShopStatus {
+  SHOP_STATUS_UNSPECIFIED = 0;
+  SHOP_STATUS_PROVISIONING = 1;
+  SHOP_STATUS_ACTIVE = 2;
+  SHOP_STATUS_FREEZING = 3;
+  SHOP_STATUS_FROZEN = 4;
+  SHOP_STATUS_CLOSING = 5;
+  SHOP_STATUS_CLOSED = 6;
+  SHOP_STATUS_PROVISION_FAILED = 7;
+}
+
+message QualificationDoc {
+  string doc_type_code = 1;
+  uint64 asset_id = 2;
+  google.protobuf.Timestamp valid_from = 3;
+  google.protobuf.Timestamp valid_until = 4;
+  string issuer = 5;
+  map<string, string> ext = 100;
+}
+
+message LegalSubjectProfile {
+  string subject_type_code = 1;
+  string subject_name = 2;
+  string subject_cert_no = 3;
+  string legal_representative_name = 4;
+  string legal_representative_cert_no = 5;
+  google.protobuf.Timestamp cert_valid_from = 6;
+  google.protobuf.Timestamp cert_valid_until = 7;
+  repeated QualificationDoc docs = 20;
+  map<string, string> ext = 100;
+}
+
+message EntityProfile {
+  string entity_no = 1;
+  uint64 owner_user_id = 2;
+  string merchant_type_code = 3;
+  string entity_name = 4;
+  string contact_name = 5;
+  string contact_phone = 6;
+  string contact_email = 7;
+  LegalSubjectProfile legal_subject = 8;
+  map<string, string> ext = 100;
+}
+
+message ShopProfile {
+  string shop_no = 1;
+  string shop_name = 2;
+  string shop_display_name = 3;
+  string shop_type_code = 4;
+  repeated uint64 main_category_ids = 5;
+  uint64 logo_asset_id = 6;
+  uint64 banner_asset_id = 7;
+  string service_phone = 8;
+  string service_email = 9;
+  string description = 10;
+  map<string, string> ext = 100;
+}
+
+message RejectInfo {
+  string reject_reason_code = 1;
+  string reject_comment = 2;
+  google.protobuf.Timestamp rejected_at = 3;
+}
+
+message SellerApplication {
+  string application_no = 1;
+  int32 version = 2;
+  string previous_application_no = 3;
+  string next_application_no = 4;
+  uint64 owner_user_id = 5;
+  ApplicationStatus status = 6;
+  EntityProfile entity_draft = 7;
+  ShopProfile shop_draft = 8;
+  EntityProfile entity_submitted = 9;
+  ShopProfile shop_submitted = 10;
+  RejectInfo latest_reject = 11;
+  google.protobuf.Timestamp submitted_at = 12;
+  google.protobuf.Timestamp review_started_at = 13;
+  google.protobuf.Timestamp reviewed_at = 14;
+  uint64 reviewer_id = 15;
+  string review_comment = 16;
+  google.protobuf.Timestamp created_at = 17;
+  google.protobuf.Timestamp updated_at = 18;
+}
+
+message Shop {
+  string shop_no = 1;
+  string entity_no = 2;
+  string application_no = 3;
+  uint64 owner_user_id = 4;
+  string shop_name = 5;
+  string shop_display_name = 6;
+  ShopStatus status = 7;
+  bool buyer_visible = 8;
+  int32 version = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+}
+
+message ShopSummary {
+  string shop_no = 1;
+  string shop_name = 2;
+  string shop_display_name = 3;
+  ShopStatus status = 4;
+  bool buyer_visible = 5;
+}
+
+message CreateApplicationDraftReq {
+  EntityProfile entity = 1;
+  ShopProfile shop = 2;
+}
+
+message CreateApplicationDraftRes {
+  SellerApplication application = 1;
+}
+
+message UpdateApplicationDraftReq {
+  string application_no = 1;
+  int32 expected_version = 2;
+  EntityProfile entity = 3;
+  ShopProfile shop = 4;
+  google.protobuf.FieldMask update_mask = 5;
+}
+
+message UpdateApplicationDraftRes {
+  SellerApplication application = 1;
+}
+
+message SubmitApplicationReq {
+  string application_no = 1;
+  int32 expected_version = 2;
+}
+
+message SubmitApplicationRes {
+  SellerApplication application = 1;
+}
+
+message ResubmitApplicationReq {
+  string rejected_application_no = 1;
+  int32 expected_version = 2;
+  EntityProfile entity = 3;
+  ShopProfile shop = 4;
+  google.protobuf.FieldMask update_mask = 5;
+  bool submit_immediately = 6;
+}
+
+message ResubmitApplicationRes {
+  SellerApplication application = 1;
+}
+
+message GetMyApplicationReq {
+  string application_no = 1;
+}
+
+message GetMyApplicationRes {
+  SellerApplication application = 1;
+}
+
+message ListMyApplicationsReq {
+  int32 page = 1;
+  int32 page_size = 2;
+  repeated ApplicationStatus statuses = 3;
+}
+
+message ListMyApplicationsRes {
+  repeated SellerApplication applications = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+  int64 total = 4;
+}
+
+message ListApplicationsReq {
+  int32 page = 1;
+  int32 page_size = 2;
+  repeated ApplicationStatus statuses = 3;
+  string keyword = 4;
+}
+
+message ListApplicationsRes {
+  repeated SellerApplication applications = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+  int64 total = 4;
+}
+
+message GetApplicationDetailReq {
+  string application_no = 1;
+}
+
+message GetApplicationDetailRes {
+  SellerApplication application = 1;
+}
+
+message ApproveApplicationReq {
+  string application_no = 1;
+  int32 expected_version = 2;
+  string review_comment = 3;
+}
+
+message ApproveApplicationRes {
+  string application_no = 1;
+  string shop_no = 2;
+  ShopStatus shop_status = 3;
+}
+
+message RejectApplicationReq {
+  string application_no = 1;
+  int32 expected_version = 2;
+  string reject_reason_code = 3;
+  string reject_comment = 4;
+}
+
+message RejectApplicationRes {
+  string application_no = 1;
+  ApplicationStatus status = 2;
+}
+
+message FreezeShopReq {
+  string shop_no = 1;
+  int32 expected_version = 2;
+  string reason_code = 3;
+  string reason = 4;
+}
+
+message FreezeShopRes {
+  string shop_no = 1;
+  ShopStatus shop_status = 2;
+}
+
+message CloseShopReq {
+  string shop_no = 1;
+  int32 expected_version = 2;
+  string reason_code = 3;
+  string reason = 4;
+}
+
+message CloseShopRes {
+  string shop_no = 1;
+  ShopStatus shop_status = 2;
+}
+
+message GetShopByNoReq {
+  string shop_no = 1;
+}
+
+message GetShopByNoRes {
+  Shop shop = 1;
+}
+
+message BatchGetShopsByNoReq {
+  repeated string shop_nos = 1;
+}
+
+message BatchGetShopsByNoRes {
+  repeated Shop shops = 1;
+}
+
+message ListShopsByOwnerUserIdReq {
+  uint64 owner_user_id = 1;
+}
+
+message ListShopsByOwnerUserIdRes {
+  repeated ShopSummary shops = 1;
+}
+
+message IsUserShopOwnerReq {
+  uint64 user_id = 1;
+  string shop_no = 2;
+}
+
+message IsUserShopOwnerRes {
+  bool is_owner = 1;
+}

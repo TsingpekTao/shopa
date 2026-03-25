@@ -1,0 +1,37 @@
+// =================================================================================
+// Code generated and maintained by GoFrame CLI tool. DO NOT EDIT.
+// =================================================================================
+
+package do
+
+import (
+	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/os/gtime"
+)
+
+// InventoryLedger is the golang structure of table inventory_ledger for DAO operations like Where/Data.
+type InventoryLedger struct {
+	g.Meta            `orm:"table:inventory_ledger, do:true"`
+	Id                any         //
+	TxnNo             any         //
+	BizType           any         //
+	BizNo             any         //
+	ActionCode        any         //
+	ReservationNo     any         //
+	OrderNo           any         //
+	SkuNo             any         //
+	SpuNo             any         //
+	ShopNo            any         //
+	DeltaTotalQty     any         //
+	DeltaLockedQty    any         //
+	DeltaAvailableQty any         //
+	AfterTotalQty     any         //
+	AfterLockedQty    any         //
+	AfterAvailableQty any         //
+	StockVersion      any         //
+	OperatorType      any         // SELLER/ORDER/ADMIN/SYSTEM
+	OperatorUserId    any         //
+	RequestId         any         //
+	Remark            any         //
+	CreatedAt         *gtime.Time //
+}

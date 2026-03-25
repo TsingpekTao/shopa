@@ -1,0 +1,50 @@
+﻿# aftersale-svc configuration (prod environment).
+# Start command example:
+#   gf run main.go --gf.gcfg.file=config.prod.yaml
+
+# HTTP server configuration (OpenAPI/Swagger + optional REST APIs).
+server:
+  address: ":8010"
+  openapiPath: "/api.json"
+  swaggerPath: "/swagger"
+
+# Application identity, used for key prefix and tracing labels.
+app:
+  env: "prod"
+  project: "shopa"
+  service: "aftersale-svc"
+
+# External dependencies.
+database:
+  default:
+    link: "mysql:prod_user:prod_password@tcp(prod-mysql:3306)/shopa_aftersale_svc_prod?charset=utf8mb4&parseTime=true&loc=Local"
+
+redis:
+  default:
+    address: "prod-redis:6379"
+    db: 0
+    pass: "replace-with-prod-redis-password"
+
+mq:
+  rabbitmq:
+    enabled: true
+    url: "amqp://prod_user:prod_password@prod-rabbitmq:5672/"
+    exchange: "shopa.events"
+
+# Service-to-service addresses (for RPC/http client usage, can be overridden per env).
+upstream:
+  edgeGateway: "edge-gateway:8000"
+  iam: "iam-svc:8001"
+  userProfile: "user-profile-svc:8001"
+
+# Object storage / media placeholders.
+storage:
+  provider: "local"
+  endpoint: ""
+  accessKey: ""
+  secretKey: ""
+  bucket: "shopa"
+
+logger:
+  level: "warn"
+  stdout: true

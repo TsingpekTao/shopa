@@ -1,0 +1,90 @@
+﻿# Default configuration for local development.
+# Start command example:
+#   gf run main.go --gf.gcfg.file=config.local.yaml
+
+server:
+  address: ":8001"
+  openapiPath: "/api.json"
+  swaggerPath: "/swagger"
+
+app:
+  env: "local"
+  project: "shopa"
+  service: "iam"
+
+# IAM domain configuration (service code reads iam.* first, then falls back to legacy keys).
+iam:
+  jwt:
+    secret: "shopa-iam-local-secret"
+    accessExpireSeconds: 900
+    refreshExpireSeconds: 2592000
+  register:
+    defaultUsernamePrefix: "用户_"
+  security:
+    loginFailMax: 5
+    mfaOnIpChange: true
+  snowflake:
+    node: 1
+
+# Keep legacy keys for backward compatibility.
+jwt:
+  secret: "shopa-iam-local-secret"
+  accessExpireSeconds: 900
+  refreshExpireSeconds: 2592000
+security:
+  loginFailMax: 5
+  mfaOnIpChange: true
+snowflake:
+  node: 1
+
+# External components.
+database:
+  default:
+    link: "mysql:root:123456@tcp(127.0.0.1:3306)/shopa?charset=utf8mb4&parseTime=true&loc=Local"
+
+redis:
+  default:
+    address: "127.0.0.1:6379"
+    db: 0
+    pass: ""
+
+sms:
+  provider: "mock"
+  aliyun:
+    accessKeyId: ""
+    accessKeySecret: ""
+    signName: ""
+    endpoint: ""
+
+risk:
+  provider: "mock"
+  endpoint: ""
+  appId: ""
+  appSecret: ""
+  timeoutMs: 800
+
+mq:
+  rabbitmq:
+    enabled: false
+    url: "amqp://guest:guest@127.0.0.1:5672/"
+    exchange: "shopa.user.events"
+    routingKeyUserRegistered: "iam.user.registered"
+
+geoip:
+  enabled: false
+  mmdbPath: "manifest/data/GeoLite2-City.mmdb"
+
+oauth:
+  wechat:
+    appId: ""
+    appSecret: ""
+    redirectUri: ""
+  alipay:
+    appId: ""
+    privateKey: ""
+    publicKey: ""
+    redirectUri: ""
+
+logger:
+  level: "all"
+  stdout: true

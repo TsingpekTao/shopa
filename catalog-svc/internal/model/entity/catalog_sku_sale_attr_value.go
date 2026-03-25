@@ -1,0 +1,22 @@
+// =================================================================================
+// Code generated and maintained by GoFrame CLI tool. DO NOT EDIT.
+// =================================================================================
+
+package entity
+
+import (
+	"github.com/gogf/gf/v2/os/gtime"
+)
+
+// CatalogSkuSaleAttrValue is the golang structure for table catalog_sku_sale_attr_value.
+type CatalogSkuSaleAttrValue struct {
+	Id        uint64      `json:"id"        orm:"id"         ` //
+	SkuNo     string      `json:"skuNo"     orm:"sku_no"     ` //
+	SpuNo     string      `json:"spuNo"     orm:"spu_no"     ` //
+	AttrCode  string      `json:"attrCode"  orm:"attr_code"  ` //
+	AttrName  string      `json:"attrName"  orm:"attr_name"  ` //
+	AttrValue string      `json:"attrValue" orm:"attr_value" ` //
+	SortOrder int         `json:"sortOrder" orm:"sort_order" ` //
+	CreatedAt *gtime.Time `json:"createdAt" orm:"created_at" ` //
+	UpdatedAt *gtime.Time `json:"updatedAt" orm:"updated_at" ` //
+}

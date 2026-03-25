@@ -1,0 +1,547 @@
+﻿syntax = "proto3";
+
+package shopa.catalog.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/catalog-svc/api/v1;catalogv1";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/timestamp.proto";
+
+// Metadata convention for write RPCs:
+// - x-idempotency-key: required
+// - x-request-id: recommended
+// - x-user-id: required for seller/admin write
+// - x-shop-no: required for seller write
+
+service SellerProductService {
+  rpc CreateProductDraft(CreateProductDraftReq) returns (CreateProductDraftRes);
+  rpc UpdateProductDraft(UpdateProductDraftReq) returns (UpdateProductDraftRes);
+  rpc UpsertSkuDrafts(UpsertSkuDraftsReq) returns (UpsertSkuDraftsRes);
+
+  rpc SubmitProductReview(SubmitProductReviewReq) returns (SubmitProductReviewRes);
+  rpc ResubmitProductReview(ResubmitProductReviewReq) returns (ResubmitProductReviewRes);
+
+  rpc SetProductOnShelf(SetProductOnShelfReq) returns (SetProductOnShelfRes);
+  rpc SetProductOffShelf(SetProductOffShelfReq) returns (SetProductOffShelfRes);
+
+  rpc DeleteProductDraft(DeleteProductDraftReq) returns (google.protobuf.Empty);
+
+  rpc GetMyProduct(GetMyProductReq) returns (GetMyProductRes);
+  rpc ListMyProducts(ListMyProductsReq) returns (ListMyProductsRes);
+}
+
+service AdminProductReviewService {
+  rpc ListReviewTasks(ListReviewTasksReq) returns (ListReviewTasksRes);
+  rpc GetReviewDetail(GetReviewDetailReq) returns (GetReviewDetailRes);
+
+  rpc ApproveProduct(ApproveProductReq) returns (ApproveProductRes);
+  rpc RejectProduct(RejectProductReq) returns (RejectProductRes);
+
+  rpc FreezeProduct(FreezeProductReq) returns (FreezeProductRes);
+  rpc UnfreezeProduct(UnfreezeProductReq) returns (UnfreezeProductRes);
+  rpc ForceOffShelf(ForceOffShelfReq) returns (ForceOffShelfRes);
+}
+
+service BuyerCatalogService {
+  rpc GetProductDetail(GetProductDetailReq) returns (GetProductDetailRes);
+  rpc ListProducts(ListProductsReq) returns (ListProductsRes);
+  rpc SearchProducts(SearchProductsReq) returns (SearchProductsRes);
+}
+
+service InternalCatalogService {
+  rpc BatchGetSpuByNo(BatchGetSpuByNoReq) returns (BatchGetSpuByNoRes);
+  rpc BatchGetSkuByNo(BatchGetSkuByNoReq) returns (BatchGetSkuByNoRes);
+
+  // Order-svc must call this and persist snapshots when order is created.
+  rpc GetSkuSnapshotForOrder(GetSkuSnapshotForOrderReq) returns (GetSkuSnapshotForOrderRes);
+
+  // For reconciliation/manual repair.
+  rpc UpsertSkuStockProjection(UpsertSkuStockProjectionReq) returns (UpsertSkuStockProjectionRes);
+  rpc RecomputeSpuAggregation(RecomputeSpuAggregationReq) returns (RecomputeSpuAggregationRes);
+}
+
+enum SpuStatus {
+  SPU_STATUS_UNSPECIFIED = 0;
+  SPU_STATUS_DRAFT = 1;
+  SPU_STATUS_REVIEWING = 2;
+  SPU_STATUS_APPROVED = 3; // approved but waiting for on-shelf
+  SPU_STATUS_ON_SHELF = 4;
+  SPU_STATUS_OFF_SHELF = 5;
+  SPU_STATUS_REJECTED = 6;
+  SPU_STATUS_FROZEN = 7;
+  SPU_STATUS_DELETED = 8;
+}
+
+enum SkuStatus {
+  SKU_STATUS_UNSPECIFIED = 0;
+  SKU_STATUS_DRAFT = 1;
+  SKU_STATUS_ENABLED = 2;
+  SKU_STATUS_DISABLED = 3;
+  SKU_STATUS_DELETED = 4;
+}
+
+enum StockStatus {
+  STOCK_STATUS_UNSPECIFIED = 0;
+  STOCK_STATUS_IN_STOCK = 1;
+  STOCK_STATUS_OUT_OF_STOCK = 2;
+}
+
+enum AttributeScope {
+  ATTRIBUTE_SCOPE_UNSPECIFIED = 0;
+  ATTRIBUTE_SCOPE_SPU = 1;      // brand/material etc
+  ATTRIBUTE_SCOPE_SKU_SALE = 2; // color/size/capacity etc
+  ATTRIBUTE_SCOPE_EXT = 3;
+}
+
+enum ReviewStatus {
+  REVIEW_STATUS_UNSPECIFIED = 0;
+  REVIEW_STATUS_PENDING = 1;
+  REVIEW_STATUS_APPROVED = 2;
+  REVIEW_STATUS_REJECTED = 3;
+}
+
+enum SortBy {
+  SORT_BY_UNSPECIFIED = 0;
+  SORT_BY_DEFAULT = 1;
+  SORT_BY_PRICE_ASC = 2;
+  SORT_BY_PRICE_DESC = 3;
+  SORT_BY_SALES_DESC = 4;
+  SORT_BY_NEWEST = 5;
+}
+
+message CategorySummary {
+  uint64 category_id = 1;
+  string category_name = 2;
+  uint64 parent_id = 3;
+}
+
+message BrandSummary {
+  string brand_no = 1;
+  string brand_name = 2;
+}
+
+message AttributeValue {
+  string attr_code = 1;
+  string attr_name = 2;
+  AttributeScope scope = 3;
+  string value = 4;
+}
+
+message SkuSaleAttr {
+  string attr_code = 1;
+  string attr_name = 2;
+  string value = 3;
+}
+
+message ProductSku {
+  string sku_no = 1;
+  string spu_no = 2;
+  string sku_name = 3;
+  uint64 sku_image_asset_id = 4;
+
+  SkuStatus sku_status = 5;
+  StockStatus stock_status = 6;
+  uint64 stock_version = 7; // projection version from inventory events
+
+  uint64 sale_price = 8;
+  uint64 market_price = 9;
+
+  repeated SkuSaleAttr sale_attrs = 10;
+  int32 sort_order = 11;
+
+  uint32 version = 12;
+  google.protobuf.Timestamp created_at = 13;
+  google.protobuf.Timestamp updated_at = 14;
+}
+
+message ProductSpu {
+  string spu_no = 1;
+  string shop_no = 2;
+
+  string title = 3;
+  string sub_title = 4;
+  uint64 category_id = 5;
+  string brand_no = 6;
+
+  repeated uint64 main_image_asset_ids = 7;
+  repeated uint64 detail_image_asset_ids = 8;
+
+  repeated AttributeValue spu_attrs = 9;
+
+  SpuStatus spu_status = 10;
+  StockStatus spu_stock_status = 11;
+
+  uint64 min_sale_price = 12;
+  uint64 max_sale_price = 13;
+  uint64 min_market_price = 14;
+  uint64 max_market_price = 15;
+
+  google.protobuf.Timestamp publish_time = 16;
+
+  uint32 version = 17;
+  google.protobuf.Timestamp created_at = 18;
+  google.protobuf.Timestamp updated_at = 19;
+}
+
+message ProductAggregate {
+  ProductSpu spu = 1;
+  repeated ProductSku skus = 2;
+}
+
+message ReviewInfo {
+  ReviewStatus review_status = 1;
+  string reject_reason_code = 2;
+  string reject_comment = 3;
+  uint64 reviewer_id = 4;
+  google.protobuf.Timestamp reviewed_at = 5;
+}
+
+message CreateProductDraftReq {
+  string shop_no = 1;
+  string title = 2;
+  string sub_title = 3;
+  uint64 category_id = 4;
+  string brand_no = 5;
+
+  repeated uint64 main_image_asset_ids = 6;
+  repeated uint64 detail_image_asset_ids = 7;
+  repeated AttributeValue spu_attrs = 8;
+
+  // Optional scheduled publish time, effective after APPROVED.
+  google.protobuf.Timestamp publish_time = 9;
+}
+
+message CreateProductDraftRes {
+  ProductAggregate product = 1;
+}
+
+message ProductDraftPatch {
+  string title = 1;
+  string sub_title = 2;
+  uint64 category_id = 3;
+  string brand_no = 4;
+  repeated uint64 main_image_asset_ids = 5;
+  repeated uint64 detail_image_asset_ids = 6;
+  repeated AttributeValue spu_attrs = 7;
+  google.protobuf.Timestamp publish_time = 8;
+}
+
+message UpdateProductDraftReq {
+  string spu_no = 1;
+  uint32 expected_version = 2;
+  ProductDraftPatch patch = 3;
+  google.protobuf.FieldMask update_mask = 4;
+}
+
+message UpdateProductDraftRes {
+  ProductAggregate product = 1;
+}
+
+message SkuDraftItem {
+  string sku_no = 1; // empty means create new sku
+  string sku_name = 2;
+  uint64 sku_image_asset_id = 3;
+  uint64 sale_price = 4;
+  uint64 market_price = 5;
+  repeated SkuSaleAttr sale_attrs = 6;
+  int32 sort_order = 7;
+  SkuStatus sku_status = 8;
+}
+
+message UpsertSkuDraftsReq {
+  string spu_no = 1;
+  uint32 expected_version = 2;
+  repeated SkuDraftItem items = 3;
+  bool replace_all = 4;
+}
+
+message UpsertSkuDraftsRes {
+  repeated ProductSku skus = 1;
+  uint32 spu_version = 2;
+}
+
+message SubmitProductReviewReq {
+  string spu_no = 1;
+  uint32 expected_version = 2;
+  string submit_note = 3;
+}
+
+message SubmitProductReviewRes {
+  string spu_no = 1;
+  SpuStatus spu_status = 2;
+}
+
+message ResubmitProductReviewReq {
+  string spu_no = 1;
+  uint32 expected_version = 2;
+  string submit_note = 3;
+}
+
+message ResubmitProductReviewRes {
+  string spu_no = 1;
+  SpuStatus spu_status = 2;
+}
+
+message SetProductOnShelfReq {
+  string spu_no = 1;
+  uint32 expected_version = 2;
+  // If provided and in future, system should schedule at that time.
+  google.protobuf.Timestamp effective_publish_time = 3;
+}
+
+message SetProductOnShelfRes {
+  string spu_no = 1;
+  SpuStatus spu_status = 2;
+}
+
+message SetProductOffShelfReq {
+  string spu_no = 1;
+  uint32 expected_version = 2;
+  string reason_code = 3;
+}
+
+message SetProductOffShelfRes {
+  string spu_no = 1;
+  SpuStatus spu_status = 2;
+}
+
+message DeleteProductDraftReq {
+  string spu_no = 1;
+  uint32 expected_version = 2;
+  string reason_code = 3;
+}
+
+message GetMyProductReq {
+  string spu_no = 1;
+}
+
+message GetMyProductRes {
+  ProductAggregate product = 1;
+  ReviewInfo review = 2;
+}
+
+message ListMyProductsReq {
+  int32 page = 1;
+  int32 page_size = 2;
+  repeated SpuStatus statuses = 3;
+  string keyword = 4;
+}
+
+message ListMyProductsRes {
+  repeated ProductSpu products = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+  int64 total = 4;
+}
+
+message ReviewTask {
+  string task_no = 1;
+  string spu_no = 2;
+  string shop_no = 3;
+  string title = 4;
+  SpuStatus spu_status = 5;
+  google.protobuf.Timestamp submitted_at = 6;
+}
+
+message ListReviewTasksReq {
+  int32 page = 1;
+  int32 page_size = 2;
+  repeated SpuStatus statuses = 3;
+  string keyword = 4;
+}
+
+message ListReviewTasksRes {
+  repeated ReviewTask tasks = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+  int64 total = 4;
+}
+
+message GetReviewDetailReq {
+  string spu_no = 1;
+}
+
+message GetReviewDetailRes {
+  ProductAggregate product = 1;
+  ReviewInfo review = 2;
+}
+
+message ApproveProductReq {
+  string spu_no = 1;
+  uint32 expected_version = 2;
+  string review_comment = 3;
+}
+
+message ApproveProductRes {
+  string spu_no = 1;
+  SpuStatus spu_status = 2; // APPROVED
+}
+
+message RejectProductReq {
+  string spu_no = 1;
+  uint32 expected_version = 2;
+  string reject_reason_code = 3;
+  string reject_comment = 4;
+}
+
+message RejectProductRes {
+  string spu_no = 1;
+  SpuStatus spu_status = 2; // REJECTED
+}
+
+message FreezeProductReq {
+  string spu_no = 1;
+  uint32 expected_version = 2;
+  string reason_code = 3;
+  string reason = 4;
+}
+
+message FreezeProductRes {
+  string spu_no = 1;
+  SpuStatus spu_status = 2; // FROZEN
+}
+
+message UnfreezeProductReq {
+  string spu_no = 1;
+  uint32 expected_version = 2;
+}
+
+message UnfreezeProductRes {
+  string spu_no = 1;
+  SpuStatus spu_status = 2; // OFF_SHELF by default
+}
+
+message ForceOffShelfReq {
+  string spu_no = 1;
+  uint32 expected_version = 2;
+  string reason_code = 3;
+  string reason = 4;
+}
+
+message ForceOffShelfRes {
+  string spu_no = 1;
+  SpuStatus spu_status = 2; // OFF_SHELF
+}
+
+message BuyerProductCard {
+  string spu_no = 1;
+  string title = 2;
+  uint64 category_id = 3;
+  string brand_no = 4;
+
+  uint64 cover_image_asset_id = 5;
+  uint64 min_sale_price = 6;
+  uint64 max_sale_price = 7;
+
+  StockStatus spu_stock_status = 8;
+  SpuStatus spu_status = 9; // should be ON_SHELF for buyer list
+
+  int64 sold_count = 10;
+}
+
+message GetProductDetailReq {
+  string spu_no = 1;
+}
+
+message GetProductDetailRes {
+  ProductAggregate product = 1;
+}
+
+message ListProductsReq {
+  uint64 category_id = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+  SortBy sort_by = 4;
+}
+
+message ListProductsRes {
+  repeated BuyerProductCard items = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+  int64 total = 4;
+}
+
+message SearchProductsReq {
+  string keyword = 1;
+  uint64 category_id = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+  SortBy sort_by = 5;
+  map<string, string> filters = 6;
+}
+
+message SearchProductsRes {
+  repeated BuyerProductCard items = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+  int64 total = 4;
+}
+
+message BatchGetSpuByNoReq {
+  repeated string spu_nos = 1;
+}
+
+message BatchGetSpuByNoRes {
+  repeated ProductSpu spus = 1;
+}
+
+message BatchGetSkuByNoReq {
+  repeated string sku_nos = 1;
+}
+
+message BatchGetSkuByNoRes {
+  repeated ProductSku skus = 1;
+}
+
+message GetSkuSnapshotForOrderReq {
+  repeated string sku_nos = 1;
+}
+
+message SkuOrderSnapshot {
+  string sku_no = 1;
+  string spu_no = 2;
+  string shop_no = 3;
+
+  string spu_title = 4;
+  string sku_name = 5;
+  uint64 sku_image_asset_id = 6;
+
+  uint64 sale_price = 7;
+  uint64 market_price = 8;
+
+  repeated SkuSaleAttr sale_attrs = 9;
+  uint32 snapshot_version = 10;
+}
+
+message GetSkuSnapshotForOrderRes {
+  repeated SkuOrderSnapshot snapshots = 1;
+}
+
+message UpsertSkuStockProjectionItem {
+  string sku_no = 1;
+  string spu_no = 2;
+  StockStatus stock_status = 3;
+  uint64 stock_version = 4;
+  string source_event_id = 5;
+  google.protobuf.Timestamp occurred_at = 6;
+}
+
+message UpsertSkuStockProjectionReq {
+  repeated UpsertSkuStockProjectionItem items = 1;
+}
+
+message UpsertSkuStockProjectionRes {
+  uint64 updated_rows = 1;
+  uint64 skipped_rows = 2; // old versions or duplicate events
+}
+
+message RecomputeSpuAggregationReq {
+  string spu_no = 1;
+  string reason_code = 2;
+}
+
+message RecomputeSpuAggregationRes {
+  string spu_no = 1;
+  bool updated = 2;
+}

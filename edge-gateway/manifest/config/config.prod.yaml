@@ -1,0 +1,70 @@
+﻿# edge-gateway configuration (prod environment).
+# Start command example:
+#   gf run main.go --gf.gcfg.file=config.prod.yaml
+
+# HTTP server configuration (OpenAPI/Swagger + optional REST APIs).
+server:
+  address: ":8000"
+  openapiPath: "/api.json"
+  swaggerPath: "/swagger"
+
+# Application identity, used for key prefix and tracing labels.
+app:
+  env: "prod"
+  project: "shopa"
+  service: "edge-gateway"
+
+# External dependencies.
+database:
+  default:
+    link: "mysql:prod_user:prod_password@tcp(prod-mysql:3306)/shopa_edge_gateway_prod?charset=utf8mb4&parseTime=true&loc=Local"
+
+redis:
+  default:
+    address: "prod-redis:6379"
+    db: 0
+    pass: "replace-with-prod-redis-password"
+
+mq:
+  rabbitmq:
+    enabled: true
+    url: "amqp://prod_user:prod_password@prod-rabbitmq:5672/"
+    exchange: "shopa.events"
+
+# Service-to-service addresses (for RPC/http client usage, can be overridden per env).
+upstream:
+  edgeGateway: "edge-gateway:8000"
+  iam: "iam-svc:8001"
+  userProfile: "user-profile-svc:8001"
+  iamHttp: "http://iam-svc:8001"
+  userProfileHttp: "http://user-profile-svc:8003"
+  sellerShopHttp: "http://seller-shop-svc:8007"
+  mediaHttp: "http://media-svc:8006"
+  catalogHttp: "http://catalog-svc:8004"
+  inventoryHttp: "http://inventory-svc:8005"
+  iamGrpc: "iam-svc:9001"
+  userProfileGrpc: "user-profile-svc:8002"
+  sellerShopGrpc: "seller-shop-svc:50051"
+  catalogGrpc: "catalog-svc:9004"
+  inventoryGrpc: "inventory-svc:9005"
+  pointsGrpc: "points-svc:8012"
+
+gateway:
+  proxy:
+    defaultTimeoutMs: 15000
+    maxBodySizeMb: 64
+    streamTimeoutMs: 600000
+    writeRateLimitRps: 1000
+    streamRateLimitRps: 200
+
+# Object storage / media placeholders.
+storage:
+  provider: "local"
+  endpoint: ""
+  accessKey: ""
+  secretKey: ""
+  bucket: "shopa"
+
+logger:
+  level: "warn"
+  stdout: true

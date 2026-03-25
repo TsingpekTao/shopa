@@ -1,0 +1,401 @@
+﻿syntax = "proto3";
+
+package shopa.userprofile.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/user-profile-svc/api/v1;v1";
+
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/timestamp.proto";
+
+// Metadata convention (internal):
+// - x-request-id: recommended
+// - x-data-access-level: MASKED|FULL
+// - x-approval-ticket: required for FULL sensitive read
+
+service UserProfileService {
+  // ----------------------------
+  // Me APIs (external)
+  // ----------------------------
+  rpc GetMyProfile(GetMyProfileReq) returns (GetMyProfileRes);
+  rpc UpdateMyProfile(UpdateMyProfileReq) returns (UpdateMyProfileRes);
+
+  // Address list returns all active addresses at once (max 20).
+  rpc ListMyAddresses(ListMyAddressesReq) returns (ListMyAddressesRes);
+  rpc CreateMyAddress(CreateMyAddressReq) returns (CreateMyAddressRes);
+
+  // New semantic: replace address instead of in-place update.
+  rpc ReplaceMyAddress(ReplaceMyAddressReq) returns (ReplaceMyAddressRes);
+
+  // Backward compatibility endpoint (to be removed later).
+  rpc UpdateMyAddress(UpdateMyAddressReq) returns (UpdateMyAddressRes) {
+    option deprecated = true;
+  }
+
+  rpc DeleteMyAddress(DeleteMyAddressReq) returns (DeleteMyAddressRes);
+
+  // address_id absent or 0 means clear default address.
+  rpc SetMyDefaultAddress(SetMyDefaultAddressReq) returns (SetMyDefaultAddressRes);
+
+  // ----------------------------
+  // Internal APIs
+  // ----------------------------
+  rpc BatchGetProfileSummary(BatchGetProfileSummaryReq) returns (BatchGetProfileSummaryRes);
+  rpc GetProfileByUserId(GetProfileByUserIdReq) returns (GetProfileByUserIdRes);
+  rpc ListAddressesByUserId(ListAddressesByUserIdReq) returns (ListAddressesByUserIdRes);
+  rpc GetAddressById(GetAddressByIdReq) returns (GetAddressByIdRes);
+
+  // For order creation snapshot. Fulfillment must not re-read dynamic address.
+  rpc GetAddressSnapshotById(GetAddressSnapshotByIdReq) returns (GetAddressSnapshotByIdRes);
+
+  // Resolve user by phone for CS/risk systems with strict access control.
+  rpc ResolveUserIdByPhone(ResolveUserIdByPhoneReq) returns (ResolveUserIdByPhoneRes);
+}
+
+message ImageRef {
+  uint64 asset_id = 1;
+  string url = 2;
+}
+
+enum Gender {
+  GENDER_UNSPECIFIED = 0;
+  GENDER_MALE = 1;
+  GENDER_FEMALE = 2;
+  GENDER_OTHER = 3;
+}
+
+enum AddressStatus {
+  ADDRESS_STATUS_UNSPECIFIED = 0;
+  ADDRESS_STATUS_ACTIVE = 1;
+  ADDRESS_STATUS_DELETED = 2;
+  ADDRESS_STATUS_REPLACED = 3;
+}
+
+message UserProfile {
+  uint64 user_id = 1;
+  string display_name = 2;
+  ImageRef avatar = 3;
+  Gender gender = 4;
+  string birthday = 5; // YYYY-MM-DD
+  string locale = 6;
+  string timezone = 7;
+  bool marketing_opt_in = 8;
+
+  // Compatibility readonly field. Source of truth is user_address.is_default.
+  uint64 default_address_id = 9 [deprecated = true];
+
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+
+  // Optimistic concurrency version for profile aggregate.
+  uint64 profile_version = 12;
+
+  map<string, string> ext = 100;
+
+  reserved 50 to 79;
+}
+
+message UserProfileSummary {
+  uint64 user_id = 1;
+  string display_name = 2;
+  ImageRef avatar = 3;
+}
+
+message UserAddress {
+  uint64 address_id = 1;
+  uint64 user_id = 2;
+  AddressStatus status = 3;
+
+  string label = 4;
+  string receiver_name = 5;
+  string receiver_phone = 6;
+
+  string country_code = 7;
+  string province_code = 8;
+  string province_name = 9;
+  string city_code = 10;
+  string city_name = 11;
+  string district_code = 12;
+  string district_name = 13;
+  string street = 14;
+  string detail = 15;
+  string postal_code = 16;
+
+  bool is_default = 17;
+
+  double latitude = 18;
+  double longitude = 19;
+
+  google.protobuf.Timestamp created_at = 20;
+  google.protobuf.Timestamp updated_at = 21;
+
+  // Optimistic concurrency version for address row.
+  uint64 address_version = 22;
+
+  // Optional trace field for replace chain.
+  uint64 replaced_from_address_id = 23;
+
+  map<string, string> ext = 100;
+
+  reserved 60 to 79;
+}
+
+message AddressSnapshot {
+  uint64 source_address_id = 1;
+  uint64 source_address_version = 2;
+  uint64 user_id = 3;
+
+  string receiver_name = 4;
+  string receiver_phone = 5;
+  string country_code = 6;
+  string province_code = 7;
+  string province_name = 8;
+  string city_code = 9;
+  string city_name = 10;
+  string district_code = 11;
+  string district_name = 12;
+  string street = 13;
+  string detail = 14;
+  string postal_code = 15;
+
+  double latitude = 16;
+  double longitude = 17;
+
+  google.protobuf.Timestamp snapshot_at = 18;
+}
+
+// ----------------------------
+// Profile APIs
+// ----------------------------
+message GetMyProfileReq {
+  bool include_addresses = 1;
+}
+
+message GetMyProfileRes {
+  UserProfile profile = 1;
+  repeated UserAddress addresses = 2;
+
+  // Version of address-book aggregate for default-address CAS.
+  uint64 address_book_version = 3;
+}
+
+message UserProfilePatch {
+  string display_name = 1;
+  ImageRef avatar = 2;
+  Gender gender = 3;
+  string birthday = 4;
+  string locale = 5;
+  string timezone = 6;
+  bool marketing_opt_in = 7;
+
+  // default_address_id write path removed.
+  reserved 8;
+
+  map<string, string> ext = 100;
+}
+
+message UpdateMyProfileReq {
+  UserProfilePatch profile = 1;
+  google.protobuf.FieldMask update_mask = 2;
+
+  // Required CAS value from latest read.
+  uint64 expected_profile_version = 3;
+}
+
+message UpdateMyProfileRes {
+  UserProfile profile = 1;
+}
+
+// ----------------------------
+// Address APIs
+// ----------------------------
+message ListMyAddressesReq {
+  // Paging removed intentionally. Active addresses are capped (<=20).
+  reserved 1, 2;
+  bool include_deleted = 3;
+}
+
+message ListMyAddressesRes {
+  repeated UserAddress addresses = 1;
+
+  // Deprecated fields kept for backward compatibility.
+  uint32 page = 2 [deprecated = true];
+  uint32 page_size = 3 [deprecated = true];
+  uint32 total = 4 [deprecated = true];
+
+  // Version of address-book aggregate for CAS operations.
+  uint64 address_book_version = 5;
+}
+
+message AddressCreate {
+  string label = 1;
+  string receiver_name = 2;
+  string receiver_phone = 3;
+
+  string country_code = 4;
+  string province_code = 5;
+  string province_name = 6;
+  string city_code = 7;
+  string city_name = 8;
+  string district_code = 9;
+  string district_name = 10;
+
+  string street = 11;
+  string detail = 12;
+  string postal_code = 13;
+
+  double latitude = 14;
+  double longitude = 15;
+
+  map<string, string> ext = 100;
+}
+
+message CreateMyAddressReq {
+  AddressCreate address = 1;
+  bool set_as_default = 2;
+
+  // Suggested when set_as_default=true.
+  uint64 expected_address_book_version = 3;
+}
+
+message CreateMyAddressRes {
+  UserAddress address = 1;
+  uint64 address_book_version = 2;
+}
+
+message AddressPatch {
+  string label = 1;
+  string receiver_name = 2;
+  string receiver_phone = 3;
+
+  string country_code = 4;
+  string province_code = 5;
+  string province_name = 6;
+  string city_code = 7;
+  string city_name = 8;
+  string district_code = 9;
+  string district_name = 10;
+
+  string street = 11;
+  string detail = 12;
+  string postal_code = 13;
+
+  double latitude = 14;
+  double longitude = 15;
+
+  map<string, string> ext = 100;
+}
+
+// Legacy endpoint request.
+message UpdateMyAddressReq {
+  uint64 address_id = 1;
+  AddressPatch address = 2;
+  google.protobuf.FieldMask update_mask = 3;
+  uint64 expected_address_version = 4;
+}
+
+message UpdateMyAddressRes {
+  UserAddress address = 1;
+  uint64 address_book_version = 2;
+}
+
+message ReplaceMyAddressReq {
+  uint64 source_address_id = 1;
+  AddressPatch address = 2;
+  google.protobuf.FieldMask update_mask = 3;
+  bool set_as_default = 4;
+
+  // Required CAS value from source address.
+  uint64 expected_source_address_version = 5;
+
+  // Suggested when set_as_default=true.
+  uint64 expected_address_book_version = 6;
+}
+
+message ReplaceMyAddressRes {
+  uint64 source_address_id = 1;
+  UserAddress new_address = 2;
+  uint64 address_book_version = 3;
+}
+
+message DeleteMyAddressReq {
+  uint64 address_id = 1;
+  uint64 expected_address_version = 2;
+}
+
+message DeleteMyAddressRes {
+  uint64 address_book_version = 1;
+}
+
+message SetMyDefaultAddressReq {
+  // optional: absent or 0 means clear default address.
+  optional uint64 address_id = 1;
+
+  // Required CAS value from latest list/get response.
+  uint64 expected_address_book_version = 2;
+}
+
+message SetMyDefaultAddressRes {
+  // 0 means no default address.
+  uint64 default_address_id = 1;
+  uint64 address_book_version = 2;
+}
+
+// ----------------------------
+// Internal query APIs
+// ----------------------------
+message BatchGetProfileSummaryReq {
+  repeated uint64 user_ids = 1;
+}
+
+message BatchGetProfileSummaryRes {
+  repeated UserProfileSummary users = 1;
+}
+
+message GetProfileByUserIdReq {
+  uint64 user_id = 1;
+  bool include_addresses = 2;
+}
+
+message GetProfileByUserIdRes {
+  UserProfile profile = 1;
+  repeated UserAddress addresses = 2;
+  uint64 address_book_version = 3;
+}
+
+message ListAddressesByUserIdReq {
+  uint64 user_id = 1;
+  bool include_deleted = 2;
+}
+
+message ListAddressesByUserIdRes {
+  repeated UserAddress addresses = 1;
+  uint64 address_book_version = 2;
+}
+
+message GetAddressByIdReq {
+  uint64 address_id = 1;
+}
+
+message GetAddressByIdRes {
+  UserAddress address = 1;
+}
+
+message GetAddressSnapshotByIdReq {
+  uint64 address_id = 1;
+}
+
+message GetAddressSnapshotByIdRes {
+  AddressSnapshot snapshot = 1;
+}
+
+message ResolveUserIdByPhoneReq {
+  string phone = 1; // Recommended E.164 format.
+  bool include_profile_summary = 2;
+}
+
+message ResolveUserIdByPhoneRes {
+  bool found = 1;
+  uint64 user_id = 2;
+  UserProfileSummary profile_summary = 3;
+  string phone_masked = 4;
+}

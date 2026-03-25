@@ -1,0 +1,374 @@
+﻿syntax = "proto3";
+
+package shopa.iam.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/iam-svc/api/v1;iamv1";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+// AuthService defines external authentication APIs.
+//
+// Risk context convention:
+// 1) Gateway should inject metadata keys for transport-level risk fields:
+//    - x-client-ip
+//    - x-user-agent
+//    - x-request-id
+//    - x-forwarded-for (optional)
+// 2) Request-level RiskContext keeps front-end generated fields (fingerprint/device/captcha).
+service AuthService {
+  rpc SendSmsCode(SendSmsCodeReq) returns (SendSmsCodeRes);
+
+  rpc RegisterByPassword(RegisterByPasswordReq) returns (RegisterByPasswordRes);
+
+  rpc LoginByPassword(LoginByPasswordReq) returns (LoginByPasswordRes);
+  rpc LoginBySms(LoginBySmsReq) returns (LoginBySmsRes);
+
+  rpc VerifyMfaChallenge(VerifyMfaChallengeReq) returns (VerifyMfaChallengeRes);
+
+  rpc RefreshToken(RefreshTokenReq) returns (RefreshTokenRes);
+  rpc Logout(LogoutReq) returns (google.protobuf.Empty);
+
+  rpc GetMySession(google.protobuf.Empty) returns (GetMySessionRes);
+
+  // ChangePassword requires logged-in context and old password.
+  rpc ChangePassword(ChangePasswordReq) returns (ChangePasswordRes);
+
+  // ResetPasswordBySms supports forgot-password flow by sms verification.
+  rpc ResetPasswordBySms(ResetPasswordBySmsReq) returns (ResetPasswordBySmsRes);
+
+  // OAuth placeholder APIs for v1: definitions first, logic TODO later.
+  rpc LoginByOAuth(LoginByOAuthReq) returns (LoginByOAuthRes);
+  rpc BindOAuth(BindOAuthReq) returns (BindOAuthRes);
+  rpc UnbindOAuth(UnbindOAuthReq) returns (UnbindOAuthRes);
+}
+
+// InternalService defines internal IAM APIs for gateway and other services.
+service InternalService {
+  rpc GetAuthUserById(GetAuthUserByIdReq) returns (GetAuthUserByIdRes);
+  rpc BatchGetAuthUsers(BatchGetAuthUsersReq) returns (BatchGetAuthUsersRes);
+  rpc VerifyAccessToken(VerifyAccessTokenReq) returns (VerifyAccessTokenRes);
+  rpc CheckKycStatus(CheckKycStatusReq) returns (CheckKycStatusRes);
+  rpc HasShopRole(HasShopRoleReq) returns (HasShopRoleRes);
+  rpc AssignShopSellerRole(AssignShopSellerRoleReq) returns (AssignShopSellerRoleRes);
+  rpc RevokeShopSellerRoleAndBumpToken(RevokeShopSellerRoleAndBumpTokenReq) returns (RevokeShopSellerRoleAndBumpTokenRes);
+}
+
+enum SmsScene {
+  SMS_SCENE_UNSPECIFIED = 0;
+  SMS_SCENE_REGISTER = 1;
+  SMS_SCENE_LOGIN = 2;
+  SMS_SCENE_MFA = 3;
+  SMS_SCENE_RESET_PASSWORD = 4;
+}
+
+enum LoginChannel {
+  LOGIN_CHANNEL_UNSPECIFIED = 0;
+  LOGIN_CHANNEL_PASSWORD = 1;
+  LOGIN_CHANNEL_SMS = 2;
+  LOGIN_CHANNEL_OAUTH = 3;
+}
+
+enum AccountStatus {
+  ACCOUNT_STATUS_UNSPECIFIED = 0;
+  ACCOUNT_STATUS_ACTIVE = 1;
+  ACCOUNT_STATUS_LOCKED = 2;
+  ACCOUNT_STATUS_DISABLED = 3;
+  ACCOUNT_STATUS_REVIEW = 4;
+}
+
+enum RoleCode {
+  ROLE_CODE_UNSPECIFIED = 0;
+  ROLE_CODE_CUSTOMER = 1;
+  ROLE_CODE_SELLER = 2;
+  ROLE_CODE_ADMIN = 3;
+  ROLE_CODE_CS = 4;
+}
+
+enum ScopeType {
+  SCOPE_TYPE_UNSPECIFIED = 0;
+  SCOPE_TYPE_GLOBAL = 1;
+  SCOPE_TYPE_SHOP = 2;
+}
+
+enum OAuthProvider {
+  OAUTH_PROVIDER_UNSPECIFIED = 0;
+  OAUTH_PROVIDER_WECHAT = 1;
+  OAUTH_PROVIDER_ALIPAY = 2;
+}
+
+enum KycType {
+  KYC_TYPE_UNSPECIFIED = 0;
+  KYC_TYPE_PERSONAL = 1;
+  KYC_TYPE_ENTERPRISE = 2;
+}
+
+message RiskContext {
+  string fingerprint = 1;
+  string device_id = 2;
+  string captcha_token = 3;
+}
+
+message RoleItem {
+  RoleCode role_code = 1;
+  ScopeType scope_type = 2;
+  uint64 scope_id = 3;
+}
+
+message MembershipSummary {
+  string level_code = 1;
+  uint64 points = 2;
+  google.protobuf.Timestamp expire_at = 3;
+}
+
+message SessionSummary {
+  uint64 user_id = 1;
+  AccountStatus account_status = 2;
+  repeated RoleItem roles = 3;
+  MembershipSummary membership = 4;
+  google.protobuf.Timestamp last_login_at = 5;
+  string last_login_ip = 6;
+}
+
+message TokenPair {
+  string token_type = 1;
+  string access_token = 2;
+  uint32 access_expires_in = 3;
+  string refresh_token = 4;
+  uint32 refresh_expires_in = 5;
+  string sid = 6;
+}
+
+message MfaChallenge {
+  string challenge_id = 1;
+  google.protobuf.Timestamp expire_at = 2;
+}
+
+message AuthResult {
+  oneof result {
+    TokenPair token_pair = 1;
+    MfaChallenge mfa_challenge = 2;
+  }
+}
+
+message AuthUserSummary {
+  uint64 user_id = 1;
+  string phone = 2;
+  string email = 3;
+  AccountStatus account_status = 4;
+  repeated RoleItem roles = 5;
+  MembershipSummary membership = 6;
+  uint32 token_version = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+message SendSmsCodeReq {
+  SmsScene scene = 1;
+  string phone = 2;
+  RiskContext risk = 3;
+}
+
+message SendSmsCodeRes {
+  uint32 resend_after_seconds = 1;
+}
+
+message RegisterByPasswordReq {
+  string phone = 1;
+  string sms_code = 2;
+  string password = 3;
+  RiskContext risk = 4;
+}
+
+message RegisterByPasswordRes {
+  uint64 user_id = 1;
+  // Initial username should be generated by service, ex: 用户_XXXXXX.
+  string init_display_name = 2;
+  AuthResult auth = 3;
+  SessionSummary session = 4;
+}
+
+message LoginByPasswordReq {
+  // Identifier supports phone or email.
+  string identifier = 1;
+  string password = 2;
+  RiskContext risk = 3;
+}
+
+message LoginByPasswordRes {
+  LoginChannel channel = 1;
+  AuthResult auth = 2;
+  SessionSummary session = 3;
+}
+
+message LoginBySmsReq {
+  string phone = 1;
+  string sms_code = 2;
+  RiskContext risk = 3;
+}
+
+message LoginBySmsRes {
+  LoginChannel channel = 1;
+  AuthResult auth = 2;
+  SessionSummary session = 3;
+}
+
+message VerifyMfaChallengeReq {
+  string challenge_id = 1;
+  string sms_code = 2;
+  RiskContext risk = 3;
+}
+
+message VerifyMfaChallengeRes {
+  TokenPair token_pair = 1;
+  SessionSummary session = 2;
+}
+
+message RefreshTokenReq {
+  string refresh_token = 1;
+  RiskContext risk = 2;
+}
+
+message RefreshTokenRes {
+  TokenPair token_pair = 1;
+}
+
+message LogoutReq {
+  // Empty means current session from token context.
+  string refresh_token = 1;
+  bool all_devices = 2;
+}
+
+message GetMySessionRes {
+  SessionSummary session = 1;
+}
+
+message ChangePasswordReq {
+  string old_password = 1;
+  string new_password = 2;
+  RiskContext risk = 3;
+}
+
+message ChangePasswordRes {
+  bool updated = 1;
+}
+
+message ResetPasswordBySmsReq {
+  string phone = 1;
+  string sms_code = 2;
+  string new_password = 3;
+  RiskContext risk = 4;
+}
+
+message ResetPasswordBySmsRes {
+  bool updated = 1;
+}
+
+message LoginByOAuthReq {
+  OAuthProvider provider = 1;
+  string code = 2;
+  string state = 3;
+  RiskContext risk = 4;
+}
+
+message LoginByOAuthRes {
+  LoginChannel channel = 1;
+  AuthResult auth = 2;
+  SessionSummary session = 3;
+}
+
+message BindOAuthReq {
+  OAuthProvider provider = 1;
+  string code = 2;
+  string state = 3;
+  RiskContext risk = 4;
+}
+
+message BindOAuthRes {
+  bool bound = 1;
+}
+
+message UnbindOAuthReq {
+  OAuthProvider provider = 1;
+  string provider_uid = 2;
+  RiskContext risk = 3;
+}
+
+message UnbindOAuthRes {
+  bool unbound = 1;
+}
+
+message GetAuthUserByIdReq {
+  uint64 user_id = 1;
+}
+
+message GetAuthUserByIdRes {
+  AuthUserSummary user = 1;
+}
+
+message BatchGetAuthUsersReq {
+  repeated uint64 user_ids = 1;
+}
+
+message BatchGetAuthUsersRes {
+  repeated AuthUserSummary users = 1;
+}
+
+message VerifyAccessTokenReq {
+  string access_token = 1;
+}
+
+message VerifyAccessTokenRes {
+  bool valid = 1;
+  uint64 user_id = 2;
+  string sid = 3;
+  uint32 token_version = 4;
+  AccountStatus account_status = 5;
+  repeated RoleItem roles = 6;
+  MembershipSummary membership = 7;
+  google.protobuf.Timestamp expires_at = 8;
+}
+
+message CheckKycStatusReq {
+  uint64 user_id = 1;
+}
+
+message CheckKycStatusRes {
+  bool verified = 1;
+  KycType kyc_type = 2;
+  string verified_subject_id = 3;
+  google.protobuf.Timestamp verified_at = 4;
+}
+
+message HasShopRoleReq {
+  uint64 user_id = 1;
+  RoleCode role_code = 2;
+  ScopeType scope_type = 3;
+  uint64 scope_id = 4;
+  string scope_no = 5;
+}
+
+message HasShopRoleRes {
+  bool has_role = 1;
+}
+
+message AssignShopSellerRoleReq {
+  uint64 user_id = 1;
+  uint64 scope_id = 2;
+  string scope_no = 3;
+}
+
+message AssignShopSellerRoleRes {
+  bool assigned = 1;
+}
+
+message RevokeShopSellerRoleAndBumpTokenReq {
+  uint64 user_id = 1;
+  uint64 scope_id = 2;
+  string scope_no = 3;
+  string reason_code = 4;
+}
+
+message RevokeShopSellerRoleAndBumpTokenRes {
+  bool revoked = 1;
+  uint32 token_version = 2;
+}

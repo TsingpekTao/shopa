@@ -1,0 +1,70 @@
+﻿# edge-gateway configuration (local environment).
+# Start command example:
+#   gf run main.go --gf.gcfg.file=config.local.yaml
+
+# HTTP server configuration (OpenAPI/Swagger + optional REST APIs).
+server:
+  address: ":8000"
+  openapiPath: "/api.json"
+  swaggerPath: "/swagger"
+
+# Application identity, used for key prefix and tracing labels.
+app:
+  env: "local"
+  project: "shopa"
+  service: "edge-gateway"
+
+# External dependencies.
+database:
+  default:
+    link: "mysql:root:123456@tcp(127.0.0.1:3306)/shopa_edge_gateway?charset=utf8mb4&parseTime=true&loc=Local"
+
+redis:
+  default:
+    address: "127.0.0.1:6379"
+    db: 0
+    pass: ""
+
+mq:
+  rabbitmq:
+    enabled: false
+    url: "amqp://guest:guest@127.0.0.1:5672/"
+    exchange: "shopa.events"
+
+# Service-to-service addresses (for RPC/http client usage, can be overridden per env).
+upstream:
+  edgeGateway: "edge-gateway:8000"
+  iam: "iam-svc:8001"
+  userProfile: "user-profile-svc:8001"
+  iamHttp: "http://127.0.0.1:8001"
+  userProfileHttp: "http://127.0.0.1:8003"
+  sellerShopHttp: "http://127.0.0.1:8007"
+  mediaHttp: "http://127.0.0.1:8006"
+  catalogHttp: "http://127.0.0.1:8004"
+  inventoryHttp: "http://127.0.0.1:8005"
+  iamGrpc: "127.0.0.1:9001"
+  userProfileGrpc: "127.0.0.1:8002"
+  sellerShopGrpc: "127.0.0.1:50051"
+  catalogGrpc: "127.0.0.1:9004"
+  inventoryGrpc: "127.0.0.1:9005"
+  pointsGrpc: "127.0.0.1:8012"
+
+gateway:
+  proxy:
+    defaultTimeoutMs: 15000
+    maxBodySizeMb: 64
+    streamTimeoutMs: 600000
+    writeRateLimitRps: 1000
+    streamRateLimitRps: 200
+
+# Object storage / media placeholders.
+storage:
+  provider: "local"
+  endpoint: ""
+  accessKey: ""
+  secretKey: ""
+  bucket: "shopa"
+
+logger:
+  level: "all"
+  stdout: true

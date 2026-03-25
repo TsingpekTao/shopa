@@ -1,0 +1,87 @@
+﻿# Development environment configuration (shared dev server).
+# Start command example:
+#   gf run main.go --gf.gcfg.file=config.dev.yaml
+
+server:
+  address: ":8001"
+  openapiPath: "/api.json"
+  swaggerPath: "/swagger"
+
+app:
+  env: "dev"
+  project: "shopa"
+  service: "iam"
+
+iam:
+  jwt:
+    secret: "replace-with-dev-jwt-secret"
+    accessExpireSeconds: 900
+    refreshExpireSeconds: 1209600
+  register:
+    defaultUsernamePrefix: "用户_"
+  security:
+    loginFailMax: 5
+    mfaOnIpChange: true
+  snowflake:
+    node: 2
+
+jwt:
+  secret: "replace-with-dev-jwt-secret"
+  accessExpireSeconds: 900
+  refreshExpireSeconds: 1209600
+security:
+  loginFailMax: 5
+  mfaOnIpChange: true
+snowflake:
+  node: 2
+
+database:
+  default:
+    link: "mysql:dev_user:dev_password@tcp(dev-mysql:3306)/shopa_dev?charset=utf8mb4&parseTime=true&loc=Local"
+
+redis:
+  default:
+    address: "dev-redis:6379"
+    db: 0
+    pass: "replace-with-dev-redis-password"
+
+sms:
+  provider: "mock"
+  aliyun:
+    accessKeyId: ""
+    accessKeySecret: ""
+    signName: ""
+    endpoint: ""
+
+risk:
+  provider: "mock"
+  endpoint: ""
+  appId: ""
+  appSecret: ""
+  timeoutMs: 800
+
+mq:
+  rabbitmq:
+    enabled: false
+    url: "amqp://guest:guest@dev-rabbitmq:5672/"
+    exchange: "shopa.user.events"
+    routingKeyUserRegistered: "iam.user.registered"
+
+geoip:
+  enabled: false
+  mmdbPath: "manifest/data/GeoLite2-City.mmdb"
+
+oauth:
+  wechat:
+    appId: ""
+    appSecret: ""
+    redirectUri: ""
+  alipay:
+    appId: ""
+    privateKey: ""
+    publicKey: ""
+    redirectUri: ""
+
+logger:
+  level: "all"
+  stdout: true

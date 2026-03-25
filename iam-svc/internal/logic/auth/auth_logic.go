@@ -1,0 +1,108 @@
+package auth
+
+import (
+	"context"
+
+	v1 "github.com/TsingpekTao/shopa/iam-svc/api/v1"
+	"github.com/TsingpekTao/shopa/iam-svc/internal/service"
+	"google.golang.org/protobuf/types/known/emptypb"
+)
+
+// sAuth 是 GF service 层门面，实现接口到 core 业务对象的转发。
+type sAuth struct {
+	core *Service
+}
+
+// newAuthLogic 创建认证逻辑实例。
+func newAuthLogic() *sAuth {
+	return &sAuth{core: New()}
+}
+
+func init() {
+	service.RegisterAuth(newAuthLogic())
+}
+
+// StartBackgroundWorkers 启动 IAM 后台任务（Outbox 分发、归档清理等）。
+func (s *sAuth) StartBackgroundWorkers(ctx context.Context) {
+	s.core.StartBackgroundWorkers(ctx)
+}
+
+// SendSmsCode 发送短信验证码。
+func (s *sAuth) SendSmsCode(ctx context.Context, req *v1.SendSmsCodeReq) (*v1.SendSmsCodeRes, error) {
+	return s.core.SendSmsCode(ctx, req)
+}
+
+// RegisterByPassword 手机号+验证码+密码注册。
+func (s *sAuth) RegisterByPassword(ctx context.Context, req *v1.RegisterByPasswordReq) (*v1.RegisterByPasswordRes, error) {
+	return s.core.RegisterByPassword(ctx, req)
+}
+
+// LoginByPassword 账号密码登录。
+func (s *sAuth) LoginByPassword(ctx context.Context, req *v1.LoginByPasswordReq) (*v1.LoginByPasswordRes, error) {
+	return s.core.LoginByPassword(ctx, req)
+}
+
+// LoginBySms 手机验证码登录。
+func (s *sAuth) LoginBySms(ctx context.Context, req *v1.LoginBySmsReq) (*v1.LoginBySmsRes, error) {
+	return s.core.LoginBySms(ctx, req)
+}
+
+// VerifyMfaChallenge 完成 MFA 二次验证。
+func (s *sAuth) VerifyMfaChallenge(ctx context.Context, req *v1.VerifyMfaChallengeReq) (*v1.VerifyMfaChallengeRes, error) {
+	return s.core.VerifyMfaChallenge(ctx, req)
+}
+
+// RefreshToken 刷新 access token。
+func (s *sAuth) RefreshToken(ctx context.Context, req *v1.RefreshTokenReq) (*v1.RefreshTokenRes, error) {
+	return s.core.RefreshToken(ctx, req)
+}
+
+// Logout 注销当前会话或全部会话。
+func (s *sAuth) Logout(ctx context.Context, req *v1.LogoutReq) (*emptypb.Empty, error) {
+	return s.core.Logout(ctx, req)
+}
+
+// GetMySession 返回当前登录会话摘要。
+func (s *sAuth) GetMySession(ctx context.Context, req *emptypb.Empty) (*v1.GetMySessionRes, error) {
+	return s.core.GetMySession(ctx, req)
+}
+
+// ChangePassword 登录态下修改密码。
+func (s *sAuth) ChangePassword(ctx context.Context, req *v1.ChangePasswordReq) (*v1.ChangePasswordRes, error) {
+	return s.core.ChangePassword(ctx, req)
+}
+
+// ResetPasswordBySms 通过短信验证码重置密码。
+func (s *sAuth) ResetPasswordBySms(ctx context.Context, req *v1.ResetPasswordBySmsReq) (*v1.ResetPasswordBySmsRes, error) {
+	return s.core.ResetPasswordBySms(ctx, req)
+}
+
+// LoginByOAuth 第三方登录占位接口。
+func (s *sAuth) LoginByOAuth(ctx context.Context, req *v1.LoginByOAuthReq) (*v1.LoginByOAuthRes, error) {
+	return s.core.LoginByOAuth(ctx, req)
+}
+
+// BindOAuth 第三方账号绑定占位接口。
+func (s *sAuth) BindOAuth(ctx context.Context, req *v1.BindOAuthReq) (*v1.BindOAuthRes, error) {
+	return s.core.BindOAuth(ctx, req)
+}
+
+// UnbindOAuth 第三方账号解绑占位接口。
+func (s *sAuth) UnbindOAuth(ctx context.Context, req *v1.UnbindOAuthReq) (*v1.UnbindOAuthRes, error) {
+	return s.core.UnbindOAuth(ctx, req)
+}
+
+// GetAuthUserById 供内部服务按 user_id 查询认证信息。
+func (s *sAuth) GetAuthUserById(ctx context.Context, req *v1.GetAuthUserByIdReq) (*v1.GetAuthUserByIdRes, error) {
+	return s.core.GetAuthUserById(ctx, req)
+}
+
+// BatchGetAuthUsers 供内部服务批量查询认证信息。
+func (s *sAuth) BatchGetAuthUsers(ctx context.Context, req *v1.BatchGetAuthUsersReq) (*v1.BatchGetAuthUsersRes, error) {
+	return s.core.BatchGetAuthUsers(ctx, req)
+}
+
+// VerifyAccessToken 校验 access token 有效性。
+func (s *sAuth) VerifyAccessToken(ctx context.Context, req *v1.VerifyAccessTokenReq) (*v1.VerifyAccessTokenRes, error) {
+	return s.core.VerifyAccessToken(ctx, req)
+}

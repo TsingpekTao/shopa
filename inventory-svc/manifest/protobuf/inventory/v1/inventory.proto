@@ -1,0 +1,246 @@
+﻿syntax = "proto3";
+
+package shopa.inventory.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/inventory-svc/api/v1;inventoryv1";
+
+import "google/protobuf/timestamp.proto";
+
+// Metadata conventions:
+// - x-idempotency-key: required for write RPCs
+// - x-request-id: recommended
+// - x-user-id: required for seller/admin writes
+// - x-service-name: required for internal order/cancel calls
+
+// Seller-facing inventory APIs.
+service SellerInventoryService {
+  // Server validates ownership by x-user-id and req.shop_no.
+  rpc BatchAdjustMySkuStock(BatchAdjustMySkuStockReq) returns (BatchAdjustMySkuStockRes);
+}
+
+// Internal APIs for order flow.
+service OrderInventoryService {
+  rpc ReserveStock(ReserveStockReq) returns (ReserveStockRes);
+  rpc ConfirmReservation(ConfirmReservationReq) returns (ConfirmReservationRes);
+  rpc CancelReservation(CancelReservationReq) returns (CancelReservationRes);
+}
+
+// Internal/admin APIs.
+service AdminInventoryService {
+  rpc BatchAdjustStockByAdmin(BatchAdjustStockByAdminReq) returns (BatchAdjustStockByAdminRes);
+  rpc SetHotSku(SetHotSkuReq) returns (SetHotSkuRes);
+}
+
+service InternalInventoryService {
+  rpc GetSkuInventory(GetSkuInventoryReq) returns (GetSkuInventoryRes);
+  rpc BatchGetSkuInventory(BatchGetSkuInventoryReq) returns (BatchGetSkuInventoryRes);
+
+  // Upsert sku context (spu/shop ownership) from catalog.
+  rpc UpsertSkuContext(UpsertSkuContextReq) returns (UpsertSkuContextRes);
+}
+
+enum StockStatus {
+  STOCK_STATUS_UNSPECIFIED = 0;
+  STOCK_STATUS_IN_STOCK = 1;
+  STOCK_STATUS_OUT_OF_STOCK = 2;
+}
+
+enum ReservationStatus {
+  RESERVATION_STATUS_UNSPECIFIED = 0;
+  RESERVATION_STATUS_RESERVED = 1;
+  RESERVATION_STATUS_CONFIRMED = 2;
+  RESERVATION_STATUS_CANCELED = 3;
+  RESERVATION_STATUS_EXPIRED = 4;
+  RESERVATION_STATUS_FAILED = 5;
+}
+
+enum ReserveMode {
+  RESERVE_MODE_UNSPECIFIED = 0;
+  RESERVE_MODE_ALL_OR_NOTHING = 1;
+}
+
+enum AdjustReasonCode {
+  ADJUST_REASON_CODE_UNSPECIFIED = 0;
+  ADJUST_REASON_CODE_SELLER_REPLENISH = 1;
+  ADJUST_REASON_CODE_SELLER_CORRECTION = 2;
+  ADJUST_REASON_CODE_ADMIN_MANUAL = 3;
+  ADJUST_REASON_CODE_PURCHASE_IN = 4;
+  ADJUST_REASON_CODE_RETURN_IN = 5;
+  ADJUST_REASON_CODE_DAMAGE_OUT = 6;
+  ADJUST_REASON_CODE_RECONCILE = 7;
+}
+
+message InventoryStock {
+  string sku_no = 1;
+  string spu_no = 2;
+  string shop_no = 3;
+
+  uint64 total_qty = 4;
+  uint64 locked_qty = 5;
+  uint64 available_qty = 6;
+
+  uint64 stock_version = 7;
+  StockStatus stock_status = 8;
+
+  bool is_hot = 9;
+  google.protobuf.Timestamp updated_at = 10;
+}
+
+message ReserveItem {
+  string sku_no = 1;
+  string spu_no = 2;
+  string shop_no = 3;
+  uint32 qty = 4;
+}
+
+message ReservedItem {
+  string sku_no = 1;
+  string spu_no = 2;
+  string shop_no = 3;
+  uint32 qty = 4;
+  uint64 stock_version = 5;
+}
+
+message ReservationRecord {
+  string reservation_no = 1;
+  string order_no = 2;
+  uint64 user_id = 3;
+  ReservationStatus status = 4;
+  google.protobuf.Timestamp expired_at = 5;
+  repeated ReservedItem items = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+message ReserveFailedItem {
+  string sku_no = 1;
+  string spu_no = 2;
+  string shop_no = 3;
+  uint32 requested_qty = 4;
+  uint64 available_qty = 5;
+  string error_code = 6;
+  string error_message = 7;
+}
+
+message ReserveStockReq {
+  string reservation_no = 1;
+  string order_no = 2;
+  uint64 user_id = 3;
+  google.protobuf.Timestamp expired_at = 4;
+  repeated ReserveItem items = 5;
+  ReserveMode mode = 6;
+}
+
+message ReserveStockRes {
+  bool success = 1;
+  ReservationRecord reservation = 2;
+  repeated ReserveFailedItem failed_items = 3;
+  bool rolled_back = 4;
+}
+
+message ConfirmReservationReq {
+  string reservation_no = 1;
+  string order_no = 2;
+}
+
+message ConfirmReservationRes {
+  ReservationRecord reservation = 1;
+}
+
+message CancelReservationReq {
+  string reservation_no = 1;
+  string order_no = 2;
+  string reason_code = 3;
+}
+
+message CancelReservationRes {
+  ReservationRecord reservation = 1;
+}
+
+message SellerAdjustItem {
+  string sku_no = 1;
+  string spu_no = 2;
+  int64 delta_total_qty = 3;
+  string biz_no = 4;
+  AdjustReasonCode reason_code = 5;
+  string remark = 6;
+}
+
+message BatchAdjustMySkuStockReq {
+  string shop_no = 1;
+  repeated SellerAdjustItem items = 2;
+}
+
+message AdjustResultItem {
+  string sku_no = 1;
+  string spu_no = 2;
+  string shop_no = 3;
+  uint64 total_qty = 4;
+  uint64 locked_qty = 5;
+  uint64 available_qty = 6;
+  uint64 stock_version = 7;
+  StockStatus stock_status = 8;
+}
+
+message BatchAdjustMySkuStockRes {
+  repeated AdjustResultItem results = 1;
+}
+
+message AdminAdjustItem {
+  string sku_no = 1;
+  string spu_no = 2;
+  string shop_no = 3;
+  int64 delta_total_qty = 4;
+  string biz_no = 5;
+  AdjustReasonCode reason_code = 6;
+  string remark = 7;
+}
+
+message BatchAdjustStockByAdminReq {
+  repeated AdminAdjustItem items = 1;
+}
+
+message BatchAdjustStockByAdminRes {
+  repeated AdjustResultItem results = 1;
+}
+
+message GetSkuInventoryReq {
+  string sku_no = 1;
+}
+
+message GetSkuInventoryRes {
+  InventoryStock stock = 1;
+}
+
+message BatchGetSkuInventoryReq {
+  repeated string sku_nos = 1;
+}
+
+message BatchGetSkuInventoryRes {
+  repeated InventoryStock stocks = 1;
+}
+
+message SetHotSkuReq {
+  string sku_no = 1;
+  bool is_hot = 2;
+}
+
+message SetHotSkuRes {
+  string sku_no = 1;
+  bool is_hot = 2;
+}
+
+message SkuContextItem {
+  string sku_no = 1;
+  string spu_no = 2;
+  string shop_no = 3;
+  bool enabled = 4;
+}
+
+message UpsertSkuContextReq {
+  repeated SkuContextItem items = 1;
+}
+
+message UpsertSkuContextRes {
+  uint64 updated_rows = 1;
+}

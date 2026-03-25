@@ -1,0 +1,124 @@
+syntax = "proto3";
+
+package shopa.edgegateway.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/edge-gateway/api/v1;edgegatewayv1";
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+
+service MeBffService {
+  rpc GetMyOverview(GetMyOverviewReq) returns (GetMyOverviewRes) {
+    option (google.api.http) = {
+      get: "/v1/me/overview"
+    };
+  }
+}
+
+service SellerBffService {
+  rpc GetSellerWorkbench(GetSellerWorkbenchReq) returns (GetSellerWorkbenchRes) {
+    option (google.api.http) = {
+      get: "/v1/seller/workbench"
+    };
+  }
+
+  rpc GetSellerShopDashboard(GetSellerShopDashboardReq) returns (GetSellerShopDashboardRes) {
+    option (google.api.http) = {
+      get: "/v1/seller/shops/{shop_no}/dashboard"
+    };
+  }
+}
+
+message GetMyOverviewReq {}
+
+message RoleItem {
+  // BUYER / SELLER / ADMIN / CS_ADMIN ...
+  string role_code = 1;
+  // GLOBAL / SHOP / PLATFORM ...
+  string scope_type_code = 2;
+  // shop_no / platform_no ...
+  string scope_no = 3;
+}
+
+message GetMyOverviewRes {
+  uint64 user_id = 1;
+  // ACTIVE / DISABLED / LOCKED / DELETED ...
+  string account_status_code = 2;
+  repeated RoleItem roles = 3;
+  string display_name = 4;
+  string avatar_url = 5;
+  uint64 points = 6;
+
+  bool partial = 20;
+  repeated string degraded_fields = 21;
+}
+
+message GetSellerWorkbenchReq {}
+
+message SellerShopSummary {
+  string shop_no = 1;
+  string shop_name = 2;
+  string shop_display_name = 3;
+  // PROVISIONING / ACTIVE / FROZEN / CLOSED / PROVISION_FAILED ...
+  string shop_status_code = 4;
+  bool buyer_visible = 5;
+  google.protobuf.Timestamp updated_at = 6;
+}
+
+message SellerApplicationSummary {
+  string application_no = 1;
+  // DRAFT / SUBMITTED / REVIEWING / APPROVED / REJECTED / CANCELLED / SYSTEM_REJECTED ...
+  string application_status_code = 2;
+  int32 version = 3;
+  google.protobuf.Timestamp submitted_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}
+
+message SellerProductSummary {
+  uint64 total = 1;
+  uint64 on_shelf = 2;
+  uint64 off_shelf = 3;
+  uint64 reviewing = 4;
+  uint64 draft = 5;
+  uint64 rejected = 6;
+}
+
+message GetSellerWorkbenchRes {
+  uint64 user_id = 1;
+
+  // Gateway returns at most 10 shop summaries in workbench.
+  repeated SellerShopSummary shops = 2;
+  uint64 shops_total = 3;
+  bool shops_truncated = 4;
+
+  // Gateway returns at most 5 latest applications in workbench.
+  repeated SellerApplicationSummary latest_applications = 5;
+  uint64 applications_total = 6;
+  bool applications_truncated = 7;
+
+  SellerProductSummary product_summary = 8;
+
+  bool partial = 20;
+  repeated string degraded_fields = 21;
+}
+
+message GetSellerShopDashboardReq {
+  string shop_no = 1;
+}
+
+message InventoryRiskSummary {
+  uint64 low_stock_sku_count = 1;
+  uint64 out_of_stock_sku_count = 2;
+}
+
+message GetSellerShopDashboardRes {
+  string shop_no = 1;
+  string shop_name = 2;
+  // PROVISIONING / ACTIVE / FROZEN / CLOSED / PROVISION_FAILED ...
+  string shop_status_code = 3;
+  SellerProductSummary product_summary = 4;
+  InventoryRiskSummary inventory_risk = 5;
+
+  bool partial = 20;
+  repeated string degraded_fields = 21;
+}

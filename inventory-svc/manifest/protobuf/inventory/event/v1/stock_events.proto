@@ -1,0 +1,52 @@
+﻿syntax = "proto3";
+
+package shopa.inventory.event.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/inventory-svc/api/event/v1;inventoryeventv1";
+
+import "google/protobuf/timestamp.proto";
+
+enum StockStatus {
+  STOCK_STATUS_UNSPECIFIED = 0;
+  STOCK_STATUS_IN_STOCK = 1;
+  STOCK_STATUS_OUT_OF_STOCK = 2;
+}
+
+message EventMeta {
+  string event_id = 1;
+  string request_id = 2;
+  string producer = 3;
+  google.protobuf.Timestamp occurred_at = 4;
+}
+
+message StockProjectionChanged {
+  EventMeta meta = 1;
+  string sku_no = 2;
+  string spu_no = 3;
+  string shop_no = 4;
+  StockStatus stock_status = 5;
+  uint64 stock_version = 6;
+}
+
+message StockSoldOut {
+  EventMeta meta = 1;
+  string sku_no = 2;
+  string spu_no = 3;
+  string shop_no = 4;
+  uint64 stock_version = 5;
+}
+
+message StockRefilled {
+  EventMeta meta = 1;
+  string sku_no = 2;
+  string spu_no = 3;
+  string shop_no = 4;
+  uint64 stock_version = 5;
+}
+
+message ReservationExpireCheck {
+  EventMeta meta = 1;
+  string reservation_no = 2;
+  string order_no = 3;
+  google.protobuf.Timestamp expired_at = 4;
+}
