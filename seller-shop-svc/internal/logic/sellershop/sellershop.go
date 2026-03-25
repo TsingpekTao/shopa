@@ -37,7 +37,7 @@ const (
 	outboxStatusNew        = 1
 )
 
-// sSellerShop 是 seller-shop 领域服务实现，承载申请审核与店铺状态流转。
+// SellerShop 是 seller-shop 领域服务实现，负责入驻申请、审核流与店铺状态流转。
 type sSellerShop struct{}
 
 // outboxEventPayload 是 seller-shop 发到 MQ 的统一事件包裹结构。

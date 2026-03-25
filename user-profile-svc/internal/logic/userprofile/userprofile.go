@@ -23,7 +23,11 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// sUserProfile 是 user-profile 服务逻辑实现。
+// sUserProfile 实现 user-profile 服务的业务逻辑。
+// 核心约束如下：
+// 1) 资料字段变更推进 profile_version，供用户资料乐观并发使用；
+// 2) 默认地址投影变更推进 address_book_version，保障地址簿版本一致；
+// 3) 地址替换采用追加新行 + 旧行退役方式，避免污染旧的快照。
 type sUserProfile struct{}
 
 // New 创建 user-profile 逻辑实例。
@@ -156,7 +160,7 @@ func (s *sUserProfile) UpdateMyProfile(ctx context.Context, req *v1.UpdateMyProf
 	}
 
 	cols := dao.UserProfile.Columns()
-	// Bump profile_version for optimistic concurrency tracking.
+	// 递增 profile_version 以支持乐观并发控制。
 	data.ProfileVersion = gdb.Raw(cols.ProfileVersion + " + 1")
 	_, err = dao.UserProfile.Ctx(ctx).
 		Where(cols.UserId, userID).
@@ -182,7 +186,7 @@ func (s *sUserProfile) ListMyAddresses(ctx context.Context, req *v1.ListMyAddres
 		return nil, err
 	}
 
-	// New proto removes paging; keep fixed values for backward-compatible response fields.
+	// 新 proto 去掉分页请求字段，仍保持兼容的响应字段值。
 	page := consts.DefaultPage
 	pageSize := consts.MaxPageSize
 
@@ -231,7 +235,7 @@ func (s *sUserProfile) CreateMyAddress(ctx context.Context, req *v1.CreateMyAddr
 
 	var created *entity.UserAddress
 	err = dao.UserProfile.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		// Insert address.
+		// 插入地址记录。
 		r, insertErr := tx.Model(dao.UserAddress.Table()).
 			Data(do.UserAddress{
 				UserId:        userID,
@@ -264,13 +268,13 @@ func (s *sUserProfile) CreateMyAddress(ctx context.Context, req *v1.CreateMyAddr
 		}
 		addressID := uint64(lastID)
 
-		// Decide whether to set default.
+		// 决定是否将其设为默认地址。
 		if req.GetSetAsDefault() {
 			if setErr := setDefaultAddressTx(ctx, tx, userID, addressID); setErr != nil {
 				return setErr
 			}
 		} else {
-			// If profile has no default, set this as default automatically.
+			// 若画像尚无默认地址，则自动设置当前地址为默认。
 			var profile entity.UserProfile
 			cols := dao.UserProfile.Columns()
 			if scanErr := tx.Model(dao.UserProfile.Table()).Where(cols.UserId, userID).Scan(&profile); scanErr != nil {
@@ -283,7 +287,7 @@ func (s *sUserProfile) CreateMyAddress(ctx context.Context, req *v1.CreateMyAddr
 			}
 		}
 
-		// Read back created row.
+		// 读取刚插入的地址行。
 		var item entity.UserAddress
 		addrCols := dao.UserAddress.Columns()
 		if scanErr := tx.Model(dao.UserAddress.Table()).
@@ -425,7 +429,7 @@ func (s *sUserProfile) DeleteMyAddress(ctx context.Context, req *v1.DeleteMyAddr
 	err = dao.UserProfile.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		addrCols := dao.UserAddress.Columns()
 
-		// Ensure address exists and belongs to user.
+		// 确保地址存在且属于当前用户。
 		count, countErr := tx.Model(dao.UserAddress.Table()).
 			Where(addrCols.AddressId, req.GetAddressId()).
 			Where(addrCols.UserId, userID).
@@ -438,7 +442,7 @@ func (s *sUserProfile) DeleteMyAddress(ctx context.Context, req *v1.DeleteMyAddr
 			return gerror.NewCode(gcode.CodeNotFound, "address not found")
 		}
 
-		// Soft delete and clear default marker on address row.
+		// 软删除地址并清除默认标记。
 		_, delErr := tx.Model(dao.UserAddress.Table()).
 			Where(addrCols.AddressId, req.GetAddressId()).
 			Where(addrCols.UserId, userID).
@@ -451,7 +455,7 @@ func (s *sUserProfile) DeleteMyAddress(ctx context.Context, req *v1.DeleteMyAddr
 			return gerror.Wrap(delErr, "delete address failed")
 		}
 
-		// If this is profile default, clear profile.default_address_id.
+		// 若该地址为画像默认，则清理 profile.default_address_id。
 		profileCols := dao.UserProfile.Columns()
 		_, clearErr := tx.Model(dao.UserProfile.Table()).
 			Where(profileCols.UserId, userID).
@@ -485,8 +489,7 @@ func (s *sUserProfile) SetMyDefaultAddress(ctx context.Context, req *v1.SetMyDef
 	var addressBookVersion uint64
 
 	err = dao.UserProfile.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		// `address_id` is optional in proto:
-		// nil or 0 means clear default address.
+		// address_id 在 proto 中为可选，nil/0 表示清除默认地址。
 		if req.AddressId == nil || req.GetAddressId() == 0 {
 			if clearErr := clearDefaultAddressTx(ctx, tx, userID); clearErr != nil {
 				return clearErr
@@ -632,7 +635,7 @@ func (s *sUserProfile) ReplaceMyAddress(ctx context.Context, req *v1.ReplaceMyAd
 		addrCols := dao.UserAddress.Columns()
 		profileCols := dao.UserProfile.Columns()
 
-		// Lock source row to avoid concurrent fork updates.
+		// 锁住源地址行以避免并发重复替换。
 		var source entity.UserAddress
 		if scanErr := tx.Model(dao.UserAddress.Table()).
 			Where(addrCols.AddressId, req.GetSourceAddressId()).
@@ -649,7 +652,7 @@ func (s *sUserProfile) ReplaceMyAddress(ctx context.Context, req *v1.ReplaceMyAd
 			return gerror.NewCode(gcode.CodeInvalidParameter, "source address version conflict")
 		}
 
-		// Build replacement row from source and patch fields from request.
+		// 基于原地址与请求字段构建替换行。
 		data := do.UserAddress{
 			UserId:                userID,
 			Status:                consts.AddressStatusActive,
@@ -729,7 +732,7 @@ func (s *sUserProfile) ReplaceMyAddress(ctx context.Context, req *v1.ReplaceMyAd
 		}
 		newAddressID = uint64(lastID)
 
-		// Retire source row.
+		// 将源地址标记为 REPLACED。
 		_, updateErr := tx.Model(dao.UserAddress.Table()).
 			Where(addrCols.AddressId, source.AddressId).
 			Where(addrCols.UserId, userID).
@@ -749,7 +752,7 @@ func (s *sUserProfile) ReplaceMyAddress(ctx context.Context, req *v1.ReplaceMyAd
 				return setErr
 			}
 		} else {
-			// Keep compatibility projection when old default is replaced but not reassigned.
+			// 保持旧默认地址被替换但未重新分配的兼容性投影。
 			if source.IsDefault == 1 {
 				_, clearErr := tx.Model(dao.UserProfile.Table()).
 					Where(profileCols.UserId, userID).
@@ -761,7 +764,7 @@ func (s *sUserProfile) ReplaceMyAddress(ctx context.Context, req *v1.ReplaceMyAd
 			}
 		}
 
-		// Read new row snapshot.
+		// 读取新地址的快照。
 		if scanErr := tx.Model(dao.UserAddress.Table()).
 			Where(addrCols.AddressId, newAddressID).
 			Where(addrCols.UserId, userID).
@@ -948,14 +951,14 @@ func (s *sUserProfile) getAddressEntityByID(ctx context.Context, addressID uint6
 // userIDFromContext 从上下文提取 user_id。
 // 优先读业务 context（HTTP 中间件注入），其次读 gRPC metadata。
 func userIDFromContext(ctx context.Context) (uint64, error) {
-	// Prefer business context value (HTTP middleware can inject it).
+	// 优先读取业务上下文值（HTTP 中间件可注入）。
 	if v := ctx.Value(ctxkey.UserIDKey{}); v != nil {
 		userID := gconv.Uint64(v)
 		if userID > 0 {
 			return userID, nil
 		}
 	}
-	// Fallback to gRPC metadata (for RPC calls).
+	// 回退到 gRPC metadata 以兼容 RPC 场景。
 	md := grpcx.Ctx.IncomingMap(ctx)
 	for _, key := range []string{"user_id", "userid", "x-user-id", "uid"} {
 		if v := md.Get(key); v != nil {
@@ -1140,7 +1143,7 @@ func toProtoTimestamp(t *gtime.Time) *timestamppb.Timestamp {
 
 // setDefaultAddressTx 在事务中设置默认地址并同步地址簿版本号。
 func setDefaultAddressTx(ctx context.Context, tx gdb.TX, userID, addressID uint64) error {
-	// Verify target address exists and is active.
+	// 验证目标地址存在且处于活跃状态。
 	addrCols := dao.UserAddress.Columns()
 	count, err := tx.Model(dao.UserAddress.Table()).
 		Where(addrCols.AddressId, addressID).
@@ -1154,7 +1157,7 @@ func setDefaultAddressTx(ctx context.Context, tx gdb.TX, userID, addressID uint6
 		return gerror.NewCode(gcode.CodeNotFound, "address not found")
 	}
 
-	// Clear default flags.
+	// 清除所有地址的默认标记。
 	_, err = tx.Model(dao.UserAddress.Table()).
 		Where(addrCols.UserId, userID).
 		Where(addrCols.Status, consts.AddressStatusActive).
@@ -1163,7 +1166,7 @@ func setDefaultAddressTx(ctx context.Context, tx gdb.TX, userID, addressID uint6
 	if err != nil {
 		return gerror.Wrap(err, "clear default address flags failed")
 	}
-	// Set selected one.
+	// 标记目标地址为默认。
 	_, err = tx.Model(dao.UserAddress.Table()).
 		Where(addrCols.AddressId, addressID).
 		Where(addrCols.UserId, userID).
@@ -1173,7 +1176,7 @@ func setDefaultAddressTx(ctx context.Context, tx gdb.TX, userID, addressID uint6
 		return gerror.Wrap(err, "set default address flag failed")
 	}
 
-	// Sync profile default_address_id.
+	// 同步画像的 default_address_id 与地址簿版本。
 	profileCols := dao.UserProfile.Columns()
 	_, err = tx.Model(dao.UserProfile.Table()).
 		Where(profileCols.UserId, userID).

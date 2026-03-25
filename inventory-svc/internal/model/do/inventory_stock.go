@@ -9,7 +9,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// InventoryStock is the golang structure of table inventory_stock for DAO operations like Where/Data.
+// InventoryStock 是用于 DAO 操作（如 Where/Data）的 inventory_stock 表 Go 结构体。
 type InventoryStock struct {
 	g.Meta       `orm:"table:inventory_stock, do:true"`
 	Id           any         //

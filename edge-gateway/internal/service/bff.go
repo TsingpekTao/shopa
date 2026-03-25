@@ -1,6 +1,6 @@
 // ================================================================================
 // Code generated and maintained by GoFrame CLI tool. DO NOT EDIT.
-// You can delete these comments if you wish manually maintain this interface file.
+// 说明：如需手动维护此接口文件，可删除这些注释。
 // ================================================================================
 
 package service
@@ -13,6 +13,10 @@ import (
 )
 
 type (
+	// IBff 定义网关 BFF 聚合门面：
+	// - BuildMyOverview: 用户侧“我的概览”聚合。
+	// - BuildSellerWorkbench: 卖家工作台聚合。
+	// - BuildSellerShopDashboard: 店铺仪表盘聚合。
 	IBff interface {
 		BuildMyOverview(ctx context.Context, accessToken string) (*mev1.GetOverviewRes, error)
 		BuildSellerWorkbench(ctx context.Context, accessToken string) (*sellerv1.GetWorkbenchRes, error)
@@ -21,9 +25,11 @@ type (
 )
 
 var (
+	// localBff 保存已注册的 BFF 实现。
 	localBff IBff
 )
 
+// Bff 返回 BFF 服务实现；未注册时 panic，避免请求落到空实现。
 func Bff() IBff {
 	if localBff == nil {
 		panic("implement not found for interface IBff, forgot register?")
@@ -31,6 +37,7 @@ func Bff() IBff {
 	return localBff
 }
 
+// RegisterBff 注册 BFF 实现。
 func RegisterBff(i IBff) {
 	localBff = i
 }

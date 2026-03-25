@@ -8,15 +8,15 @@ import (
 	"github.com/TsingpekTao/shopa/inventory-svc/internal/dao/internal"
 )
 
-// inventoryOutboxEventDao is the data access object for the table inventory_outbox_event.
-// You can define custom methods on it to extend its functionality as needed.
+// inventoryOutboxEventDao 是 inventory_outbox_event 表的数据访问对象。
+// 可在此基础上定义自定义方法以扩展功能。
 type inventoryOutboxEventDao struct {
 	*internal.InventoryOutboxEventDao
 }
 
 var (
-	// InventoryOutboxEvent is a globally accessible object for table inventory_outbox_event operations.
+	// InventoryOutboxEvent 是 inventory_outbox_event 表操作的全局可访问对象。
 	InventoryOutboxEvent = inventoryOutboxEventDao{internal.NewInventoryOutboxEventDao()}
 )
 
-// Add your custom methods and functionality below.
+// 在下方添加自定义方法与逻辑。

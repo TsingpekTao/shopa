@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// TestBuilderPrefix 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// TestBuilderPrefix 验证 Builder 返回的前缀包含 env/project/service。
 func TestBuilderPrefix(t *testing.T) {
 	b := NewWith("dev", "shopa", "iam")
 	if got, want := b.Prefix(), "dev:shopa:iam"; got != want {
@@ -13,7 +13,7 @@ func TestBuilderPrefix(t *testing.T) {
 	}
 }
 
-// TestBuilderNoConflictAcrossEnvAndService 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// TestBuilderNoConflictAcrossEnvAndService 验证不同 env/service 不会冲突。
 func TestBuilderNoConflictAcrossEnvAndService(t *testing.T) {
 	tm := time.Date(2026, 3, 22, 21, 0, 0, 0, time.UTC)
 	k1 := NewWith("dev", "shopa", "iam").RegIPLimitKey("1.2.3.4", tm)
@@ -28,7 +28,7 @@ func TestBuilderNoConflictAcrossEnvAndService(t *testing.T) {
 	}
 }
 
-// TestBuilderExpectedKeys 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// TestBuilderExpectedKeys 验证各类 Redis key 都按照预期格式生成。
 func TestBuilderExpectedKeys(t *testing.T) {
 	b := NewWith("dev", "shopa", "iam")
 	tm := time.Date(2026, 3, 22, 21, 0, 0, 0, time.UTC)

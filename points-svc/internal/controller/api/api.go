@@ -3,7 +3,7 @@ package api
 import (
 	"context"
 
-	v1 "github.com/TsingpekTao/shopa/points-svc/api/points/v1"
+	v1 "github.com/TsingpekTao/shopa/points-svc/api/v1"
 	"github.com/TsingpekTao/shopa/points-svc/internal/service/points"
 	"github.com/gogf/gf/contrib/rpc/grpcx/v2"
 )

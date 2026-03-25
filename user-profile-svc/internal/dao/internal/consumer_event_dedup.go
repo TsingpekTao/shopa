@@ -11,25 +11,25 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 )
 
-// ConsumerEventDedupDao is the data access object for the table consumer_event_dedup.
+// ConsumerEventDedupDao 是 consumer_event_dedup 表的数据访问对象。
 type ConsumerEventDedupDao struct {
-	table    string                    // table is the underlying table name of the DAO.
-	group    string                    // group is the database configuration group name of the current DAO.
-	columns  ConsumerEventDedupColumns // columns contains all the column names of Table for convenient usage.
-	handlers []gdb.ModelHandler        // handlers for customized model modification.
+	table    string                    // table 是 DAO 所在的底层表名。
+	group    string                    // group 是当前 DAO 使用的数据库配置组名。
+	columns  ConsumerEventDedupColumns // columns 缓存了表中所有列名，便于复用。
+	handlers []gdb.ModelHandler        // handlers 用于对模型的自定义修改。
 }
 
-// ConsumerEventDedupColumns defines and stores column names for the table consumer_event_dedup.
+// ConsumerEventDedupColumns 定义 consumer_event_dedup 表的列名。
 type ConsumerEventDedupColumns struct {
-	Id           string // Primary key
-	ConsumerName string // Consumer unique name
-	EventId      string // Event id for idempotency
-	EventType    string // Event type
-	ProcessedAt  string // Processed timestamp
-	CreatedAt    string // Created timestamp
+	Id           string // 主键
+	ConsumerName string // 消费者唯一标识
+	EventId      string // 幂等事件 ID
+	EventType    string // 事件类型
+	ProcessedAt  string // 处理时间
+	CreatedAt    string // 创建时间
 }
 
-// consumerEventDedupColumns holds the columns for the table consumer_event_dedup.
+// consumerEventDedupColumns 存储该表的列名。
 var consumerEventDedupColumns = ConsumerEventDedupColumns{
 	Id:           "id",
 	ConsumerName: "consumer_name",
@@ -39,7 +39,7 @@ var consumerEventDedupColumns = ConsumerEventDedupColumns{
 	CreatedAt:    "created_at",
 }
 
-// NewConsumerEventDedupDao creates and returns a new DAO object for table data access.
+// NewConsumerEventDedupDao 创建并返回 consumer_event_dedup 表的 DAO 实例。
 func NewConsumerEventDedupDao(handlers ...gdb.ModelHandler) *ConsumerEventDedupDao {
 	return &ConsumerEventDedupDao{
 		group:    "default",
@@ -49,27 +49,27 @@ func NewConsumerEventDedupDao(handlers ...gdb.ModelHandler) *ConsumerEventDedupD
 	}
 }
 
-// DB retrieves and returns the underlying raw database management object of the current DAO.
+// DB 返回当前 DAO 使用的底层数据库对象。
 func (dao *ConsumerEventDedupDao) DB() gdb.DB {
 	return g.DB(dao.group)
 }
 
-// Table returns the table name of the current DAO.
+// Table 返回当前 DAO 所使用的表名。
 func (dao *ConsumerEventDedupDao) Table() string {
 	return dao.table
 }
 
-// Columns returns all column names of the current DAO.
+// Columns 返回当前 DAO 的所有列名。
 func (dao *ConsumerEventDedupDao) Columns() ConsumerEventDedupColumns {
 	return dao.columns
 }
 
-// Group returns the database configuration group name of the current DAO.
+// Group 返回数据库配置组名。
 func (dao *ConsumerEventDedupDao) Group() string {
 	return dao.group
 }
 
-// Ctx creates and returns a Model for the current DAO. It automatically sets the context for the current operation.
+// Ctx 为当前 DAO 创建并返回一个上下文已设置的 ORM 模型。
 func (dao *ConsumerEventDedupDao) Ctx(ctx context.Context) *gdb.Model {
 	model := dao.DB().Model(dao.table)
 	for _, handler := range dao.handlers {
@@ -78,12 +78,11 @@ func (dao *ConsumerEventDedupDao) Ctx(ctx context.Context) *gdb.Model {
 	return model.Safe().Ctx(ctx)
 }
 
-// Transaction wraps the transaction logic using function f.
-// It rolls back the transaction and returns the error if function f returns a non-nil error.
-// It commits the transaction and returns nil if function f returns nil.
+// Transaction 用于包裹事务逻辑，执行传入的 f。
+// 若 f 返回非空错误，事务会回滚并原样返回该错误。
+// 若 f 返回 nil，则事务提交并返回 nil。
 //
-// Note: Do not commit or roll back the transaction in function f,
-// as it is automatically handled by this function.
+// 注意：f 内无需手动提交或回滚，函数会自动处理事务。
 func (dao *ConsumerEventDedupDao) Transaction(ctx context.Context, f func(ctx context.Context, tx gdb.TX) error) (err error) {
 	return dao.Ctx(ctx).Transaction(ctx, f)
 }

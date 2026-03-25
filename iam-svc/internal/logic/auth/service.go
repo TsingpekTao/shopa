@@ -8,23 +8,29 @@ import (
 
 	"github.com/TsingpekTao/shopa/iam-svc/internal/infra/cache"
 	"github.com/TsingpekTao/shopa/iam-svc/internal/infra/mq"
+	"github.com/TsingpekTao/shopa/iam-svc/internal/infra/sms"
 	"github.com/bwmarrin/snowflake"
 	"github.com/gogf/gf/v2/frame/g"
 )
 
 const (
+	// 短信验证码安全参数。
 	smsCodeMaxAttempts = 5
 	smsCodeLength      = 6
 
+	// JWT 过期策略：access 短效、refresh 长效。
 	defaultAccessTTL  = 15 * time.Minute
 	defaultRefreshTTL = 30 * 24 * time.Hour
 
+	// 登录失败防护参数：阈值 + 延迟窗口。
 	defaultLoginFailMax   = 5
 	defaultLoginDelayBase = 200 * time.Millisecond
 	defaultLoginDelayMax  = 2 * time.Second
 
-	defaultUsernamePrefix = "\u7528\u6237_"
+	// 新用户默认展示名前缀（配置缺失时的兜底值）。
+	defaultUsernamePrefix = "用户_"
 
+	// Outbox worker 默认参数（批量、轮询、重试、归档、清理、指标）。
 	defaultOutboxBatchSize        = 100
 	defaultOutboxPollInterval     = 1 * time.Second
 	defaultOutboxMaxFailCount     = 20
@@ -39,20 +45,20 @@ const (
 	defaultOutboxMetricsInterval  = 1 * time.Minute
 )
 
-// jwtConf 保存 token 签发配置（密钥与过期时间）。
+// jwtConf 保存 token 签发配置。
 type jwtConf struct {
 	Secret               string
 	AccessExpireSeconds  int64
 	RefreshExpireSeconds int64
 }
 
-// securityConf 保存登录风控开关与阈值配置。
+// securityConf 保存登录安全策略配置。
 type securityConf struct {
 	LoginFailMax  int64
 	MfaOnIPChange bool
 }
 
-// outboxConf 保存 outbox worker 的批量、退避、归档、清理参数。
+// outboxConf 保存 outbox 后台任务运行参数。
 type outboxConf struct {
 	BatchSize       int
 	PollInterval    time.Duration
@@ -68,10 +74,12 @@ type outboxConf struct {
 	MetricsInterval time.Duration
 }
 
-// Service 聚合 IAM 业务依赖与运行配置，是 auth 领域的核心对象。
+// Service 是 auth 域核心对象，聚合运行依赖与配置。
+// `workerOnce` 用于保证后台 worker 只启动一次，避免并发重复消费 outbox。
 type Service struct {
 	cache    *cache.Service
 	mq       mq.Publisher
+	sms      sms.Sender
 	node     *snowflake.Node
 	jwt      jwtConf
 	security securityConf
@@ -82,11 +90,13 @@ type Service struct {
 }
 
 var (
+	// serviceOnce 保证 Service 单例仅初始化一次。
 	serviceOnce sync.Once
 	serviceInst *Service
 )
 
-// New 返回 IAM 逻辑单例，保证后台 worker 和资源只初始化一次。
+// New 返回 IAM 逻辑单例。
+// 使用 sync.Once 保证并发场景下初始化幂等，防止多次建连或配置重复加载。
 func New() *Service {
 	serviceOnce.Do(func() {
 		serviceInst = newService()
@@ -94,7 +104,8 @@ func New() *Service {
 	return serviceInst
 }
 
-// newService 从配置加载 IAM 运行参数并初始化依赖（cache、mq、snowflake）。
+// newService 从配置加载运行参数并初始化依赖（cache/mq/snowflake）。
+// 设计原则：即使部分配置异常，也要回退到安全默认值，确保服务可启动。
 func newService() *Service {
 	var (
 		ctx = context.Background()
@@ -141,13 +152,15 @@ func newService() *Service {
 		nodeID     = cfgInt64(ctx, 1, "iam.snowflake.node", "snowflake.node")
 		namePrefix = cfgString(ctx, defaultUsernamePrefix, "iam.register.defaultUsernamePrefix", "register.defaultUsernamePrefix")
 
-		node *snowflake.Node
-		pub  mq.Publisher
-		err  error
+		node      *snowflake.Node
+		pub       mq.Publisher
+		smsSender sms.Sender
+		err       error
 	)
 
 	node, err = snowflake.NewNode(nodeID)
 	if err != nil {
+		// node ID 异常时回退到 1，确保 user_id 仍可生成。
 		node, _ = snowflake.NewNode(1)
 	}
 	if jwtCfg.AccessExpireSeconds <= 0 {
@@ -160,6 +173,7 @@ func newService() *Service {
 		secCfg.LoginFailMax = defaultLoginFailMax
 	}
 	if jwtCfg.Secret == "" {
+		// 开发环境兜底密钥；生产环境必须通过配置覆盖。
 		jwtCfg.Secret = "shopa-iam-dev-secret"
 	}
 
@@ -202,13 +216,21 @@ func newService() *Service {
 
 	pub, err = mq.NewPublisherFromConfig(ctx)
 	if err != nil {
+		// MQ 不可用时降级为 noop publisher，避免主流程因为外部依赖不可用而启动失败。
 		g.Log().Warningf(ctx, "[iam-svc] init mq publisher failed, fallback noop: %+v", err)
 		pub = mq.NewNoopPublisher()
+	}
+	smsSender, err = sms.NewSenderFromConfig(ctx)
+	if err != nil {
+		// 短信通道配置错误时回退到 mock，保证服务可启动并在发送阶段显式可观测。
+		g.Log().Warningf(ctx, "[iam-svc] init sms sender failed, fallback mock: %+v", err)
+		smsSender = sms.NewMockSender()
 	}
 
 	return &Service{
 		cache:          cache.New(),
 		mq:             pub,
+		sms:            smsSender,
 		node:           node,
 		jwt:            jwtCfg,
 		security:       secCfg,
@@ -222,7 +244,7 @@ func (s *Service) accessTTL() time.Duration {
 	return time.Duration(s.jwt.AccessExpireSeconds) * time.Second
 }
 
-// refreshTTL 刷新凭证并返回新令牌。
+// refreshTTL 返回 refresh token 的有效期。
 func (s *Service) refreshTTL() time.Duration {
 	return time.Duration(s.jwt.RefreshExpireSeconds) * time.Second
 }
@@ -249,7 +271,8 @@ func cfgInt64(ctx context.Context, def int64, keys ...string) int64 {
 	return def
 }
 
-// cfgBool 按 key 优先级读取布尔配置，读取不到则回落默认值。
+// cfgBool 按 key 优先级读取布尔配置，并支持显式 false。
+// 仅当配置项存在且非空字符串时，才视为“已配置”。
 func cfgBool(ctx context.Context, def bool, keys ...string) bool {
 	for _, key := range keys {
 		v := g.Cfg().MustGet(ctx, key, nil)

@@ -8,15 +8,15 @@ import (
 	"github.com/TsingpekTao/shopa/inventory-svc/internal/dao/internal"
 )
 
-// inventorySkuContextDao is the data access object for the table inventory_sku_context.
-// You can define custom methods on it to extend its functionality as needed.
+// inventorySkuContextDao 是 inventory_sku_context 表的数据访问对象。
+// 可在此基础上定义自定义方法以扩展功能。
 type inventorySkuContextDao struct {
 	*internal.InventorySkuContextDao
 }
 
 var (
-	// InventorySkuContext is a globally accessible object for table inventory_sku_context operations.
+	// InventorySkuContext 是 inventory_sku_context 表操作的全局可访问对象。
 	InventorySkuContext = inventorySkuContextDao{internal.NewInventorySkuContextDao()}
 )
 
-// Add your custom methods and functionality below.
+// 在下方添加自定义方法与逻辑。

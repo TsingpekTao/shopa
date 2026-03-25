@@ -8,15 +8,15 @@ import (
 	"github.com/TsingpekTao/shopa/media-svc/internal/dao/internal"
 )
 
-// mediaIdempotencyDao is the data access object for the table media_idempotency.
-// You can define custom methods on it to extend its functionality as needed.
+// mediaIdempotencyDao 是 media_idempotency 表的数据访问对象。
+// 可在其上定义自定义方法以扩展功能。
 type mediaIdempotencyDao struct {
 	*internal.MediaIdempotencyDao
 }
 
 var (
-	// MediaIdempotency is a globally accessible object for table media_idempotency operations.
+	// MediaIdempotency 是用于 media_idempotency 表操作的全局对象。
 	MediaIdempotency = mediaIdempotencyDao{internal.NewMediaIdempotencyDao()}
 )
 
-// Add your custom methods and functionality below.
+// 在下方添加自定义方法和功能。

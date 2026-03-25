@@ -8,13 +8,13 @@ import (
 	"github.com/gogf/gf/contrib/rpc/grpcx/v2"
 )
 
-// Controller implements both external and internal media RPC services.
+// Controller 实现了对外与内部的媒体 RPC 服务。
 type Controller struct {
 	v1.UnimplementedMediaServiceServer
 	v1.UnimplementedMediaInternalServiceServer
 }
 
-// Register binds media RPC services to gRPC server.
+// Register 将媒体 RPC 服务注册到 gRPC 服务器。
 func Register(s *grpcx.GrpcServer) {
 	ctrl := &Controller{}
 	v1.RegisterMediaServiceServer(s.Server, ctrl)

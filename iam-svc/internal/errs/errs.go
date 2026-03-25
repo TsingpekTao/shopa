@@ -5,15 +5,15 @@ import (
 	"github.com/gogf/gf/v2/errors/gerror"
 )
 
-// IAM 娑撴艾濮熼柨娆掝嚖閻緤绱濈紓鏍垳鐟欏嫬鍨敍娆癆BBBB閵?// AA 鐞涖劎銇氶張宥呭閸欓攱顔岄敍鍦汚M=10閿涘绱滲BBB 鐞涖劎銇氶崷鐑樻珯缂佸棗鍨庨妴
+// IAM 业务错误码定义。
 var (
 	CodeOK = gcode.New(0, "OK", nil)
 
-	// 闁氨鏁ら柨娆掝嚖閵
+	// 通用错误码。
 	CodeInvalidParam  = gcode.New(100001, "Invalid parameter", nil)
 	CodeInternalError = gcode.New(100002, "Internal error", nil)
 
-	// 濞夈劌鍞?閻ц缍嶇€瑰鍙忛惄绋垮彠闁挎瑨顕ら妴
+	// 认证与账号相关错误码。
 	CodePhoneRegistered     = gcode.New(101001, "Phone already registered", nil)
 	CodeEmailRegistered     = gcode.New(101002, "Email already registered", nil)
 	CodeInvalidCredential   = gcode.New(101003, "Account or credential invalid", nil)
@@ -33,7 +33,7 @@ var (
 	CodeThirdPartyBound     = gcode.New(101017, "Third-party account already bound", nil)
 )
 
-// New 鏋勯€犲嚱鏁帮細鍒涘缓骞惰繑鍥炴湇鍔″疄渚嬨€
+// New 根据错误码创建业务错误。
 func New(code gcode.Code, msg ...string) error {
 	if len(msg) > 0 && msg[0] != "" {
 		return gerror.NewCode(code, msg[0])
@@ -41,7 +41,7 @@ func New(code gcode.Code, msg ...string) error {
 	return gerror.NewCode(code, code.Message())
 }
 
-// Wrap 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// Wrap 将底层错误包装为业务错误码。
 func Wrap(code gcode.Code, cause error, msg ...string) error {
 	if cause == nil {
 		return New(code, msg...)
@@ -52,7 +52,7 @@ func Wrap(code gcode.Code, cause error, msg ...string) error {
 	return gerror.WrapCode(code, cause, code.Message())
 }
 
-// ToBiz 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// ToBiz 将任意错误映射为对外业务码与消息。
 func ToBiz(err error) (code int, message string) {
 	if err == nil {
 		return CodeOK.Code(), CodeOK.Message()

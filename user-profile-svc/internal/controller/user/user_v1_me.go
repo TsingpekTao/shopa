@@ -10,9 +10,9 @@ import (
 	fieldmaskpb "google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
-// GetMyProfile 鎸夋潯浠惰鍙栧苟杩斿洖鍗曟潯缁撴灉銆
+// GetMyProfile 返回当前用户的画像及可选地址。
 func (*ControllerV1) GetMyProfile(ctx context.Context, req *v1.GetMyProfileReq) (res *v1.GetMyProfileRes, err error) {
-	// Delegate to gRPC-shaped service method to avoid duplicating business rules.
+	// 直接调用 gRPC 形式的服务实现，避免重复业务逻辑。
 	out, err := service.UserProfile().GetMyProfile(ctx, &pb.GetMyProfileReq{
 		IncludeAddresses: req.IncludeAddresses,
 	})
@@ -26,17 +26,17 @@ func (*ControllerV1) GetMyProfile(ctx context.Context, req *v1.GetMyProfileReq) 
 	}, nil
 }
 
-// UpdateMyProfile 鎸夋潯浠舵洿鏂版暟鎹苟杩斿洖鏈€鏂扮粨鏋溿€
+// UpdateMyProfile 更新当前用户画像并返回最新结果。
 func (*ControllerV1) UpdateMyProfile(ctx context.Context, req *v1.UpdateMyProfileReq) (res *v1.UpdateMyProfileRes, err error) {
-	// Protect against nil pointer payload.
+	// 校验请求载荷不为 nil。
 	if req.Profile == nil {
 		return nil, gerror.New("profile is required")
 	}
-	// Convert update mask array into protobuf FieldMask.
+	// 将字段掩码转换为 protobuf FieldMask。
 	mask := &fieldmaskpb.FieldMask{
 		Paths: req.UpdateMask,
 	}
-	// Delegate to service to keep logic consistent with RPC behavior.
+	// 转发到服务层以保持业务逻辑一致。
 	out, err := service.UserProfile().UpdateMyProfile(ctx, &pb.UpdateMyProfileReq{
 		Profile:                req.Profile,
 		UpdateMask:             mask,
@@ -50,9 +50,9 @@ func (*ControllerV1) UpdateMyProfile(ctx context.Context, req *v1.UpdateMyProfil
 	}, nil
 }
 
-// ListMyAddresses 鎸夋潯浠惰鍙栧苟杩斿洖鍒楄〃缁撴灉銆
+// ListMyAddresses 返回当前用户的地址列表。
 func (*ControllerV1) ListMyAddresses(ctx context.Context, req *v1.ListMyAddressesReq) (res *v1.ListMyAddressesRes, err error) {
-	// Delegate to service. New proto removed paging in request.
+	// 直接调用服务层，当前 proto 已移除分页请求字段。
 	out, err := service.UserProfile().ListMyAddresses(ctx, &pb.ListMyAddressesReq{
 		IncludeDeleted: req.IncludeDeleted,
 	})
@@ -68,13 +68,13 @@ func (*ControllerV1) ListMyAddresses(ctx context.Context, req *v1.ListMyAddresse
 	}, nil
 }
 
-// CreateMyAddress 鍒涘缓鏂拌褰曞苟杩斿洖鍒涘缓缁撴灉銆
+// CreateMyAddress 创建一条用户地址。
 func (*ControllerV1) CreateMyAddress(ctx context.Context, req *v1.CreateMyAddressReq) (res *v1.CreateMyAddressRes, err error) {
-	// Protect against nil pointer payload.
+	// 校验地址载荷不为 nil。
 	if req.Address == nil {
 		return nil, gerror.New("address is required")
 	}
-	// Delegate to service for transaction + default logic.
+	// 转发到服务层以复用事务和默认地址逻辑。
 	out, err := service.UserProfile().CreateMyAddress(ctx, &pb.CreateMyAddressReq{
 		Address:                    req.Address,
 		SetAsDefault:               req.SetAsDefault,
@@ -89,17 +89,17 @@ func (*ControllerV1) CreateMyAddress(ctx context.Context, req *v1.CreateMyAddres
 	}, nil
 }
 
-// UpdateMyAddress 鎸夋潯浠舵洿鏂版暟鎹苟杩斿洖鏈€鏂扮粨鏋溿€
+// UpdateMyAddress 更新指定的用户地址。
 func (*ControllerV1) UpdateMyAddress(ctx context.Context, req *v1.UpdateMyAddressReq) (res *v1.UpdateMyAddressRes, err error) {
-	// Protect against nil pointer payload.
+	// 校验地址载荷不为 nil。
 	if req.Address == nil {
 		return nil, gerror.New("address is required")
 	}
-	// Convert update mask array into protobuf FieldMask.
+	// 将字段掩码转换为 protobuf FieldMask。
 	mask := &fieldmaskpb.FieldMask{
 		Paths: req.UpdateMask,
 	}
-	// Delegate to service to keep rules consistent.
+	// 转发到服务层以保持一致的规则处理。
 	out, err := service.UserProfile().UpdateMyAddress(ctx, &pb.UpdateMyAddressReq{
 		AddressId:              req.AddressId,
 		Address:                req.Address,
@@ -115,17 +115,17 @@ func (*ControllerV1) UpdateMyAddress(ctx context.Context, req *v1.UpdateMyAddres
 	}, nil
 }
 
-// ReplaceMyAddress 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// ReplaceMyAddress 新建一条地址替换原地址并更新默认态势。
 func (*ControllerV1) ReplaceMyAddress(ctx context.Context, req *v1.ReplaceMyAddressReq) (res *v1.ReplaceMyAddressRes, err error) {
-	// Protect against nil pointer payload.
+	// 校验地址载荷不为 nil。
 	if req.Address == nil {
 		return nil, gerror.New("address is required")
 	}
-	// Convert update mask array into protobuf FieldMask.
+	// 将字段掩码转换为 protobuf FieldMask。
 	mask := &fieldmaskpb.FieldMask{
 		Paths: req.UpdateMask,
 	}
-	// Delegate to service for replacement transaction.
+	// 转发到服务层以复用替换事务逻辑。
 	out, err := service.UserProfile().ReplaceMyAddress(ctx, &pb.ReplaceMyAddressReq{
 		SourceAddressId:              req.SourceAddressId,
 		Address:                      req.Address,
@@ -144,9 +144,9 @@ func (*ControllerV1) ReplaceMyAddress(ctx context.Context, req *v1.ReplaceMyAddr
 	}, nil
 }
 
-// DeleteMyAddress 鎵ц鍒犻櫎娴佺▼骞惰繑鍥炲鐞嗙粨鏋溿€
+// DeleteMyAddress 删除指定地址并保留版本追踪。
 func (*ControllerV1) DeleteMyAddress(ctx context.Context, req *v1.DeleteMyAddressReq) (res *v1.DeleteMyAddressRes, err error) {
-	// Delegate to service for ownership checks and soft delete behavior.
+	// 转发到服务层以复用归属校验与软删行为。
 	out, err := service.UserProfile().DeleteMyAddress(ctx, &pb.DeleteMyAddressReq{
 		AddressId:              req.AddressId,
 		ExpectedAddressVersion: req.ExpectedAddressVersion,
@@ -159,9 +159,9 @@ func (*ControllerV1) DeleteMyAddress(ctx context.Context, req *v1.DeleteMyAddres
 	}, nil
 }
 
-// SetMyDefaultAddress 璁剧疆鐘舵€佹垨榛樿鍊煎苟淇濊瘉绾︽潫涓€鑷淬€
+// SetMyDefaultAddress 设置或清除用户的默认地址。
 func (*ControllerV1) SetMyDefaultAddress(ctx context.Context, req *v1.SetMyDefaultAddressReq) (res *v1.SetMyDefaultAddressRes, err error) {
-	// Delegate to service for transaction ensuring exactly one default.
+	// 转发到服务层以保证默认地址唯一。
 	out, err := service.UserProfile().SetMyDefaultAddress(ctx, &pb.SetMyDefaultAddressReq{
 		AddressId:                  req.AddressId,
 		ExpectedAddressBookVersion: req.ExpectedAddressBookVersion,

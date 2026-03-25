@@ -15,7 +15,8 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// StartBackgroundWorkers 启动后台任务或服务流程。
+// StartBackgroundWorkers 启动 IAM 后台 worker。
+// 幂等保证：通过 workerOnce 确保即使被重复调用，也只会启动一组 goroutine。
 func (s *Service) StartBackgroundWorkers(ctx context.Context) {
 	s.workerOnce.Do(func() {
 		go s.dispatchLoop()
@@ -39,7 +40,7 @@ func (s *Service) dispatchLoop() {
 	}
 }
 
-// archiveLoop 归档历史数据，控制热表规模。
+// archiveLoop 周期性归档已发送事件，控制热表体量。
 func (s *Service) archiveLoop() {
 	ticker := time.NewTicker(s.outbox.ArchiveInterval)
 	defer ticker.Stop()
@@ -67,7 +68,7 @@ func (s *Service) cleanupLoop() {
 	}
 }
 
-// metricsLoop 周期性输出 outbox 指标，便于观察热表规模和堆积时长。
+// metricsLoop 周期性打印 outbox 指标，便于观测积压与容量变化。
 func (s *Service) metricsLoop() {
 	ticker := time.NewTicker(s.outbox.MetricsInterval)
 	defer ticker.Stop()
@@ -79,7 +80,8 @@ func (s *Service) metricsLoop() {
 	}
 }
 
-// dispatchOnce 执行一次批量认领与派发。
+// dispatchOnce 执行一轮“认领 + 投递”。
+// 认领失败会整体返回错误；单条投递失败仅记录日志并继续后续条目。
 func (s *Service) dispatchOnce(ctx context.Context) error {
 	items, err := s.claimOutboxBatch(ctx, s.outbox.BatchSize)
 	if err != nil {
@@ -96,13 +98,16 @@ func (s *Service) dispatchOnce(ctx context.Context) error {
 	return nil
 }
 
-// claimOutboxBatch 使用 SKIP LOCKED 认领一批事件，避免多副本重复消费。
+// claimOutboxBatch 使用 FOR UPDATE SKIP LOCKED 认领一批事件。
+// 并发安全：
+// 1) 行锁 + SKIP LOCKED 保证多实例下同一行只会被一个 worker 领走。
+// 2) 在同一事务内把状态改为 PROCESSING，避免“查到但未标记”导致重复消费。
 func (s *Service) claimOutboxBatch(ctx context.Context, batchSize int) ([]entity.IamOutboxEvent, error) {
 	items := make([]entity.IamOutboxEvent, 0, batchSize)
 	if batchSize <= 0 {
 		return items, nil
 	}
-	// ids 是本次被当前 worker 认领的行集合，后续统一改为 PROCESSING。
+	// ids 记录本次事务中已认领的主键，用于批量更新状态。
 	ids := make([]any, 0, batchSize)
 
 	err := dao.IamOutboxEvent.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
@@ -147,7 +152,10 @@ func (s *Service) claimOutboxBatch(ctx context.Context, batchSize int) ([]entity
 	return items, err
 }
 
-// dispatchOne 派发单条事件，成功写 SENT，失败写 FAILED 或 DLQ 并设置退避时间。
+// dispatchOne 派发单条事件。
+// 状态机：
+// 1) 投递成功：PROCESSING -> SENT，并记录 sent_at。
+// 2) 投递失败：PROCESSING -> FAILED/DLQ，并写 fail_count、last_error、下一次 available_at。
 func (s *Service) dispatchOne(ctx context.Context, item entity.IamOutboxEvent) error {
 	var err error
 	if item.EventType == "UserRegisteredV1" {
@@ -194,7 +202,7 @@ func (s *Service) dispatchOne(ctx context.Context, item entity.IamOutboxEvent) e
 	return err
 }
 
-// computeBackoff 计算策略参数并返回结果。
+// computeBackoff 按失败次数计算指数退避，并封顶到最大延迟。
 func (s *Service) computeBackoff(failCount int) time.Duration {
 	if failCount <= 0 {
 		return s.outbox.FailBaseDelay
@@ -212,7 +220,8 @@ func (s *Service) computeBackoff(failCount int) time.Duration {
 	return backoff
 }
 
-// archiveOnce 归档历史数据，控制热表规模。
+// archiveOnce 把已发送且超过归档阈值的数据搬迁到归档表。
+// 原子性：在单事务里完成“插入归档表 + 删除热表”，避免数据重复或丢失。
 func (s *Service) archiveOnce(ctx context.Context) error {
 	if s.outbox.ArchiveBatch <= 0 {
 		return nil
@@ -272,6 +281,7 @@ func (s *Service) archiveOnce(ctx context.Context) error {
 }
 
 // cleanupArchiveOnce 删除归档表中超过保留期的数据。
+// 采用 LIMIT 分批删除，降低长事务和锁冲突风险。
 func (s *Service) cleanupArchiveOnce(ctx context.Context) error {
 	if s.outbox.CleanupBatch <= 0 {
 		return nil
@@ -286,7 +296,8 @@ func (s *Service) cleanupArchiveOnce(ctx context.Context) error {
 	return err
 }
 
-// logOutboxMetrics 采集并打印 outbox 关键容量指标。
+// logOutboxMetrics 采集并打印 outbox 关键指标。
+// 指标包括：行数、未发送最老年龄、热表与归档表估算体积。
 func (s *Service) logOutboxMetrics(ctx context.Context) {
 	hotRows, err := dao.IamOutboxEvent.Ctx(ctx).Count()
 	if err != nil {
@@ -332,7 +343,7 @@ func (s *Service) logOutboxMetrics(ctx context.Context) {
 	)
 }
 
-// truncateError 截断错误文本，防止超长错误撑爆字段长度。
+// truncateError 截断错误文本，避免超长错误撑爆数据库字段。
 func truncateError(err error, maxLen int) string {
 	if err == nil {
 		return ""

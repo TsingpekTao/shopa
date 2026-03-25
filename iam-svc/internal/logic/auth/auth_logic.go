@@ -8,21 +8,22 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-// sAuth 是 GF service 层门面，实现接口到 core 业务对象的转发。
+// sAuth 是 GoFrame service 层适配器，仅负责协议层转发逻辑，所有状态与业务判定均由 core Service 承担。
 type sAuth struct {
 	core *Service
 }
 
-// newAuthLogic 创建认证逻辑实例。
+// newAuthLogic 创建 service 适配器并绑定 core 单例。
 func newAuthLogic() *sAuth {
 	return &sAuth{core: New()}
 }
 
 func init() {
+	// 在包初始化阶段注册 IAuth 实现，供 service.Auth() 全局获取。
 	service.RegisterAuth(newAuthLogic())
 }
 
-// StartBackgroundWorkers 启动 IAM 后台任务（Outbox 分发、归档清理等）。
+// StartBackgroundWorkers 启动 IAM outbox 相关的后台 worker（分发/归档/清理/指标）。
 func (s *sAuth) StartBackgroundWorkers(ctx context.Context) {
 	s.core.StartBackgroundWorkers(ctx)
 }
@@ -32,27 +33,27 @@ func (s *sAuth) SendSmsCode(ctx context.Context, req *v1.SendSmsCodeReq) (*v1.Se
 	return s.core.SendSmsCode(ctx, req)
 }
 
-// RegisterByPassword 手机号+验证码+密码注册。
+// RegisterByPassword 使用手机号 + 短信码 + 密码完成注册。
 func (s *sAuth) RegisterByPassword(ctx context.Context, req *v1.RegisterByPasswordReq) (*v1.RegisterByPasswordRes, error) {
 	return s.core.RegisterByPassword(ctx, req)
 }
 
-// LoginByPassword 账号密码登录。
+// LoginByPassword 使用账号密码登录。
 func (s *sAuth) LoginByPassword(ctx context.Context, req *v1.LoginByPasswordReq) (*v1.LoginByPasswordRes, error) {
 	return s.core.LoginByPassword(ctx, req)
 }
 
-// LoginBySms 手机验证码登录。
+// LoginBySms 使用手机号短信码登录。
 func (s *sAuth) LoginBySms(ctx context.Context, req *v1.LoginBySmsReq) (*v1.LoginBySmsRes, error) {
 	return s.core.LoginBySms(ctx, req)
 }
 
-// VerifyMfaChallenge 完成 MFA 二次验证。
+// VerifyMfaChallenge 完成 MFA 二次校验。
 func (s *sAuth) VerifyMfaChallenge(ctx context.Context, req *v1.VerifyMfaChallengeReq) (*v1.VerifyMfaChallengeRes, error) {
 	return s.core.VerifyMfaChallenge(ctx, req)
 }
 
-// RefreshToken 刷新 access token。
+// RefreshToken 刷新令牌对。
 func (s *sAuth) RefreshToken(ctx context.Context, req *v1.RefreshTokenReq) (*v1.RefreshTokenRes, error) {
 	return s.core.RefreshToken(ctx, req)
 }
@@ -62,17 +63,17 @@ func (s *sAuth) Logout(ctx context.Context, req *v1.LogoutReq) (*emptypb.Empty, 
 	return s.core.Logout(ctx, req)
 }
 
-// GetMySession 返回当前登录会话摘要。
+// GetMySession 查询当前登录态会话摘要。
 func (s *sAuth) GetMySession(ctx context.Context, req *emptypb.Empty) (*v1.GetMySessionRes, error) {
 	return s.core.GetMySession(ctx, req)
 }
 
-// ChangePassword 登录态下修改密码。
+// ChangePassword 登录态改密。
 func (s *sAuth) ChangePassword(ctx context.Context, req *v1.ChangePasswordReq) (*v1.ChangePasswordRes, error) {
 	return s.core.ChangePassword(ctx, req)
 }
 
-// ResetPasswordBySms 通过短信验证码重置密码。
+// ResetPasswordBySms 通过短信码重置密码。
 func (s *sAuth) ResetPasswordBySms(ctx context.Context, req *v1.ResetPasswordBySmsReq) (*v1.ResetPasswordBySmsRes, error) {
 	return s.core.ResetPasswordBySms(ctx, req)
 }
@@ -102,7 +103,7 @@ func (s *sAuth) BatchGetAuthUsers(ctx context.Context, req *v1.BatchGetAuthUsers
 	return s.core.BatchGetAuthUsers(ctx, req)
 }
 
-// VerifyAccessToken 校验 access token 有效性。
+// VerifyAccessToken 供内部服务验证 access token 并返回鉴权上下文。
 func (s *sAuth) VerifyAccessToken(ctx context.Context, req *v1.VerifyAccessTokenReq) (*v1.VerifyAccessTokenRes, error) {
 	return s.core.VerifyAccessToken(ctx, req)
 }

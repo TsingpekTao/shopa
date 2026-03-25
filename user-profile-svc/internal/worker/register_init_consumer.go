@@ -22,14 +22,14 @@ type registerInitConsumerConf struct {
 
 var registerInitOnce sync.Once
 
-// StartRegisterInitConsumer 鍚姩鍚庡彴娴佺▼鎴栨湇鍔＄粍浠躲€
+// StartRegisterInitConsumer 只启动一次 register-init 消费者。
 func StartRegisterInitConsumer(ctx context.Context) {
 	registerInitOnce.Do(func() {
 		go runRegisterInitConsumer()
 	})
 }
 
-// runRegisterInitConsumer 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// runRegisterInitConsumer 负责持续执行注册事件消费循环。
 func runRegisterInitConsumer() {
 	ctx := context.Background()
 	conf := loadRegisterInitConsumerConf(ctx)
@@ -47,7 +47,7 @@ func runRegisterInitConsumer() {
 	}
 }
 
-// consumeRegisterInitLoop 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// consumeRegisterInitLoop 连接 RabbitMQ 并消费 register-init 消息。
 func consumeRegisterInitLoop(ctx context.Context, conf registerInitConsumerConf) error {
 	conn, err := amqp.Dial(conf.URL)
 	if err != nil {
@@ -89,7 +89,7 @@ func consumeRegisterInitLoop(ctx context.Context, conf registerInitConsumerConf)
 	return nil
 }
 
-// handleRegisterInitMessage 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// handleRegisterInitMessage 解析消息并调用服务处理事件。
 func handleRegisterInitMessage(ctx context.Context, svc service.IUserProfile, msg amqp.Delivery) error {
 	var payload struct {
 		EventID         string `json:"event_id"`
@@ -121,7 +121,7 @@ func handleRegisterInitMessage(ctx context.Context, svc service.IUserProfile, ms
 	})
 }
 
-// loadRegisterInitConsumerConf 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// loadRegisterInitConsumerConf 读取 register-init 消费者的配置。
 func loadRegisterInitConsumerConf(ctx context.Context) registerInitConsumerConf {
 	return registerInitConsumerConf{
 		Enabled:    g.Cfg().MustGet(ctx, "mq.rabbitmq.enabled", false).Bool(),

@@ -8,15 +8,15 @@ import (
 	"github.com/TsingpekTao/shopa/inventory-svc/internal/dao/internal"
 )
 
-// inventoryConsumerEventDedupDao is the data access object for the table inventory_consumer_event_dedup.
-// You can define custom methods on it to extend its functionality as needed.
+// inventoryConsumerEventDedupDao 是 inventory_consumer_event_dedup 表的 数据访问对象。
+// 可在此基础上定义自定义方法以扩展功能。
 type inventoryConsumerEventDedupDao struct {
 	*internal.InventoryConsumerEventDedupDao
 }
 
 var (
-	// InventoryConsumerEventDedup is a globally accessible object for table inventory_consumer_event_dedup operations.
+	// InventoryConsumerEventDedup 是 inventory_consumer_event_dedup 表操作的全局可访问对象。
 	InventoryConsumerEventDedup = inventoryConsumerEventDedupDao{internal.NewInventoryConsumerEventDedupDao()}
 )
 
-// Add your custom methods and functionality below.
+// 在下方添加自定义方法与逻辑。

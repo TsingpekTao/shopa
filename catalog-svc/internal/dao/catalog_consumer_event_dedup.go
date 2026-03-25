@@ -8,15 +8,15 @@ import (
 	"github.com/TsingpekTao/shopa/catalog-svc/internal/dao/internal"
 )
 
-// catalogConsumerEventDedupDao is the data access object for the table catalog_consumer_event_dedup.
-// You can define custom methods on it to extend its functionality as needed.
+// catalogConsumerEventDedupDao 是 catalog_consumer_event_dedup 表的 DAO。
+// 可按需在其上定义自定义方法以扩展其功能。
 type catalogConsumerEventDedupDao struct {
 	*internal.CatalogConsumerEventDedupDao
 }
 
 var (
-	// CatalogConsumerEventDedup is a globally accessible object for table catalog_consumer_event_dedup operations.
+	// CatalogConsumerEventDedup 为 catalog_consumer_event_dedup 表操作提供全局访问对象。
 	CatalogConsumerEventDedup = catalogConsumerEventDedupDao{internal.NewCatalogConsumerEventDedupDao()}
 )
 
-// Add your custom methods and functionality below.
+// 在此处扩展自定义方法和功能。

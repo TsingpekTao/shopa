@@ -11,48 +11,48 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 )
 
-// MediaAssetDao is the data access object for the table media_asset.
+// MediaAssetDao 是 media_asset 表的数据访问对象。
 type MediaAssetDao struct {
-	table    string             // table is the underlying table name of the DAO.
-	group    string             // group is the database configuration group name of the current DAO.
-	columns  MediaAssetColumns  // columns contains all the column names of Table for convenient usage.
-	handlers []gdb.ModelHandler // handlers for customized model modification.
+	table    string             // table 表示 DAO 底层对应的表名。
+	group    string             // group 表示当前 DAO 的数据库配置分组。
+	columns  MediaAssetColumns  // columns 包含表的全部列名，方便直接引用。
+	handlers []gdb.ModelHandler // handlers 用于自定义数据模型的修改处理。
 }
 
-// MediaAssetColumns defines and stores column names for the table media_asset.
+// MediaAssetColumns 定义并存储 media_asset 表的列名。
 type MediaAssetColumns struct {
 	AssetId             string //
-	ParentAssetId       string // Parent asset id, null for root ORIGINAL asset
-	RootAssetId         string // Root asset id of the asset tree
+	ParentAssetId       string // 父资产 ID，ORIGINAL 根节点时为 0。
+	RootAssetId         string // 资产树的根资产 ID。
 	SceneCode           string //
-	AclType             string // 1 PUBLIC_READ, 2 PRIVATE
-	AssetRole           string // 1 ORIGINAL, 2 DERIVED
-	DerivedKind         string // Derived asset subtype enum
+	AclType             string // 1 表示 PUBLIC_READ，2 表示 PRIVATE。
+	AssetRole           string // 1 表示 ORIGINAL，2 表示 DERIVED。
+	DerivedKind         string // 派生资产子类型枚举。
 	FileName            string //
 	MimeType            string //
 	SizeBytes           string //
 	ChecksumSha256      string //
 	Etag                string //
-	StorageProvider     string // Internal storage provider, e.g. minio/oss
-	Bucket              string // Internal storage bucket
-	ObjectKey           string // Internal object key/path
-	StorageObjectHash   string // SHA256 hash of storage_provider+bucket+object_key
-	PublicUrl           string // Static CDN URL for PUBLIC_READ scenes
+	StorageProvider     string // 内部存储提供方，例如 minio/oss。
+	Bucket              string // 内部存储桶名。
+	ObjectKey           string // 内部对象键/路径。
+	StorageObjectHash   string // storage_provider+bucket+object_key 的 SHA256 哈希。
+	PublicUrl           string // PUBLIC_READ 场景的静态 CDN URL。
 	RiskStatus          string //
 	ProcessStatus       string //
 	ProcessProgress     string //
 	ProcessErrorCode    string //
 	ProcessErrorMessage string //
 	ProcessedAt         string //
-	UploaderUserId      string // Uploader user id from metadata
-	TraceBizType        string // Optional trace-only biz type from InitUpload
-	TraceBizNo          string // Optional trace-only biz no from InitUpload
-	DeletedAt           string // Soft delete mark, physical delete by GC
+	UploaderUserId      string // metadata 中的上传者 ID。
+	TraceBizType        string // InitUpload 传入的可选链路追踪业务类型。
+	TraceBizNo          string // InitUpload 传入的可选链路追踪业务编号。
+	DeletedAt           string // 软删除标记，由 GC 物理删除。
 	CreatedAt           string //
 	UpdatedAt           string //
 }
 
-// mediaAssetColumns holds the columns for the table media_asset.
+// mediaAssetColumns 保存 media_asset 表的列名映射。
 var mediaAssetColumns = MediaAssetColumns{
 	AssetId:             "asset_id",
 	ParentAssetId:       "parent_asset_id",
@@ -85,7 +85,7 @@ var mediaAssetColumns = MediaAssetColumns{
 	UpdatedAt:           "updated_at",
 }
 
-// NewMediaAssetDao creates and returns a new DAO object for table data access.
+// NewMediaAssetDao 创建并返回 media_asset 表的数据访问对象。
 func NewMediaAssetDao(handlers ...gdb.ModelHandler) *MediaAssetDao {
 	return &MediaAssetDao{
 		group:    "default",
@@ -95,27 +95,27 @@ func NewMediaAssetDao(handlers ...gdb.ModelHandler) *MediaAssetDao {
 	}
 }
 
-// DB retrieves and returns the underlying raw database management object of the current DAO.
+// DB 返回当前 DAO 的底层数据库管理对象。
 func (dao *MediaAssetDao) DB() gdb.DB {
 	return g.DB(dao.group)
 }
 
-// Table returns the table name of the current DAO.
+// Table 返回当前 DAO 操作的表名。
 func (dao *MediaAssetDao) Table() string {
 	return dao.table
 }
 
-// Columns returns all column names of the current DAO.
+// Columns 返回当前 DAO 的所有列名。
 func (dao *MediaAssetDao) Columns() MediaAssetColumns {
 	return dao.columns
 }
 
-// Group returns the database configuration group name of the current DAO.
+// Group 返回 DAO 使用的数据库配置分组名称。
 func (dao *MediaAssetDao) Group() string {
 	return dao.group
 }
 
-// Ctx creates and returns a Model for the current DAO. It automatically sets the context for the current operation.
+// Ctx 创建并返回当前 DAO 的 Model，并自动设置操作上下文。
 func (dao *MediaAssetDao) Ctx(ctx context.Context) *gdb.Model {
 	model := dao.DB().Model(dao.table)
 	for _, handler := range dao.handlers {
@@ -124,12 +124,11 @@ func (dao *MediaAssetDao) Ctx(ctx context.Context) *gdb.Model {
 	return model.Safe().Ctx(ctx)
 }
 
-// Transaction wraps the transaction logic using function f.
-// It rolls back the transaction and returns the error if function f returns a non-nil error.
-// It commits the transaction and returns nil if function f returns nil.
+// Transaction 用参数函数 f 包裹事务逻辑。
+// 如果 f 返回非 nil 错误则回滚并返回该错误。
+// 如果 f 返回 nil 则提交并返回 nil。
 //
-// Note: Do not commit or roll back the transaction in function f,
-// as it is automatically handled by this function.
+// 注意：f 内请勿显式提交或回滚，事务由此方法自动管理。
 func (dao *MediaAssetDao) Transaction(ctx context.Context, f func(ctx context.Context, tx gdb.TX) error) (err error) {
 	return dao.Ctx(ctx).Transaction(ctx, f)
 }

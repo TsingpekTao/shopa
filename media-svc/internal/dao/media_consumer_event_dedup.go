@@ -8,15 +8,15 @@ import (
 	"github.com/TsingpekTao/shopa/media-svc/internal/dao/internal"
 )
 
-// mediaConsumerEventDedupDao is the data access object for the table media_consumer_event_dedup.
-// You can define custom methods on it to extend its functionality as needed.
+// mediaConsumerEventDedupDao 是 media_consumer_event_dedup 表的数据访问对象。
+// 可在其上定义自定义方法以扩展功能。
 type mediaConsumerEventDedupDao struct {
 	*internal.MediaConsumerEventDedupDao
 }
 
 var (
-	// MediaConsumerEventDedup is a globally accessible object for table media_consumer_event_dedup operations.
+	// MediaConsumerEventDedup 是用于 media_consumer_event_dedup 表操作的全局对象。
 	MediaConsumerEventDedup = mediaConsumerEventDedupDao{internal.NewMediaConsumerEventDedupDao()}
 )
 
-// Add your custom methods and functionality below.
+// 在下方添加自定义方法和功能。

@@ -13,7 +13,9 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// tokenClaims 是 access/refresh token 共用的 JWT claims 结构。
+// tokenClaims 是 access/refresh 共享的 JWT 负载结构。
+// `Use` 字段是关键安全标记：同一个签名密钥下，必须显式区分 access 与 refresh 用途，
+// 防止“拿 refresh token 调 access 接口”一类跨用途误用。
 type tokenClaims struct {
 	UserID       uint64 `json:"uid"`
 	SID          string `json:"sid"`
@@ -22,12 +24,14 @@ type tokenClaims struct {
 	jwt.RegisteredClaims
 }
 
-// newSID 生成会话 sid，用于关联 access 与 refresh 会话。
+// newSID 生成登录会话 SID。
+// access 与 refresh 会共享同一个 SID，便于追踪会话链路与执行会话级注销。
 func (s *Service) newSID() (string, error) {
 	return randomToken(10)
 }
 
-// issueTokenPair 签发 access+refresh 成对 token，并返回 refresh 哈希与到期时间。
+// issueTokenPair 签发 access+refresh 成对令牌。
+// 返回 refreshHash 的目的：数据库只落 hash，不存 refresh 明文，降低泄露风险。
 func (s *Service) issueTokenPair(userID uint64, sid string, tokenVersion uint32) (
 	pair *v1.TokenPair,
 	refreshHash string,
@@ -46,6 +50,7 @@ func (s *Service) issueTokenPair(userID uint64, sid string, tokenVersion uint32)
 	accessExp = nowTime.Add(accessTTL)
 	refreshExp = nowTime.Add(refrTTL)
 
+	// access token：用于网关和业务接口鉴权，生命周期更短。
 	accessClaims := tokenClaims{
 		UserID:       userID,
 		SID:          sid,
@@ -59,6 +64,7 @@ func (s *Service) issueTokenPair(userID uint64, sid string, tokenVersion uint32)
 			ExpiresAt: jwt.NewNumericDate(accessExp),
 		},
 	}
+	// refresh token：仅用于换发新 token，对应 refresh_session 持久化状态。
 	refreshClaims := tokenClaims{
 		UserID:       userID,
 		SID:          sid,
@@ -94,7 +100,11 @@ func (s *Service) issueTokenPair(userID uint64, sid string, tokenVersion uint32)
 	return pair, refreshHash, accessExp, refreshExp, nil
 }
 
-// parseToken 校验 JWT 签名、时效和算法并返回 claims。
+// parseToken 统一执行 JWT 解析与基础校验。
+// 校验项：
+// 1) token 非空。
+// 2) 签名算法必须是 HMAC，避免算法混淆攻击。
+// 3) 签名与时效（exp/nbf 等）由 jwt 库校验。
 func (s *Service) parseToken(token string) (*tokenClaims, error) {
 	if strings.TrimSpace(token) == "" {
 		return nil, errs.New(errs.CodeAccessTokenInvalid)
@@ -131,6 +141,7 @@ func (s *Service) parseAccessToken(token string) (*tokenClaims, error) {
 }
 
 // parseRefreshToken 解析并校验 refresh token（use=refresh）。
+// 与 access 分离错误码，便于上层区分“刷新失败”与“访问失败”。
 func (s *Service) parseRefreshToken(token string) (*tokenClaims, error) {
 	claims, err := s.parseToken(token)
 	if err != nil {

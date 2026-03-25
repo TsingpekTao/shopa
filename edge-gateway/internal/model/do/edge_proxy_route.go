@@ -9,7 +9,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// EdgeProxyRoute is the golang structure of table edge_proxy_route for DAO operations like Where/Data.
+// EdgeProxyRoute 是 edge_proxy_route 表用于 DAO 操作（如 Where/Data）的 Go 结构体。
 type EdgeProxyRoute struct {
 	g.Meta               `orm:"table:edge_proxy_route, do:true"`
 	Id                   any         // 涓婚敭ID

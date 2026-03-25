@@ -9,7 +9,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// InventoryConsumerEventDedup is the golang structure of table inventory_consumer_event_dedup for DAO operations like Where/Data.
+// InventoryConsumerEventDedup 是用于 DAO 操作（如 Where/Data）的 inventory_consumer_event_dedup 表 Go 结构体。
 type InventoryConsumerEventDedup struct {
 	g.Meta       `orm:"table:inventory_consumer_event_dedup, do:true"`
 	Id           any         //

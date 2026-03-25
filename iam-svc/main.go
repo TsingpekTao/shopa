@@ -9,7 +9,8 @@ import (
 	"github.com/TsingpekTao/shopa/iam-svc/internal/cmd"
 )
 
-// main 绋嬪簭鍏ュ彛锛氬惎鍔ㄥ懡浠ゅ苟杩涘叆鏈嶅姟鐢熷懡鍛ㄦ湡銆
+// main 是 iam-svc 的启动入口，初始化命令并运行服务。
 func main() {
 	cmd.Main.Run(gctx.GetInitCtx())
 }
+

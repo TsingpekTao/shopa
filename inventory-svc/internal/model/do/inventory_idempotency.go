@@ -9,7 +9,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// InventoryIdempotency is the golang structure of table inventory_idempotency for DAO operations like Where/Data.
+// InventoryIdempotency 是用于 DAO 操作（如 Where/Data）的 inventory_idempotency 表 Go 结构体。
 type InventoryIdempotency struct {
 	g.Meta         `orm:"table:inventory_idempotency, do:true"`
 	Id             any         //

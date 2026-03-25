@@ -5,128 +5,128 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 )
 
-// ListMyAddressesReq defines HTTP request to list my addresses.
+// ListMyAddressesReq 定义列出当前用户地址的 HTTP 请求。
 type ListMyAddressesReq struct {
-	// Meta declares route + OpenAPI metadata for this endpoint.
+	// Meta 声明此端点的路由与 OpenAPI 元数据。
 	g.Meta `path:"/addresses" method:"get" tags:"User" summary:"List my addresses"`
-	// IncludeDeleted controls whether deleted addresses are included.
+	// IncludeDeleted 控制是否包含已删除的地址。
 	IncludeDeleted bool `json:"include_deleted" in:"query"`
 }
 
-// ListMyAddressesRes defines HTTP response for address list.
+// ListMyAddressesRes 定义地址列表的 HTTP 响应。
 type ListMyAddressesRes struct {
-	// Addresses is the address list.
+	// Addresses 是地址列表。
 	Addresses []*pb.UserAddress `json:"addresses"`
-	// Page is current page.
+	// Page 表示当前页号。
 	Page uint32 `json:"page"`
-	// PageSize is current page size.
+	// PageSize 表示当前页大小。
 	PageSize uint32 `json:"page_size"`
-	// Total is total count.
+	// Total 表示总记录数。
 	Total uint32 `json:"total"`
-	// AddressBookVersion is the current aggregate version for address-book updates.
+	// AddressBookVersion 表示地址簿的汇总版本。
 	AddressBookVersion uint64 `json:"address_book_version,omitempty"`
 }
 
-// CreateMyAddressReq defines HTTP request to create one address.
+// CreateMyAddressReq 定义创建地址的 HTTP 请求。
 type CreateMyAddressReq struct {
-	// Meta declares route + OpenAPI metadata for this endpoint.
+	// Meta 声明此端点的路由与 OpenAPI 元数据。
 	g.Meta `path:"/addresses" method:"post" tags:"User" summary:"Create my address"`
-	// Address is create payload.
+	// Address 是创建地址的入参。
 	Address *pb.AddressCreate `json:"address" v:"required#address is required"`
-	// SetAsDefault indicates this address should become default.
+	// SetAsDefault 表示此地址应设为默认。
 	SetAsDefault bool `json:"set_as_default"`
-	// ExpectedAddressBookVersion is suggested CAS version when set_as_default=true.
+	// ExpectedAddressBookVersion 表示在 set_as_default=true 时建议的地址簿 CAS 版本。
 	ExpectedAddressBookVersion uint64 `json:"expected_address_book_version,omitempty"`
 }
 
-// CreateMyAddressRes defines HTTP response for created address.
+// CreateMyAddressRes 定义创建地址后的 HTTP 响应。
 type CreateMyAddressRes struct {
-	// Address is created address.
+	// Address 是创建后的地址。
 	Address *pb.UserAddress `json:"address"`
-	// AddressBookVersion is the updated aggregate version for address-book updates.
+	// AddressBookVersion 表示最新地址簿版本。
 	AddressBookVersion uint64 `json:"address_book_version,omitempty"`
 }
 
-// UpdateMyAddressReq defines HTTP request to patch an address.
+// UpdateMyAddressReq 定义更新地址的 HTTP 请求。
 type UpdateMyAddressReq struct {
-	// Meta declares route + OpenAPI metadata for this endpoint.
+	// Meta 声明此端点的路由与 OpenAPI 元数据。
 	g.Meta `path:"/addresses/{addressId}" method:"patch" tags:"User" summary:"Patch my address"`
-	// AddressId is the target address id.
+	// AddressId 是目标地址 ID。
 	AddressId uint64 `json:"address_id" in:"path" v:"required#address_id is required"`
-	// Address is patch payload.
+	// Address 是用于补丁的地址数据。
 	Address *pb.AddressPatch `json:"address" v:"required#address is required"`
-	// UpdateMask tells which fields in Address should be applied.
+	// UpdateMask 指示需要更新的字段。
 	UpdateMask []string `json:"update_mask" v:"required#update_mask is required"`
-	// ExpectedAddressVersion is CAS version read from latest address query.
+	// ExpectedAddressVersion 是从最新地址查询读取的 CAS 版本。
 	ExpectedAddressVersion uint64 `json:"expected_address_version" v:"required#expected_address_version is required"`
 }
 
-// UpdateMyAddressRes defines HTTP response for patched address.
+// UpdateMyAddressRes 定义地址更新后的 HTTP 响应。
 type UpdateMyAddressRes struct {
-	// Address is updated address snapshot.
+	// Address 是更新后的地址快照。
 	Address *pb.UserAddress `json:"address"`
-	// AddressBookVersion is the updated aggregate version for address-book updates.
+	// AddressBookVersion 表示最新地址簿版本。
 	AddressBookVersion uint64 `json:"address_book_version,omitempty"`
 }
 
-// ReplaceMyAddressReq defines HTTP request to replace one address.
+// ReplaceMyAddressReq 定义替换地址的 HTTP 请求。
 type ReplaceMyAddressReq struct {
-	// Meta declares route + OpenAPI metadata for this endpoint.
+	// Meta 声明此端点的路由与 OpenAPI 元数据。
 	g.Meta `path:"/addresses/{sourceAddressId}/replace" method:"post" tags:"User" summary:"Replace my address"`
-	// SourceAddressId is the source address id to be replaced.
+	// SourceAddressId 是要替换的源地址 ID。
 	SourceAddressId uint64 `json:"source_address_id" in:"path" v:"required#source_address_id is required"`
-	// Address is patch payload for the new address row.
+	// Address 是用于新地址行的补丁数据。
 	Address *pb.AddressPatch `json:"address" v:"required#address is required"`
-	// UpdateMask tells which fields in Address should be applied.
+	// UpdateMask 指示需应用的新地址字段。
 	UpdateMask []string `json:"update_mask" v:"required#update_mask is required"`
-	// SetAsDefault indicates new address should become default.
+	// SetAsDefault 表示新地址应设为默认。
 	SetAsDefault bool `json:"set_as_default,omitempty"`
-	// ExpectedSourceAddressVersion is CAS version for source address.
+	// ExpectedSourceAddressVersion 是源地址的 CAS 版本。
 	ExpectedSourceAddressVersion uint64 `json:"expected_source_address_version" v:"required#expected_source_address_version is required"`
-	// ExpectedAddressBookVersion is suggested CAS version when set_as_default=true.
+	// ExpectedAddressBookVersion 表示当 set_as_default=true 时的建议地址簿版本。
 	ExpectedAddressBookVersion uint64 `json:"expected_address_book_version,omitempty"`
 }
 
-// ReplaceMyAddressRes defines HTTP response for replace operation.
+// ReplaceMyAddressRes 定义替换操作的 HTTP 响应。
 type ReplaceMyAddressRes struct {
-	// SourceAddressId is the retired source id.
+	// SourceAddressId 是已退役的源地址 ID。
 	SourceAddressId uint64 `json:"source_address_id"`
-	// NewAddress is the created replacement address.
+	// NewAddress 是新建的替代地址。
 	NewAddress *pb.UserAddress `json:"new_address"`
-	// AddressBookVersion is the updated aggregate version for address-book updates.
+	// AddressBookVersion 表示最新地址簿版本。
 	AddressBookVersion uint64 `json:"address_book_version,omitempty"`
 }
 
-// DeleteMyAddressReq defines HTTP request to delete an address.
+// DeleteMyAddressReq 定义删除地址的 HTTP 请求。
 type DeleteMyAddressReq struct {
-	// Meta declares route + OpenAPI metadata for this endpoint.
+	// Meta 声明此端点的路由与 OpenAPI 元数据。
 	g.Meta `path:"/addresses/{addressId}" method:"delete" tags:"User" summary:"Delete my address"`
-	// AddressId is the target address id.
+	// AddressId 是目标地址 ID。
 	AddressId uint64 `json:"address_id" in:"path" v:"required#address_id is required"`
-	// ExpectedAddressVersion is CAS version read from latest address query.
+	// ExpectedAddressVersion 是从最新地址查询读取的 CAS 版本。
 	ExpectedAddressVersion uint64 `json:"expected_address_version" v:"required#expected_address_version is required"`
 }
 
-// DeleteMyAddressRes defines HTTP response for delete operation.
+// DeleteMyAddressRes 定义删除操作的 HTTP 响应。
 type DeleteMyAddressRes struct {
-	// AddressBookVersion is the updated aggregate version for address-book updates.
+	// AddressBookVersion 表示最新地址簿版本。
 	AddressBookVersion uint64 `json:"address_book_version,omitempty"`
 }
 
-// SetMyDefaultAddressReq defines HTTP request to set an address as default.
+// SetMyDefaultAddressReq 定义设置默认地址的 HTTP 请求。
 type SetMyDefaultAddressReq struct {
-	// Meta declares route + OpenAPI metadata for this endpoint.
+	// Meta 声明此端点的路由与 OpenAPI 元数据。
 	g.Meta `path:"/addresses/default" method:"post" tags:"User" summary:"Set or clear my default address"`
-	// AddressId is optional; nil/0 means clear default address.
+	// AddressId 可选；nil/0 表示清除默认地址。
 	AddressId *uint64 `json:"address_id,omitempty"`
-	// ExpectedAddressBookVersion is CAS version read from latest list/get response.
+	// ExpectedAddressBookVersion 是从最近列表/查询响应读取的地址簿 CAS 版本。
 	ExpectedAddressBookVersion uint64 `json:"expected_address_book_version" v:"required#expected_address_book_version is required"`
 }
 
-// SetMyDefaultAddressRes defines HTTP response for set default operation.
+// SetMyDefaultAddressRes 定义设置默认地址操作的 HTTP 响应。
 type SetMyDefaultAddressRes struct {
-	// DefaultAddressId is current default address id, 0 means no default.
+	// DefaultAddressId 是当前默认地址 ID，0 表示没有默认地址。
 	DefaultAddressId uint64 `json:"default_address_id"`
-	// AddressBookVersion is the updated aggregate version for address-book updates.
+	// AddressBookVersion 表示最新地址簿版本。
 	AddressBookVersion uint64 `json:"address_book_version,omitempty"`
 }

@@ -8,15 +8,15 @@ import (
 	"github.com/TsingpekTao/shopa/catalog-svc/internal/dao/internal"
 )
 
-// catalogCategoryDao is the data access object for the table catalog_category.
-// You can define custom methods on it to extend its functionality as needed.
+// catalogCategoryDao 是 catalog_category 表的 DAO。
+// 可按需在其上定义自定义方法以扩展其功能。
 type catalogCategoryDao struct {
 	*internal.CatalogCategoryDao
 }
 
 var (
-	// CatalogCategory is a globally accessible object for table catalog_category operations.
+	// CatalogCategory 为 catalog_category 表操作提供全局访问对象。
 	CatalogCategory = catalogCategoryDao{internal.NewCatalogCategoryDao()}
 )
 
-// Add your custom methods and functionality below.
+// 在此处扩展自定义方法和功能。

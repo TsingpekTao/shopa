@@ -1,6 +1,6 @@
 // ================================================================================
 // Code generated and maintained by GoFrame CLI tool. DO NOT EDIT.
-// You can delete these comments if you wish manually maintain this interface file.
+// 你可以删除这些注释，并按需手动维护该接口文件。
 // ================================================================================
 
 package service
@@ -31,6 +31,7 @@ var (
 	localMedia IMedia
 )
 
+// Media 返回已注册的媒体服务实现。
 func Media() IMedia {
 	if localMedia == nil {
 		panic("implement not found for interface IMedia, forgot register?")
@@ -38,6 +39,7 @@ func Media() IMedia {
 	return localMedia
 }
 
+// RegisterMedia 注册媒体服务实现，通常在 internal/logic 的 init 中调用。
 func RegisterMedia(i IMedia) {
 	localMedia = i
 }

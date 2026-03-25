@@ -6,7 +6,7 @@ import (
 	v1 "github.com/TsingpekTao/shopa/catalog-svc/api/catalog/v1"
 )
 
-// ICatalogV1 defines HTTP handlers for catalog business APIs.
+// ICatalogV1 定义了目录业务 API 所对应的 HTTP 处理器。
 type ICatalogV1 interface {
 	CreateProductDraft(ctx context.Context, req *v1.CreateProductDraftReq) (res *v1.CreateProductDraftRes, err error)
 	UpdateProductDraft(ctx context.Context, req *v1.UpdateProductDraftReq) (res *v1.UpdateProductDraftRes, err error)

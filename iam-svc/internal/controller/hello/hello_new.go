@@ -10,7 +10,7 @@ import (
 
 type ControllerV1 struct{}
 
-// NewV1 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// NewV1 创建 V1 版本的 Hello 控制器实例。
 func NewV1() hello.IHelloV1 {
 	return &ControllerV1{}
 }

@@ -42,6 +42,8 @@ const (
 const (
 	// mock 短信通道提供方标识。
 	SmsProviderMock = "mock"
+	// aliyun 短信通道提供方标识。
+	SmsProviderAliyun = "aliyun"
 	// 默认会员等级。
 	MembershipLevelBasic = "BASIC"
 )

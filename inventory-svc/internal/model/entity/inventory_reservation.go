@@ -8,7 +8,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// InventoryReservation is the golang structure for table inventory_reservation.
+// InventoryReservation 是 inventory_reservation 表的 Go 结构体。
 type InventoryReservation struct {
 	Id                uint64      `json:"id"                orm:"id"                 ` //
 	ReservationNo     string      `json:"reservationNo"     orm:"reservation_no"     ` //

@@ -1,0 +1,11 @@
+{
+  "name": "@shopa/api-client",
+  "private": true,
+  "version": "0.1.0",
+  "main": "src/index.ts",
+  "dependencies": {
+    "axios": "^1.8.4",
+    "debug": "^4.3.6",
+    "supports-color": "^9.4.0"
+  }
+}

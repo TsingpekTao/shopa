@@ -8,15 +8,15 @@ import (
 	"github.com/TsingpekTao/shopa/catalog-svc/internal/dao/internal"
 )
 
-// catalogSpuDao is the data access object for the table catalog_spu.
-// You can define custom methods on it to extend its functionality as needed.
+// catalogSpuDao 是 catalog_spu 表的数据访问对象。
+// 可根据需要在其上添加自定义方法以扩展能力。
 type catalogSpuDao struct {
 	*internal.CatalogSpuDao
 }
 
 var (
-	// CatalogSpu is a globally accessible object for table catalog_spu operations.
+	// CatalogSpu 为 catalog_spu 表操作提供全局可用的 DAO 对象。
 	CatalogSpu = catalogSpuDao{internal.NewCatalogSpuDao()}
 )
 
-// Add your custom methods and functionality below.
+// 在下方添加自定义方法与扩展功能。

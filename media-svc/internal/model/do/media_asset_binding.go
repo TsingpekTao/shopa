@@ -9,14 +9,14 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// MediaAssetBinding is the golang structure of table media_asset_binding for DAO operations like Where/Data.
+// MediaAssetBinding 是 media_asset_binding 表的 Go 结构体，供 DAO 的 Where/Data 等操作使用。
 type MediaAssetBinding struct {
 	g.Meta          `orm:"table:media_asset_binding, do:true"`
 	Id              any         //
 	SceneCode       any         //
 	BizType         any         //
 	BizNo           any         //
-	BindingField    any         // Slot name, e.g. main_images/detail_images/carousel_images
+	BindingField    any         // 插槽名，例如 main_images/detail_images/carousel_images。
 	AssetId         any         //
 	SortOrder       any         //
 	IsActive        any         //

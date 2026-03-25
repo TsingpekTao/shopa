@@ -8,15 +8,15 @@ import (
 	"github.com/TsingpekTao/shopa/media-svc/internal/dao/internal"
 )
 
-// mediaOutboxEventArchiveDao is the data access object for the table media_outbox_event_archive.
-// You can define custom methods on it to extend its functionality as needed.
+// mediaOutboxEventArchiveDao 是 media_outbox_event_archive 表的数据访问对象。
+// 可在其上定义自定义方法以扩展功能。
 type mediaOutboxEventArchiveDao struct {
 	*internal.MediaOutboxEventArchiveDao
 }
 
 var (
-	// MediaOutboxEventArchive is a globally accessible object for table media_outbox_event_archive operations.
+	// MediaOutboxEventArchive 是用于 media_outbox_event_archive 表操作的全局对象。
 	MediaOutboxEventArchive = mediaOutboxEventArchiveDao{internal.NewMediaOutboxEventArchiveDao()}
 )
 
-// Add your custom methods and functionality below.
+// 在下方添加自定义方法和功能。

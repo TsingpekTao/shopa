@@ -8,7 +8,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// InventorySkuContext is the golang structure for table inventory_sku_context.
+// InventorySkuContext 是 inventory_sku_context 表的 Go 结构体。
 type InventorySkuContext struct {
 	Id        uint64      `json:"id"        orm:"id"         ` //
 	SkuNo     string      `json:"skuNo"     orm:"sku_no"     ` //

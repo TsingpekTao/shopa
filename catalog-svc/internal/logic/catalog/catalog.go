@@ -23,21 +23,25 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// sCatalog 是 Catalog 领域服务实现。
+// 当前实现无状态，依赖请求上下文和数据库事务驱动业务流程。
 type sCatalog struct{}
 
-// New 创建 Catalog 领域服务实例。
+// New 创建 catalog 领域服务实例。
 func New() *sCatalog {
 	return &sCatalog{}
 }
 
-// init 在包加载时注册 Catalog 服务实现到 service 层。
+// init 在包加载时注册 Catalog 服务实现。
 func init() {
 	service.RegisterCatalog(New())
 }
 
-// CreateProductDraft 创建 SPU 草稿，并在事务中写入 SPU 主记录与 SPU 属性。
+// CreateProductDraft 创建商品草稿（SPU）并初始化 SPU 属性。
+// 关键路径：参数校验 -> 生成业务号 -> 主表插入 -> 属性重建 -> 聚合回读。
+// 该流程在一个事务内完成“主表+属性表”写入，避免半成功导致脏状态。
 func (s *sCatalog) CreateProductDraft(ctx context.Context, req *v1.CreateProductDraftReq) (*v1.CreateProductDraftRes, error) {
-	// 1) 参数前置校验：确保必要业务字段完整。
+	// 前置校验：草稿创建必须具备店铺、标题和类目信息。
 	if strings.TrimSpace(req.GetShopNo()) == "" {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "shop_no is required")
 	}
@@ -48,7 +52,8 @@ func (s *sCatalog) CreateProductDraft(ctx context.Context, req *v1.CreateProduct
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "category_id is required")
 	}
 
-	// 2) 生成业务号并序列化图片数组，便于落库到 JSON 字段。
+	// 生成业务号并将图片列表序列化到 JSON 字段，保持存储结构稳定。
+	// 这里将 repeated 字段收敛成 JSON 字符串，减少表结构变更成本。
 	spuNo := generateBizNo("SPU")
 	mainImagesJSON, err := marshalJSON(req.GetMainImageAssetIds())
 	if err != nil {
@@ -59,8 +64,10 @@ func (s *sCatalog) CreateProductDraft(ctx context.Context, req *v1.CreateProduct
 		return nil, err
 	}
 
-	// 3) 使用本地事务写入 SPU 主记录 + 属性明细，保证草稿一致性。
+	// 事务写入：先插入 SPU 主记录，再重建 SPU 属性明细。
+	// 一旦任一步失败，事务整体回滚，不会留下“只有主表没有属性”的中间态。
 	err = dao.CatalogSpu.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		// 新建草稿统一落为 DRAFT，审核状态置为 PENDING，版本从 1 起步。
 		_, err = tx.Model(dao.CatalogSpu.Table()).Data(do.CatalogSpu{
 			SpuNo:                   spuNo,
 			ShopNo:                  req.GetShopNo(),
@@ -83,13 +90,15 @@ func (s *sCatalog) CreateProductDraft(ctx context.Context, req *v1.CreateProduct
 		if err != nil {
 			return gerror.Wrap(err, "insert catalog_spu failed")
 		}
+		// 属性明细采用“先删后插”策略，保证明细内容与请求完全一致。
 		return s.replaceSpuAttrsTx(ctx, tx, spuNo, req.GetSpuAttrs())
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	// 4) 回读聚合结构，保证返回值与数据库最终状态一致。
+	// 回读聚合结果，确保返回值与数据库最终状态一致。
+	// 调用方拿到的是标准聚合视图（SPU+SKU+属性），而非仅插入回执。
 	aggregate, err := s.getProductAggregate(ctx, spuNo, false)
 	if err != nil {
 		return nil, err
@@ -97,9 +106,11 @@ func (s *sCatalog) CreateProductDraft(ctx context.Context, req *v1.CreateProduct
 	return &v1.CreateProductDraftRes{Product: aggregate}, nil
 }
 
-// UpdateProductDraft 按 FieldMask 更新草稿字段，使用版本号避免并发覆盖。
+// UpdateProductDraft 按 FieldMask 更新草稿字段。
+// 关键路径：解析 update_mask -> 组装更新列 -> 版本条件更新 -> 按需重建属性 -> 回读聚合。
+// 通过 expected_version + 可编辑状态实现乐观锁，避免并发覆盖写。
 func (s *sCatalog) UpdateProductDraft(ctx context.Context, req *v1.UpdateProductDraftReq) (*v1.UpdateProductDraftRes, error) {
-	// 1) 校验业务号、期望版本和补丁对象。
+	// 入参校验：必须指定目标 SPU、预期版本与补丁对象。
 	if strings.TrimSpace(req.GetSpuNo()) == "" {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "spu_no is required")
 	}
@@ -118,7 +129,7 @@ func (s *sCatalog) UpdateProductDraft(ctx context.Context, req *v1.UpdateProduct
 		replaceSpuAttr bool
 	)
 
-	// 2) 若未传 update_mask，则按默认可编辑字段全量处理。
+	// 未指定 update_mask 时，按可编辑字段集合执行全量补丁。
 	if updateMask == nil || len(updateMask.GetPaths()) == 0 {
 		paths = []string{
 			"title", "sub_title", "category_id", "brand_no",
@@ -128,7 +139,8 @@ func (s *sCatalog) UpdateProductDraft(ctx context.Context, req *v1.UpdateProduct
 		paths = updateMask.GetPaths()
 	}
 
-	// 3) 将 patch 按路径映射到 DAO 对象，仅更新被允许的字段。
+	// 将补丁路径映射到数据库字段，仅允许受控字段更新。
+	// 对于 JSON 列（主图/详情图）先序列化，确保落库格式稳定。
 	for _, p := range paths {
 		path := normalizePatchPath(p)
 		switch path {
@@ -161,8 +173,11 @@ func (s *sCatalog) UpdateProductDraft(ctx context.Context, req *v1.UpdateProduct
 		}
 	}
 
-	// 4) 事务更新：版本号乐观锁 + 可编辑状态校验 + 属性重建（可选）。
+	// 事务更新：版本命中且状态可编辑时才允许写入。
+	// 这里的 where(version=expected_version) 是核心乐观锁条件。
+	// 命中行数为 0 代表版本冲突或状态不允许，直接返回业务错误。
 	err := dao.CatalogSpu.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		// 成功更新时单调递增版本号，供下一次写入继续 compare-and-swap。
 		updateData.Version = uint(req.GetExpectedVersion()) + 1
 		result, err := tx.Model(dao.CatalogSpu.Table()).
 			Where(dao.CatalogSpu.Columns().SpuNo, req.GetSpuNo()).
@@ -183,6 +198,7 @@ func (s *sCatalog) UpdateProductDraft(ctx context.Context, req *v1.UpdateProduct
 			return gerror.NewCode(gcode.CodeInvalidParameter, "spu version conflict or status not editable")
 		}
 		if replaceSpuAttr {
+			// 仅当 patch 指定 spu_attrs 时才触发明细重建，避免无效写放大。
 			return s.replaceSpuAttrsTx(ctx, tx, req.GetSpuNo(), patch.GetSpuAttrs())
 		}
 		return nil
@@ -191,7 +207,7 @@ func (s *sCatalog) UpdateProductDraft(ctx context.Context, req *v1.UpdateProduct
 		return nil, err
 	}
 
-	// 5) 更新后重新回读，返回最新聚合结果。
+	// 返回更新后的聚合视图，方便调用方拿到最新版本号和属性。
 	aggregate, err := s.getProductAggregate(ctx, req.GetSpuNo(), false)
 	if err != nil {
 		return nil, err
@@ -199,9 +215,11 @@ func (s *sCatalog) UpdateProductDraft(ctx context.Context, req *v1.UpdateProduct
 	return &v1.UpdateProductDraftRes{Product: aggregate}, nil
 }
 
-// UpsertSkuDrafts 批量新增/更新 SKU 草稿，并在 replace_all 时软删未提交的旧 SKU。
+// UpsertSkuDrafts 批量新增/更新 SKU 草稿，并可按 replace_all 软删未提交 SKU。
+// 关键路径：先抢占 SPU 版本 -> SKU upsert -> 销售属性明细重建 -> 差集软删 -> 聚合重算。
+// 整个流程在一个事务内执行，保证“SKU 明细变化”和“SPU 聚合字段”原子一致。
 func (s *sCatalog) UpsertSkuDrafts(ctx context.Context, req *v1.UpsertSkuDraftsReq) (*v1.UpsertSkuDraftsRes, error) {
-	// 1) 基础参数校验。
+	// 基础校验：保证目标 SPU、预期版本和 SKU 列表有效。
 	if strings.TrimSpace(req.GetSpuNo()) == "" {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "spu_no is required")
 	}
@@ -212,7 +230,8 @@ func (s *sCatalog) UpsertSkuDrafts(ctx context.Context, req *v1.UpsertSkuDraftsR
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "items is required")
 	}
 
-	// 2) 在单事务内处理：SPU 版本递增、SKU upsert、属性明细重建、聚合重算。
+	// 先 bump SPU 版本作为并发写入闸门，避免多端并发改 SKU 互相覆盖。
+	// 这是 SKU 维度写入共享的乐观锁入口，确保同一版本只会被消费一次。
 	err := dao.CatalogSpu.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		result, err := tx.Model(dao.CatalogSpu.Table()).
 			Where(dao.CatalogSpu.Columns().SpuNo, req.GetSpuNo()).
@@ -230,7 +249,8 @@ func (s *sCatalog) UpsertSkuDrafts(ctx context.Context, req *v1.UpsertSkuDraftsR
 			return gerror.NewCode(gcode.CodeInvalidParameter, "spu version conflict")
 		}
 
-		// 查询当前有效 SKU，后续用于更新判定与 replace_all 对比。
+		// 读取当前有效 SKU 快照，后续用于判断更新/新增与 replace_all 对比。
+		// 用 map 建索引可将后续存在性判断降为 O(1)。
 		var existingSkus []*entity.CatalogSku
 		err = tx.Model(dao.CatalogSku.Table()).
 			Where(dao.CatalogSku.Columns().SpuNo, req.GetSpuNo()).
@@ -244,9 +264,11 @@ func (s *sCatalog) UpsertSkuDrafts(ctx context.Context, req *v1.UpsertSkuDraftsR
 			existingByNo[row.SkuNo] = row
 		}
 
-		// 逐条处理本次传入 SKU：生成规格哈希、执行新增/更新。
+		// touched 记录本次请求命中的 SKU，用于 replace_all 软删差集。
+		// 只有本次“未触达”的旧 SKU 才会在 replace_all 场景下被标记删除。
 		touched := make(map[string]struct{}, len(req.GetItems()))
 		for _, item := range req.GetItems() {
+			// 请求未给 sku_no 时，服务端生成业务号，确保每条 SKU 可追踪。
 			skuNo := strings.TrimSpace(item.GetSkuNo())
 			if skuNo == "" {
 				skuNo = generateBizNo("SKU")
@@ -257,10 +279,11 @@ func (s *sCatalog) UpsertSkuDrafts(ctx context.Context, req *v1.UpsertSkuDraftsR
 			}
 
 			if old, ok := existingByNo[skuNo]; ok {
-				// SKU 脱离草稿后不允许改销售规格，避免与库存、购物车语义冲突。
+				// SKU 一旦离开草稿态，不允许修改销售属性组合，避免库存/订单语义漂移。
 				if old.SkuStatus != uint(v1.SkuStatus_SKU_STATUS_DRAFT) && old.SaleSpecsHash != saleSpecsHash {
 					return gerror.NewCodef(gcode.CodeInvalidParameter, "sku %s sale attrs are immutable after draft", skuNo)
 				}
+				// 更新已有 SKU：版本号按行级维度递增，便于下游做快照对账。
 				_, err = tx.Model(dao.CatalogSku.Table()).
 					Where(dao.CatalogSku.Columns().SkuNo, skuNo).
 					Data(do.CatalogSku{
@@ -279,6 +302,7 @@ func (s *sCatalog) UpsertSkuDrafts(ctx context.Context, req *v1.UpsertSkuDraftsR
 					return gerror.Wrapf(err, "update sku %s failed", skuNo)
 				}
 			} else {
+				// 新增 SKU：库存投影初始为“缺货+版本 0”，等待库存事件驱动更新。
 				_, err = tx.Model(dao.CatalogSku.Table()).
 					Data(do.CatalogSku{
 						SkuNo:           skuNo,
@@ -301,14 +325,16 @@ func (s *sCatalog) UpsertSkuDrafts(ctx context.Context, req *v1.UpsertSkuDraftsR
 				}
 			}
 
-			// 重建 SKU 销售属性明细，确保明细表与主表 JSON 一致。
+			// 明细表采用“删后重建”，确保 sale_attrs 明细与主表 JSON 一致。
+			// 主表存汇总、明细表存可检索结构，两者在同事务内保持一致。
 			if err = s.replaceSkuSaleAttrsTx(ctx, tx, req.GetSpuNo(), skuNo, item.GetSaleAttrs()); err != nil {
 				return err
 			}
 			touched[skuNo] = struct{}{}
 		}
 
-		// replace_all=true 时，未被本次触达的旧 SKU 会被软删除。
+		// replace_all 时，将未出现在本次请求中的旧 SKU 标记删除。
+		// 这里做软删除而不是物理删除，保留历史追溯能力。
 		if req.GetReplaceAll() {
 			for _, old := range existingSkus {
 				if _, ok := touched[old.SkuNo]; ok {
@@ -328,7 +354,8 @@ func (s *sCatalog) UpsertSkuDrafts(ctx context.Context, req *v1.UpsertSkuDraftsR
 				}
 			}
 		}
-		// SKU 变更后重算 SPU 聚合字段（价格区间/库存状态）。
+		// SKU 集发生变化后重算 SPU 聚合字段（价格区间、库存状态）。
+		// 放在同事务末尾，确保聚合字段反映本次事务最终写入结果。
 		_, err = s.recomputeSpuAggregationTx(ctx, tx, req.GetSpuNo())
 		return err
 	})
@@ -346,13 +373,15 @@ func (s *sCatalog) UpsertSkuDrafts(ctx context.Context, req *v1.UpsertSkuDraftsR
 	}, nil
 }
 
-// SubmitProductReview 将商品从草稿态提交到审核流程。
+// SubmitProductReview 将商品从草稿相关状态提交到审核中。
 func (s *sCatalog) SubmitProductReview(ctx context.Context, req *v1.SubmitProductReviewReq) (*v1.SubmitProductReviewRes, error) {
+	// 标准提审入口：允许 DRAFT/REJECTED/OFF_SHELF 进入 REVIEWING。
 	return s.submitReview(ctx, req.GetSpuNo(), req.GetExpectedVersion(), req.GetSubmitNote(), false)
 }
 
-// ResubmitProductReview 将驳回商品重新提交审核。
+// ResubmitProductReview 仅允许驳回商品重新提交审核。
 func (s *sCatalog) ResubmitProductReview(ctx context.Context, req *v1.ResubmitProductReviewReq) (*v1.ResubmitProductReviewRes, error) {
+	// 重提入口：仅允许 REJECTED，避免跳过首提审的前置校验语义。
 	res, err := s.submitReview(ctx, req.GetSpuNo(), req.GetExpectedVersion(), req.GetSubmitNote(), true)
 	if err != nil {
 		return nil, err
@@ -363,22 +392,25 @@ func (s *sCatalog) ResubmitProductReview(ctx context.Context, req *v1.ResubmitPr
 	}, nil
 }
 
-// SetProductOnShelf 执行立即上架或定时上架状态切换。
+// SetProductOnShelf 处理立即上架或定时上架。
+// 关键点：上架动作只允许从 APPROVED/OFF_SHELF 发起，并受 expected_version 乐观锁保护。
+// 若传入未来生效时间，仅更新发布计划并维持 APPROVED，等待调度任务切到 ON_SHELF。
 func (s *sCatalog) SetProductOnShelf(ctx context.Context, req *v1.SetProductOnShelfReq) (*v1.SetProductOnShelfRes, error) {
 	if strings.TrimSpace(req.GetSpuNo()) == "" || req.GetExpectedVersion() == 0 {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "spu_no and expected_version are required")
 	}
-	// 默认按“立即上架”处理；若传了未来时间，则仅更新发布计划，状态保持 APPROVED。
 	nextStatus := v1.SpuStatus_SPU_STATUS_ON_SHELF
 	publishTime := gtime.Now()
 	if ts := req.GetEffectivePublishTime(); ts != nil {
+		// 传入生效时间时，总是记录到 publish_time，便于运营审计发布时间计划。
 		publishTime = gtime.NewFromTime(ts.AsTime())
 		if ts.AsTime().After(time.Now()) {
+			// 未来时间不立即可售：状态保持 APPROVED，等待异步调度上架。
 			nextStatus = v1.SpuStatus_SPU_STATUS_APPROVED
 		}
 	}
 
-	// 乐观锁更新：只有版本匹配且状态允许（APPROVED/OFF_SHELF）才允许切换上架状态。
+	// 乐观锁条件：版本命中且状态为 APPROVED/OFF_SHELF 才允许切换上架状态。
 	result, err := dao.CatalogSpu.Ctx(ctx).
 		Where(dao.CatalogSpu.Columns().SpuNo, req.GetSpuNo()).
 		Where(dao.CatalogSpu.Columns().Version, req.GetExpectedVersion()).
@@ -400,16 +432,16 @@ func (s *sCatalog) SetProductOnShelf(ctx context.Context, req *v1.SetProductOnSh
 	if affected == 0 {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "spu version conflict or status not allowed")
 	}
-	// 返回 nextStatus，调用方可直接据此判断是“已上架”还是“待定时生效”。
+	// 返回 nextStatus，调用方可据此区分“立即上架”与“定时待生效”。
 	return &v1.SetProductOnShelfRes{SpuNo: req.GetSpuNo(), SpuStatus: nextStatus}, nil
 }
 
-// SetProductOffShelf 执行主动下架。
+// SetProductOffShelf 主动下架商品，使用版本号防并发覆盖。
+// 该接口不校验来源角色，策略控制由上层网关/鉴权中间件负责。
 func (s *sCatalog) SetProductOffShelf(ctx context.Context, req *v1.SetProductOffShelfReq) (*v1.SetProductOffShelfRes, error) {
 	if strings.TrimSpace(req.GetSpuNo()) == "" || req.GetExpectedVersion() == 0 {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "spu_no and expected_version are required")
 	}
-	// 下架同样走版本条件，避免多端操作互相覆盖。
 	result, err := dao.CatalogSpu.Ctx(ctx).
 		Where(dao.CatalogSpu.Columns().SpuNo, req.GetSpuNo()).
 		Where(dao.CatalogSpu.Columns().Version, req.GetExpectedVersion()).
@@ -432,14 +464,16 @@ func (s *sCatalog) SetProductOffShelf(ctx context.Context, req *v1.SetProductOff
 	}, nil
 }
 
-// DeleteProductDraft 软删草稿商品及其 SKU。
+// DeleteProductDraft 软删草稿商品及其所有 SKU。
+// 关键路径：SPU 状态校验 + 乐观锁 -> SPU 软删 -> SKU 批量软删。
+// 仅允许删除草稿/驳回/下架状态，避免在线商品被误删。
 func (s *sCatalog) DeleteProductDraft(ctx context.Context, req *v1.DeleteProductDraftReq) (*emptypb.Empty, error) {
 	if strings.TrimSpace(req.GetSpuNo()) == "" || req.GetExpectedVersion() == 0 {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "spu_no and expected_version are required")
 	}
 	now := gtime.Now()
 	err := dao.CatalogSpu.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		// 先软删 SPU 主记录；只允许在可删除状态删除（草稿/驳回/下架）。
+		// 先删主商品（软删），版本命中并状态合法才会生效。
 		result, err := tx.Model(dao.CatalogSpu.Table()).
 			Where(dao.CatalogSpu.Columns().SpuNo, req.GetSpuNo()).
 			Where(dao.CatalogSpu.Columns().Version, req.GetExpectedVersion()).
@@ -462,7 +496,7 @@ func (s *sCatalog) DeleteProductDraft(ctx context.Context, req *v1.DeleteProduct
 			return gerror.NewCode(gcode.CodeInvalidParameter, "spu version conflict or status not allowed")
 		}
 
-		// 再批量软删该 SPU 下全部 SKU，避免出现“主商品删了但 SKU 还在”的脏读。
+		// 再批量软删该 SPU 下 SKU，避免出现“SPU 已删但 SKU 仍可见”的脏读。
 		_, err = tx.Model(dao.CatalogSku.Table()).
 			Where(dao.CatalogSku.Columns().SpuNo, req.GetSpuNo()).
 			WhereNull(dao.CatalogSku.Columns().DeletedAt).
@@ -481,9 +515,8 @@ func (s *sCatalog) DeleteProductDraft(ctx context.Context, req *v1.DeleteProduct
 	return &emptypb.Empty{}, nil
 }
 
-// GetMyProduct 返回卖家视角的商品聚合详情与审核信息。
+// GetMyProduct 返回卖家视角的完整商品聚合信息（SPU+SKU+属性）及审核信息。
 func (s *sCatalog) GetMyProduct(ctx context.Context, req *v1.GetMyProductReq) (*v1.GetMyProductRes, error) {
-	// 商家视角读取完整聚合（SPU+SKU+属性），不做买家可见性裁剪。
 	aggregate, err := s.getProductAggregate(ctx, req.GetSpuNo(), false)
 	if err != nil {
 		return nil, err
@@ -499,9 +532,9 @@ func (s *sCatalog) GetMyProduct(ctx context.Context, req *v1.GetMyProductReq) (*
 }
 
 // ListMyProducts 分页查询卖家商品列表。
+// 仅过滤软删数据，业务状态由调用方通过 statuses 控制。
 func (s *sCatalog) ListMyProducts(ctx context.Context, req *v1.ListMyProductsReq) (*v1.ListMyProductsRes, error) {
 	page, pageSize := normalizePage(req.GetPage(), req.GetPageSize())
-	// 仅过滤已软删数据，其他状态由调用方自行传 statuses 筛选。
 	model := dao.CatalogSpu.Ctx(ctx).
 		WhereNull(dao.CatalogSpu.Columns().DeletedAt)
 
@@ -513,7 +546,7 @@ func (s *sCatalog) ListMyProducts(ctx context.Context, req *v1.ListMyProductsReq
 		model = model.WhereIn(dao.CatalogSpu.Columns().SpuStatus, statuses)
 	}
 	if kw := strings.TrimSpace(req.GetKeyword()); kw != "" {
-		// 目前按标题做模糊匹配，后续可切到检索索引服务。
+		// 当前使用标题模糊匹配，便于后续平滑切换到搜索服务。
 		model = model.WhereLike(dao.CatalogSpu.Columns().Title, "%"+kw+"%")
 	}
 	total, err := model.Clone().Count()
@@ -539,7 +572,8 @@ func (s *sCatalog) ListMyProducts(ctx context.Context, req *v1.ListMyProductsReq
 	}, nil
 }
 
-// ListReviewTasks 分页查询审核任务列表。
+// ListReviewTasks 分页查询审核任务。
+// 入参 statuses 是 SPU 状态，查询时先映射为 review_task.review_status。
 func (s *sCatalog) ListReviewTasks(ctx context.Context, req *v1.ListReviewTasksReq) (*v1.ListReviewTasksRes, error) {
 	page, pageSize := normalizePage(req.GetPage(), req.GetPageSize())
 	model := dao.CatalogReviewTask.Ctx(ctx)
@@ -547,7 +581,6 @@ func (s *sCatalog) ListReviewTasks(ctx context.Context, req *v1.ListReviewTasksR
 		model = model.WhereLike(dao.CatalogReviewTask.Columns().SpuNo, "%"+kw+"%")
 	}
 	if len(req.GetStatuses()) > 0 {
-		// 入参是 SPU 业务状态，这里先映射为 review_task 的审核状态字段再筛选。
 		reviewStatuses := spuStatusToReviewStatus(req.GetStatuses())
 		if len(reviewStatuses) > 0 {
 			model = model.WhereIn(dao.CatalogReviewTask.Columns().ReviewStatus, reviewStatuses)
@@ -572,7 +605,8 @@ func (s *sCatalog) ListReviewTasks(ctx context.Context, req *v1.ListReviewTasksR
 			SpuStatus:   reviewStatusToSpuStatus(row.ReviewStatus),
 			SubmittedAt: toProtoTs(row.SubmittedAt),
 		}
-		// 任务表是审核快照，标题以 SPU 实时数据补全，失败不阻断主流程。
+		// 任务表是提交时快照，标题/实时状态尝试由 SPU 主表回填，不阻断主流程。
+		// 即使 SPU 已被删除或查询失败，也保留任务本身用于审计追踪。
 		spu, _ := s.getSpuEntity(ctx, row.SpuNo)
 		if spu != nil {
 			task.Title = spu.Title
@@ -588,7 +622,7 @@ func (s *sCatalog) ListReviewTasks(ctx context.Context, req *v1.ListReviewTasksR
 	}, nil
 }
 
-// GetReviewDetail 查询审核详情（商品聚合 + 审核信息）。
+// GetReviewDetail 返回审核详情：商品聚合信息 + 审核状态信息。
 func (s *sCatalog) GetReviewDetail(ctx context.Context, req *v1.GetReviewDetailReq) (*v1.GetReviewDetailRes, error) {
 	aggregate, err := s.getProductAggregate(ctx, req.GetSpuNo(), false)
 	if err != nil {
@@ -604,14 +638,16 @@ func (s *sCatalog) GetReviewDetail(ctx context.Context, req *v1.GetReviewDetailR
 	}, nil
 }
 
-// ApproveProduct 通过审核并更新审核任务状态。
+// ApproveProduct 通过审核：REVIEWING -> APPROVED，并在同事务内关闭待处理审核任务。
+// 审核主记录与任务状态在同一事务提交，避免“商品已通过但任务仍 pending”。
 func (s *sCatalog) ApproveProduct(ctx context.Context, req *v1.ApproveProductReq) (*v1.ApproveProductRes, error) {
 	if strings.TrimSpace(req.GetSpuNo()) == "" || req.GetExpectedVersion() == 0 {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "spu_no and expected_version are required")
 	}
 	now := gtime.Now()
 	err := dao.CatalogSpu.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		// 审核通过：REVIEWING -> APPROVED（待上架），并写入审核意见。
+		// 乐观锁 + 状态机约束，防止重复审核或并发审核穿透。
+		// 仅允许 REVIEWING 执行通过，杜绝越权状态跳转。
 		result, err := tx.Model(dao.CatalogSpu.Table()).
 			Where(dao.CatalogSpu.Columns().SpuNo, req.GetSpuNo()).
 			Where(dao.CatalogSpu.Columns().Version, req.GetExpectedVersion()).
@@ -630,7 +666,7 @@ func (s *sCatalog) ApproveProduct(ctx context.Context, req *v1.ApproveProductReq
 		if affected == 0 {
 			return gerror.NewCode(gcode.CodeInvalidParameter, "spu version conflict or status not reviewing")
 		}
-		// 同事务收口审核任务，避免“商品已通过但任务仍 pending”。
+		// 收口最新 pending 审核任务，保证商品状态与任务状态一致。
 		return s.finishLatestReviewTaskTx(ctx, tx, req.GetSpuNo(), uint(v1.ReviewStatus_REVIEW_STATUS_APPROVED), "", "", req.GetReviewComment())
 	})
 	if err != nil {
@@ -642,14 +678,16 @@ func (s *sCatalog) ApproveProduct(ctx context.Context, req *v1.ApproveProductReq
 	}, nil
 }
 
-// RejectProduct 驳回审核并记录驳回原因。
+// RejectProduct 驳回审核：REVIEWING -> REJECTED，并记录驳回原因。
+// 驳回信息回写 SPU 主表，商家侧读取单据时可直接看到整改依据。
 func (s *sCatalog) RejectProduct(ctx context.Context, req *v1.RejectProductReq) (*v1.RejectProductRes, error) {
 	if strings.TrimSpace(req.GetSpuNo()) == "" || req.GetExpectedVersion() == 0 {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "spu_no and expected_version are required")
 	}
 	now := gtime.Now()
 	err := dao.CatalogSpu.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		// 审核驳回：记录驳回码和驳回说明，便于商家定位整改点。
+		// 审核驳回信息写在 SPU 上，便于商家直接读取整改依据。
+		// 与 finishLatestReviewTaskTx 放同事务，保证任务与主状态同向流转。
 		result, err := tx.Model(dao.CatalogSpu.Table()).
 			Where(dao.CatalogSpu.Columns().SpuNo, req.GetSpuNo()).
 			Where(dao.CatalogSpu.Columns().Version, req.GetExpectedVersion()).
@@ -669,6 +707,7 @@ func (s *sCatalog) RejectProduct(ctx context.Context, req *v1.RejectProductReq) 
 		if affected == 0 {
 			return gerror.NewCode(gcode.CodeInvalidParameter, "spu version conflict or status not reviewing")
 		}
+		// 同步完成最新审核任务，避免任务与商品状态分叉。
 		return s.finishLatestReviewTaskTx(ctx, tx, req.GetSpuNo(), uint(v1.ReviewStatus_REVIEW_STATUS_REJECTED), req.GetRejectReasonCode(), req.GetRejectComment(), "")
 	})
 	if err != nil {
@@ -680,12 +719,12 @@ func (s *sCatalog) RejectProduct(ctx context.Context, req *v1.RejectProductReq) 
 	}, nil
 }
 
-// FreezeProduct 冻结商品，阻止继续售卖。
+// FreezeProduct 冻结商品，用于风控/运营强制处置。
+// 冻结不依赖当前状态，核心保护由 expected_version 保证并发安全。
 func (s *sCatalog) FreezeProduct(ctx context.Context, req *v1.FreezeProductReq) (*v1.FreezeProductRes, error) {
 	if strings.TrimSpace(req.GetSpuNo()) == "" || req.GetExpectedVersion() == 0 {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "spu_no and expected_version are required")
 	}
-	// 冻结用于风控/运营强制处置，不要求当前必须是上架态。
 	result, err := dao.CatalogSpu.Ctx(ctx).
 		Where(dao.CatalogSpu.Columns().SpuNo, req.GetSpuNo()).
 		Where(dao.CatalogSpu.Columns().Version, req.GetExpectedVersion()).
@@ -705,12 +744,12 @@ func (s *sCatalog) FreezeProduct(ctx context.Context, req *v1.FreezeProductReq) 
 	return &v1.FreezeProductRes{SpuNo: req.GetSpuNo(), SpuStatus: v1.SpuStatus_SPU_STATUS_FROZEN}, nil
 }
 
-// UnfreezeProduct 解除冻结并回到下架态。
+// UnfreezeProduct 解冻商品并回到下架态，避免直接恢复售卖。
+// 仅允许从 FROZEN 解冻，防止误把其他状态覆盖成 OFF_SHELF。
 func (s *sCatalog) UnfreezeProduct(ctx context.Context, req *v1.UnfreezeProductReq) (*v1.UnfreezeProductRes, error) {
 	if strings.TrimSpace(req.GetSpuNo()) == "" || req.GetExpectedVersion() == 0 {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "spu_no and expected_version are required")
 	}
-	// 仅允许从 FROZEN 解冻回 OFF_SHELF，防止越权直接恢复售卖。
 	result, err := dao.CatalogSpu.Ctx(ctx).
 		Where(dao.CatalogSpu.Columns().SpuNo, req.GetSpuNo()).
 		Where(dao.CatalogSpu.Columns().Version, req.GetExpectedVersion()).
@@ -730,12 +769,12 @@ func (s *sCatalog) UnfreezeProduct(ctx context.Context, req *v1.UnfreezeProductR
 	return &v1.UnfreezeProductRes{SpuNo: req.GetSpuNo(), SpuStatus: v1.SpuStatus_SPU_STATUS_OFF_SHELF}, nil
 }
 
-// ForceOffShelf 运营强制下架商品。
+// ForceOffShelf 平台强制下架入口。
+// 语义上区别于商家主动下架，但数据层处理一致：状态置 OFF_SHELF + 版本递增。
 func (s *sCatalog) ForceOffShelf(ctx context.Context, req *v1.ForceOffShelfReq) (*v1.ForceOffShelfRes, error) {
 	if strings.TrimSpace(req.GetSpuNo()) == "" || req.GetExpectedVersion() == 0 {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "spu_no and expected_version are required")
 	}
-	// 平台强制下架入口，状态直接切 OFF_SHELF。
 	result, err := dao.CatalogSpu.Ctx(ctx).
 		Where(dao.CatalogSpu.Columns().SpuNo, req.GetSpuNo()).
 		Where(dao.CatalogSpu.Columns().Version, req.GetExpectedVersion()).
@@ -755,25 +794,25 @@ func (s *sCatalog) ForceOffShelf(ctx context.Context, req *v1.ForceOffShelfReq) 
 	return &v1.ForceOffShelfRes{SpuNo: req.GetSpuNo(), SpuStatus: v1.SpuStatus_SPU_STATUS_OFF_SHELF}, nil
 }
 
-// GetProductDetail 返回买家可见的商品详情。
+// GetProductDetail 返回买家可见商品详情。
+// 买家侧强约束：非上架商品统一返回 not found，避免暴露后台状态。
 func (s *sCatalog) GetProductDetail(ctx context.Context, req *v1.GetProductDetailReq) (*v1.GetProductDetailRes, error) {
 	aggregate, err := s.getProductAggregate(ctx, req.GetSpuNo(), true)
 	if err != nil {
 		return nil, err
 	}
 	if aggregate.GetSpu().GetSpuStatus() != v1.SpuStatus_SPU_STATUS_ON_SHELF {
-		// 买家侧强约束：非上架商品统一按不存在处理，避免暴露后台状态。
 		return nil, gerror.NewCode(gcode.CodeNotFound, "product not on shelf")
 	}
 	return &v1.GetProductDetailRes{Product: aggregate}, nil
 }
 
-// ListProducts 返回买家商品列表（按分类/排序）。
+// ListProducts 查询买家商品列表（按类目、排序）。
 func (s *sCatalog) ListProducts(ctx context.Context, req *v1.ListProductsReq) (*v1.ListProductsRes, error) {
 	return s.listBuyerProducts(ctx, req.GetCategoryId(), "", req.GetSortBy(), req.GetPage(), req.GetPageSize())
 }
 
-// SearchProducts 返回买家商品搜索结果。
+// SearchProducts 查询买家商品搜索结果。
 func (s *sCatalog) SearchProducts(ctx context.Context, req *v1.SearchProductsReq) (*v1.SearchProductsRes, error) {
 	res, err := s.listBuyerProducts(ctx, req.GetCategoryId(), req.GetKeyword(), req.GetSortBy(), req.GetPage(), req.GetPageSize())
 	if err != nil {
@@ -787,7 +826,7 @@ func (s *sCatalog) SearchProducts(ctx context.Context, req *v1.SearchProductsReq
 	}, nil
 }
 
-// BatchGetSpuByNo 供内部服务按 spu_no 批量查询 SPU。
+// BatchGetSpuByNo 供内部服务按 spu_no 批量查询 SPU 基础信息。
 func (s *sCatalog) BatchGetSpuByNo(ctx context.Context, req *v1.BatchGetSpuByNoReq) (*v1.BatchGetSpuByNoRes, error) {
 	if len(req.GetSpuNos()) == 0 {
 		return &v1.BatchGetSpuByNoRes{Spus: []*v1.ProductSpu{}}, nil
@@ -807,7 +846,7 @@ func (s *sCatalog) BatchGetSpuByNo(ctx context.Context, req *v1.BatchGetSpuByNoR
 	return &v1.BatchGetSpuByNoRes{Spus: out}, nil
 }
 
-// BatchGetSkuByNo 供内部服务按 sku_no 批量查询 SKU。
+// BatchGetSkuByNo 供内部服务按 sku_no 批量查询 SKU，并补齐销售属性。
 func (s *sCatalog) BatchGetSkuByNo(ctx context.Context, req *v1.BatchGetSkuByNoReq) (*v1.BatchGetSkuByNoRes, error) {
 	if len(req.GetSkuNos()) == 0 {
 		return &v1.BatchGetSkuByNoRes{Skus: []*v1.ProductSku{}}, nil
@@ -832,6 +871,7 @@ func (s *sCatalog) BatchGetSkuByNo(ctx context.Context, req *v1.BatchGetSkuByNoR
 }
 
 // GetSkuSnapshotForOrder 为订单创建提供不可变商品快照。
+// 快照承载下单时定价和销售属性，后续商品改价不影响已下单事实。
 func (s *sCatalog) GetSkuSnapshotForOrder(ctx context.Context, req *v1.GetSkuSnapshotForOrderReq) (*v1.GetSkuSnapshotForOrderRes, error) {
 	if len(req.GetSkuNos()) == 0 {
 		return &v1.GetSkuSnapshotForOrderRes{Snapshots: []*v1.SkuOrderSnapshot{}}, nil
@@ -856,6 +896,7 @@ func (s *sCatalog) GetSkuSnapshotForOrder(ctx context.Context, req *v1.GetSkuSna
 	if err != nil {
 		return nil, gerror.Wrap(err, "query spus for snapshot failed")
 	}
+	// 构建 spu_no -> spu 映射，后续组装快照时避免 O(n^2) 查找。
 	spuMap := make(map[string]*entity.CatalogSpu, len(spus))
 	for _, row := range spus {
 		spuMap[row.SpuNo] = row
@@ -869,7 +910,7 @@ func (s *sCatalog) GetSkuSnapshotForOrder(ctx context.Context, req *v1.GetSkuSna
 	for _, sku := range skus {
 		spu := spuMap[sku.SpuNo]
 		if spu == nil {
-			// 正常不会发生，保险起见跳过异常脏数据，避免整体请求失败。
+			// 正常不应出现，防御性跳过异常脏数据，避免整批失败。
 			continue
 		}
 		snapshots = append(snapshots, &v1.SkuOrderSnapshot{
@@ -888,7 +929,9 @@ func (s *sCatalog) GetSkuSnapshotForOrder(ctx context.Context, req *v1.GetSkuSna
 	return &v1.GetSkuSnapshotForOrderRes{Snapshots: snapshots}, nil
 }
 
-// UpsertSkuStockProjection 写入库存投影，仅接受更高 stock_version 的事件。
+// UpsertSkuStockProjection 写入库存投影。
+// 关键路径：逐条事件 compare-and-swap 更新 -> 收集受影响 SPU -> 增量触发聚合重算。
+// 仅接受更高 stock_version 的事件，天然抵抗消息乱序和重复投递。
 func (s *sCatalog) UpsertSkuStockProjection(ctx context.Context, req *v1.UpsertSkuStockProjectionReq) (*v1.UpsertSkuStockProjectionRes, error) {
 	var (
 		updatedRows uint64
@@ -897,10 +940,11 @@ func (s *sCatalog) UpsertSkuStockProjection(ctx context.Context, req *v1.UpsertS
 	)
 	for _, item := range req.GetItems() {
 		if strings.TrimSpace(item.GetSkuNo()) == "" {
+			// 脏事件直接跳过并记入 skipped，保证批处理可持续推进。
 			skippedRows++
 			continue
 		}
-		// 关键点：只接受更高版本库存事件，天然抵御 MQ 乱序与重复投递。
+		// 条件更新：只有事件版本号前进才覆盖库存状态。
 		result, err := dao.CatalogSku.Ctx(ctx).
 			Where(dao.CatalogSku.Columns().SkuNo, item.GetSkuNo()).
 			Where(fmt.Sprintf("%s < ?", dao.CatalogSku.Columns().StockVersion), item.GetStockVersion()).
@@ -915,17 +959,18 @@ func (s *sCatalog) UpsertSkuStockProjection(ctx context.Context, req *v1.UpsertS
 		}
 		affected, _ := result.RowsAffected()
 		if affected == 0 {
-			// 版本未前进说明是旧消息或重复消息，计入 skipped 即可。
+			// 版本未前进说明旧消息/重复消息，计入 skipped 即可。
 			skippedRows++
 			continue
 		}
 		updatedRows++
 		if item.GetSpuNo() != "" {
+			// 仅记录受影响 SPU，后续做增量聚合重算。
 			spuSet[item.GetSpuNo()] = struct{}{}
 		}
 	}
 	for spuNo := range spuSet {
-		// 只重算受影响 SPU，避免全表重算带来的写放大。
+		// 只重算受影响 SPU，避免全量重算带来写放大。
 		if _, err := s.recomputeSpuAggregation(ctx, spuNo); err != nil {
 			return nil, err
 		}
@@ -933,7 +978,7 @@ func (s *sCatalog) UpsertSkuStockProjection(ctx context.Context, req *v1.UpsertS
 	return &v1.UpsertSkuStockProjectionRes{UpdatedRows: updatedRows, SkippedRows: skippedRows}, nil
 }
 
-// RecomputeSpuAggregation 主动触发 SPU 聚合字段重算。
+// RecomputeSpuAggregation 对外暴露 SPU 聚合字段重算入口。
 func (s *sCatalog) RecomputeSpuAggregation(ctx context.Context, req *v1.RecomputeSpuAggregationReq) (*v1.RecomputeSpuAggregationRes, error) {
 	updated, err := s.recomputeSpuAggregation(ctx, req.GetSpuNo())
 	if err != nil {
@@ -945,28 +990,33 @@ func (s *sCatalog) RecomputeSpuAggregation(ctx context.Context, req *v1.Recomput
 	}, nil
 }
 
-// submitReview 封装提审事务：改状态、写提交时间、落审核任务。
+// submitReview 封装提审事务：
+// 1) 校验版本与可提审状态；
+// 2) 更新 SPU 为 REVIEWING；
+// 3) 写入审核任务快照。
 func (s *sCatalog) submitReview(ctx context.Context, spuNo string, expectedVersion uint32, submitNote string, onlyRejected bool) (*v1.SubmitProductReviewRes, error) {
 	if strings.TrimSpace(spuNo) == "" || expectedVersion == 0 {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "spu_no and expected_version are required")
 	}
 	now := gtime.Now()
 	err := dao.CatalogSpu.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		// 先定位目标 SPU，并带 expectedVersion 乐观锁，避免并发提交覆盖。
+		// 版本条件是并发闸门，确保同一版本只会被成功提审一次。
 		model := tx.Model(dao.CatalogSpu.Table()).
 			Where(dao.CatalogSpu.Columns().SpuNo, spuNo).
 			Where(dao.CatalogSpu.Columns().Version, expectedVersion).
 			WhereNull(dao.CatalogSpu.Columns().DeletedAt)
 		if onlyRejected {
-			// 重提入口只允许 REJECTED 状态进入，防止绕过常规审核流程。
+			// 重提入口只允许 REJECTED，防止绕过审核流程。
 			model = model.Where(dao.CatalogSpu.Columns().SpuStatus, uint(v1.SpuStatus_SPU_STATUS_REJECTED))
 		} else {
+			// 首提审/通用提审入口允许草稿、驳回、下架态进入审核中。
 			model = model.WhereIn(dao.CatalogSpu.Columns().SpuStatus, []uint{
 				uint(v1.SpuStatus_SPU_STATUS_DRAFT),
 				uint(v1.SpuStatus_SPU_STATUS_REJECTED),
 				uint(v1.SpuStatus_SPU_STATUS_OFF_SHELF),
 			})
 		}
+		// 切换 SPU 到 REVIEWING，并清理上次驳回信息，避免脏提示残留。
 		result, err := model.Data(do.CatalogSpu{
 			SpuStatus:        uint(v1.SpuStatus_SPU_STATUS_REVIEWING),
 			ReviewStatus:     uint(v1.ReviewStatus_REVIEW_STATUS_PENDING),
@@ -983,7 +1033,8 @@ func (s *sCatalog) submitReview(ctx context.Context, spuNo string, expectedVersi
 			return gerror.NewCode(gcode.CodeInvalidParameter, "spu version conflict or status not submittable")
 		}
 
-		// 写一条审核任务快照，供审核后台按任务流处理。
+		// 创建审核任务快照，审核侧按任务流转，避免直接耦合 SPU 主表变更。
+		// 任务记录 submit_note 和提交版本，用于后续审计与复核追踪。
 		spu, err := s.getSpuEntityTx(ctx, tx, spuNo)
 		if err != nil {
 			return err
@@ -1011,7 +1062,8 @@ func (s *sCatalog) submitReview(ctx context.Context, spuNo string, expectedVersi
 	}, nil
 }
 
-// listBuyerProducts 封装买家列表查询和排序逻辑。
+// listBuyerProducts 封装买家列表查询与排序。
+// 只返回 ON_SHELF 且未删除商品，保证买家侧可见性一致。
 func (s *sCatalog) listBuyerProducts(ctx context.Context, categoryID uint64, keyword string, sortBy v1.SortBy, pageReq, pageSizeReq int32) (*v1.ListProductsRes, error) {
 	page, pageSize := normalizePage(pageReq, pageSizeReq)
 	model := dao.CatalogSpu.Ctx(ctx).
@@ -1021,6 +1073,7 @@ func (s *sCatalog) listBuyerProducts(ctx context.Context, categoryID uint64, key
 		model = model.Where(dao.CatalogSpu.Columns().CategoryId, categoryID)
 	}
 	if kw := strings.TrimSpace(keyword); kw != "" {
+		// 关键字先走标题 like；复杂搜索后续可替换为检索服务。
 		model = model.WhereLike(dao.CatalogSpu.Columns().Title, "%"+kw+"%")
 	}
 	total, err := model.Clone().Count()
@@ -1060,12 +1113,15 @@ func (s *sCatalog) listBuyerProducts(ctx context.Context, categoryID uint64, key
 	}, nil
 }
 
-// getProductAggregate 组装 SPU + SKU + 属性的聚合返回结构。
+// getProductAggregate 组装 SPU + SKU + 属性聚合结果。
+// buyer=true 时仅返回启用 SKU，用于买家侧可见性裁剪。
 func (s *sCatalog) getProductAggregate(ctx context.Context, spuNo string, buyer bool) (*v1.ProductAggregate, error) {
+	// 先读 SPU 主档，若不存在直接返回 not found。
 	spu, err := s.getSpuEntity(ctx, spuNo)
 	if err != nil {
 		return nil, err
 	}
+	// 读取 SPU 属性（商品属性），与 SKU 销售属性分层组织。
 	spuAttrs, err := s.querySpuAttrs(ctx, spuNo)
 	if err != nil {
 		return nil, err
@@ -1075,6 +1131,7 @@ func (s *sCatalog) getProductAggregate(ctx context.Context, spuNo string, buyer 
 		Where(dao.CatalogSku.Columns().SpuNo, spuNo).
 		WhereNull(dao.CatalogSku.Columns().DeletedAt)
 	if buyer {
+		// 买家侧仅可见启用 SKU，草稿/删除态 SKU 不返回。
 		skuModel = skuModel.Where(dao.CatalogSku.Columns().SkuStatus, uint(v1.SkuStatus_SKU_STATUS_ENABLED))
 	}
 	var skus []*entity.CatalogSku
@@ -1083,6 +1140,7 @@ func (s *sCatalog) getProductAggregate(ctx context.Context, spuNo string, buyer 
 		return nil, gerror.Wrap(err, "query product skus failed")
 	}
 
+	// 销售属性独立查出后按 sku_no 分组，最后与 SKU 主记录组装。
 	saleAttrsMap, err := s.querySkuSaleAttrs(ctx, skuNoList(skus))
 	if err != nil {
 		return nil, err
@@ -1097,7 +1155,7 @@ func (s *sCatalog) getProductAggregate(ctx context.Context, spuNo string, buyer 
 	}, nil
 }
 
-// getSpuEntity 查询单个 SPU 实体（非事务版本）。
+// getSpuEntity 查询单个 SPU（非事务）。
 func (s *sCatalog) getSpuEntity(ctx context.Context, spuNo string) (*entity.CatalogSpu, error) {
 	var spu entity.CatalogSpu
 	err := dao.CatalogSpu.Ctx(ctx).
@@ -1113,7 +1171,7 @@ func (s *sCatalog) getSpuEntity(ctx context.Context, spuNo string) (*entity.Cata
 	return &spu, nil
 }
 
-// getSpuEntityTx 在事务内查询单个 SPU 实体。
+// getSpuEntityTx 在事务内查询单个 SPU。
 func (s *sCatalog) getSpuEntityTx(ctx context.Context, tx gdb.TX, spuNo string) (*entity.CatalogSpu, error) {
 	var spu entity.CatalogSpu
 	err := tx.Model(dao.CatalogSpu.Table()).
@@ -1129,7 +1187,7 @@ func (s *sCatalog) getSpuEntityTx(ctx context.Context, tx gdb.TX, spuNo string) 
 	return &spu, nil
 }
 
-// querySpuAttrs 查询 SPU 属性并转换为 API 结构。
+// querySpuAttrs 查询并转换 SPU 属性明细。
 func (s *sCatalog) querySpuAttrs(ctx context.Context, spuNo string) ([]*v1.AttributeValue, error) {
 	var rows []*entity.CatalogSpuAttrValue
 	err := dao.CatalogSpuAttrValue.Ctx(ctx).
@@ -1151,7 +1209,7 @@ func (s *sCatalog) querySpuAttrs(ctx context.Context, spuNo string) ([]*v1.Attri
 	return out, nil
 }
 
-// querySkuSaleAttrs 批量查询 SKU 销售属性并按 sku_no 分组。
+// querySkuSaleAttrs 批量查询 SKU 销售属性，并按 sku_no 分组。
 func (s *sCatalog) querySkuSaleAttrs(ctx context.Context, skuNos []string) (map[string][]*v1.SkuSaleAttr, error) {
 	out := make(map[string][]*v1.SkuSaleAttr)
 	if len(skuNos) == 0 {
@@ -1175,8 +1233,9 @@ func (s *sCatalog) querySkuSaleAttrs(ctx context.Context, skuNos []string) (map[
 	return out, nil
 }
 
-// replaceSpuAttrsTx 在事务内重建 SPU 属性明细。
+// replaceSpuAttrsTx 事务内重建 SPU 属性明细（先删后插）。
 func (s *sCatalog) replaceSpuAttrsTx(ctx context.Context, tx gdb.TX, spuNo string, attrs []*v1.AttributeValue) error {
+	// 先清空旧明细，确保本次请求成为该 SPU 属性的唯一真相来源。
 	_, err := tx.Model(dao.CatalogSpuAttrValue.Table()).
 		Where(dao.CatalogSpuAttrValue.Columns().SpuNo, spuNo).
 		Delete()
@@ -1184,6 +1243,7 @@ func (s *sCatalog) replaceSpuAttrsTx(ctx context.Context, tx gdb.TX, spuNo strin
 		return gerror.Wrap(err, "delete spu attrs failed")
 	}
 	if len(attrs) == 0 {
+		// 允许传空：表示显式清空 SPU 属性集合。
 		return nil
 	}
 	items := make([]do.CatalogSpuAttrValue, 0, len(attrs))
@@ -1204,8 +1264,9 @@ func (s *sCatalog) replaceSpuAttrsTx(ctx context.Context, tx gdb.TX, spuNo strin
 	return nil
 }
 
-// replaceSkuSaleAttrsTx 在事务内重建 SKU 销售属性明细。
+// replaceSkuSaleAttrsTx 事务内重建 SKU 销售属性明细（先删后插）。
 func (s *sCatalog) replaceSkuSaleAttrsTx(ctx context.Context, tx gdb.TX, spuNo, skuNo string, attrs []*v1.SkuSaleAttr) error {
+	// 同样采用覆盖式重建，避免局部更新带来的顺序/重复问题。
 	_, err := tx.Model(dao.CatalogSkuSaleAttrValue.Table()).
 		Where(dao.CatalogSkuSaleAttrValue.Columns().SkuNo, skuNo).
 		Delete()
@@ -1233,7 +1294,8 @@ func (s *sCatalog) replaceSkuSaleAttrsTx(ctx context.Context, tx gdb.TX, spuNo, 
 	return nil
 }
 
-// finishLatestReviewTaskTx 结束最新待处理审核任务并写入审核结论。
+// finishLatestReviewTaskTx 将最新 pending 审核任务置为终态并记录审核结果。
+// 若不存在 pending 任务则直接返回，保证调用幂等。
 func (s *sCatalog) finishLatestReviewTaskTx(ctx context.Context, tx gdb.TX, spuNo string, reviewStatus uint, rejectCode, rejectComment, reviewComment string) error {
 	var task entity.CatalogReviewTask
 	err := tx.Model(dao.CatalogReviewTask.Table()).
@@ -1245,8 +1307,10 @@ func (s *sCatalog) finishLatestReviewTaskTx(ctx context.Context, tx gdb.TX, spuN
 		return gerror.Wrap(err, "query latest review task failed")
 	}
 	if task.Id == 0 {
+		// 没有 pending 任务时按幂等成功处理，不阻断主状态流转。
 		return nil
 	}
+	// 仅更新最新 pending 任务，避免历史任务被重复改写。
 	_, err = tx.Model(dao.CatalogReviewTask.Table()).
 		Where(dao.CatalogReviewTask.Columns().TaskNo, task.TaskNo).
 		Data(do.CatalogReviewTask{
@@ -1263,7 +1327,8 @@ func (s *sCatalog) finishLatestReviewTaskTx(ctx context.Context, tx gdb.TX, spuN
 	return nil
 }
 
-// recomputeSpuAggregation 事务封装的 SPU 聚合重算入口。
+// recomputeSpuAggregation 为重算聚合字段提供事务封装入口。
+// 对外统一走事务版本，便于未来在重算前后追加更多一致性动作。
 func (s *sCatalog) recomputeSpuAggregation(ctx context.Context, spuNo string) (bool, error) {
 	var updated bool
 	err := dao.CatalogSpu.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
@@ -1277,7 +1342,10 @@ func (s *sCatalog) recomputeSpuAggregation(ctx context.Context, spuNo string) (b
 	return updated, nil
 }
 
-// recomputeSpuAggregationTx 在事务内按 SKU 重算 SPU 聚合价格和有货状态。
+// recomputeSpuAggregationTx 根据当前 SKU 集重算 SPU 聚合字段：
+// - 最低/最高销售价；
+// - 最低/最高划线价；
+// - SPU 维度库存状态（任一启用 SKU 有货即为有货）。
 func (s *sCatalog) recomputeSpuAggregationTx(ctx context.Context, tx gdb.TX, spuNo string) (bool, error) {
 	var skus []*entity.CatalogSku
 	err := tx.Model(dao.CatalogSku.Table()).
@@ -1290,12 +1358,14 @@ func (s *sCatalog) recomputeSpuAggregationTx(ctx context.Context, tx gdb.TX, spu
 	}
 
 	var (
+		// 无有效 SKU 时保留零值，表示价格区间未知/空集。
 		minSale    uint64
 		maxSale    uint64
 		minMarket  uint64
 		maxMarket  uint64
 		stockState = uint(v1.StockStatus_STOCK_STATUS_OUT_OF_STOCK)
 	)
+	// 通过单次遍历计算价格区间，并根据 SKU 状态聚合库存状态。
 	for i, row := range skus {
 		if i == 0 {
 			minSale = row.SalePrice
@@ -1317,9 +1387,11 @@ func (s *sCatalog) recomputeSpuAggregationTx(ctx context.Context, tx gdb.TX, spu
 			}
 		}
 		if row.SkuStatus == uint(v1.SkuStatus_SKU_STATUS_ENABLED) && row.StockStatus == uint(v1.StockStatus_STOCK_STATUS_IN_STOCK) {
+			// 只要任一“可售 SKU”有货，SPU 即判定为有货。
 			stockState = uint(v1.StockStatus_STOCK_STATUS_IN_STOCK)
 		}
 	}
+	// 将聚合结果回写 SPU，供列表页/搜索页直接读取，减少联表和实时计算成本。
 	result, err := tx.Model(dao.CatalogSpu.Table()).
 		Where(dao.CatalogSpu.Columns().SpuNo, spuNo).
 		WhereNull(dao.CatalogSpu.Columns().DeletedAt).
@@ -1338,7 +1410,7 @@ func (s *sCatalog) recomputeSpuAggregationTx(ctx context.Context, tx gdb.TX, spu
 	return affected > 0, nil
 }
 
-// toProtoSpu 将 SPU 实体转换为 Proto 返回结构。
+// toProtoSpu 将 SPU 实体映射到 API 返回结构。
 func toProtoSpu(row *entity.CatalogSpu, attrs []*v1.AttributeValue) *v1.ProductSpu {
 	return &v1.ProductSpu{
 		SpuNo:               row.SpuNo,
@@ -1363,7 +1435,7 @@ func toProtoSpu(row *entity.CatalogSpu, attrs []*v1.AttributeValue) *v1.ProductS
 	}
 }
 
-// toProtoSku 将 SKU 实体转换为 Proto 返回结构。
+// toProtoSku 将 SKU 实体映射到 API 返回结构。
 func toProtoSku(row *entity.CatalogSku, saleAttrs []*v1.SkuSaleAttr) *v1.ProductSku {
 	return &v1.ProductSku{
 		SkuNo:           row.SkuNo,
@@ -1383,7 +1455,7 @@ func toProtoSku(row *entity.CatalogSku, saleAttrs []*v1.SkuSaleAttr) *v1.Product
 	}
 }
 
-// spuReviewInfo 从 SPU 实体提取审核信息。
+// spuReviewInfo 从 SPU 实体提取审核视图信息。
 func spuReviewInfo(spu *entity.CatalogSpu) *v1.ReviewInfo {
 	if spu == nil {
 		return &v1.ReviewInfo{}
@@ -1398,6 +1470,7 @@ func spuReviewInfo(spu *entity.CatalogSpu) *v1.ReviewInfo {
 }
 
 // parseUint64Slice 解析 JSON 数组字符串为 uint64 列表。
+// 该函数容忍反序列化异常，异常时返回空切片语义。
 func parseUint64Slice(v string) []uint64 {
 	if strings.TrimSpace(v) == "" {
 		return nil
@@ -1416,7 +1489,8 @@ func marshalJSON(v interface{}) (string, error) {
 	return string(b), nil
 }
 
-// normalizeSaleAttrs 规范化销售属性并生成稳定哈希，支持唯一性判断。
+// normalizeSaleAttrs 规范化销售属性并生成稳定哈希。
+// 通过 trim + 排序 + 哈希保证“同语义属性集合”得到同一 hash，便于唯一性判断。
 func normalizeSaleAttrs(attrs []*v1.SkuSaleAttr) (string, string, error) {
 	normalized := make([]*v1.SkuSaleAttr, 0, len(attrs))
 	for _, attr := range attrs {
@@ -1465,7 +1539,7 @@ func uniqueSpuNosFromSkus(skus []*entity.CatalogSku) []string {
 	return out
 }
 
-// normalizePage 统一分页参数并限制最大页大小。
+// normalizePage 统一分页参数并限制最大 page_size。
 func normalizePage(pageReq, pageSizeReq int32) (int, int) {
 	page := int(pageReq)
 	pageSize := int(pageSizeReq)
@@ -1482,6 +1556,7 @@ func normalizePage(pageReq, pageSizeReq int32) (int, int) {
 }
 
 // normalizePatchPath 标准化 FieldMask 路径。
+// 例如 patch.title -> title；a.b -> a_b。
 func normalizePatchPath(path string) string {
 	path = strings.TrimSpace(path)
 	path = strings.TrimPrefix(path, "patch.")
@@ -1539,7 +1614,7 @@ func reviewStatusToSpuStatus(reviewStatus uint) v1.SpuStatus {
 	}
 }
 
-// toProtoTs 将 gtime 时间转换为 protobuf Timestamp。
+// toProtoTs 将 gtime 转为 protobuf Timestamp。
 func toProtoTs(t *gtime.Time) *timestamppb.Timestamp {
 	if t == nil {
 		return nil
@@ -1547,7 +1622,7 @@ func toProtoTs(t *gtime.Time) *timestamppb.Timestamp {
 	return timestamppb.New(t.Time)
 }
 
-// protoTsToGTime 将 protobuf Timestamp 转换为 gtime 时间。
+// protoTsToGTime 将 protobuf Timestamp 转为 gtime。
 func protoTsToGTime(ts *timestamppb.Timestamp) *gtime.Time {
 	if ts == nil {
 		return nil
@@ -1555,7 +1630,7 @@ func protoTsToGTime(ts *timestamppb.Timestamp) *gtime.Time {
 	return gtime.NewFromTime(ts.AsTime())
 }
 
-// generateBizNo 生成业务号（前缀+时间戳+随机尾号）。
+// generateBizNo 生成业务号（前缀 + 时间戳 + 6 位纳秒尾号）。
 func generateBizNo(prefix string) string {
 	now := time.Now()
 	return fmt.Sprintf("%s%s%06d", prefix, now.Format("20060102150405"), now.UnixNano()%1000000)

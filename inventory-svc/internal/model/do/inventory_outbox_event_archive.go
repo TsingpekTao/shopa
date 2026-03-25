@@ -9,7 +9,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// InventoryOutboxEventArchive is the golang structure of table inventory_outbox_event_archive for DAO operations like Where/Data.
+// InventoryOutboxEventArchive 是用于 DAO 操作（如 Where/Data）的 inventory_outbox_event_archive 表 Go 结构体。
 type InventoryOutboxEventArchive struct {
 	g.Meta        `orm:"table:inventory_outbox_event_archive, do:true"`
 	Id            any         //

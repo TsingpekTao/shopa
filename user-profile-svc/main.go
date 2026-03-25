@@ -10,7 +10,7 @@ import (
 	"github.com/TsingpekTao/shopa/user-profile-svc/internal/cmd"
 )
 
-// main 绋嬪簭鍏ュ彛锛氬惎鍔ㄥ懡浠ゅ苟杩涘叆鏈嶅姟鐢熷懡鍛ㄦ湡銆
+// main 是用户画像服务的入口，负责启动全局命令并执行主流程。
 func main() {
 	cmd.Main.Run(gctx.GetInitCtx())
 }

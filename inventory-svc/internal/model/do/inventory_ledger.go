@@ -9,7 +9,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// InventoryLedger is the golang structure of table inventory_ledger for DAO operations like Where/Data.
+// InventoryLedger 是用于 DAO 操作（如 Where/Data）的 inventory_ledger 表 Go 结构体。
 type InventoryLedger struct {
 	g.Meta            `orm:"table:inventory_ledger, do:true"`
 	Id                any         //

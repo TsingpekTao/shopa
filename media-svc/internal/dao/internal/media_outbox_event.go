@@ -11,21 +11,21 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 )
 
-// MediaOutboxEventDao is the data access object for the table media_outbox_event.
+// MediaOutboxEventDao 是 media_outbox_event 表的数据访问对象。
 type MediaOutboxEventDao struct {
-	table    string                  // table is the underlying table name of the DAO.
-	group    string                  // group is the database configuration group name of the current DAO.
-	columns  MediaOutboxEventColumns // columns contains all the column names of Table for convenient usage.
-	handlers []gdb.ModelHandler      // handlers for customized model modification.
+	table    string                  // table 表示 DAO 所在的表名。
+	group    string                  // group 表示数据库配置分组。
+	columns  MediaOutboxEventColumns // columns 包含全部列名，方便复用。
+	handlers []gdb.ModelHandler      // handlers 用于自定义模型处理。
 }
 
-// MediaOutboxEventColumns defines and stores column names for the table media_outbox_event.
+// MediaOutboxEventColumns 定义并存储 media_outbox_event 表的列名。
 type MediaOutboxEventColumns struct {
 	Id            string //
-	EventId       string // Global unique event id
-	EventType     string // AssetProcessingCompleted/AssetProcessingFailed/...
-	AggregateType string // ASSET/BINDING/SCENE
-	AggregateKey  string // asset_id/biz_key/scene_code
+	EventId       string // 全局唯一事件 ID。
+	EventType     string // 事件类型，例如 AssetProcessingCompleted/AssetProcessingFailed/...
+	AggregateType string // 聚合类型：ASSET/BINDING/SCENE。
+	AggregateKey  string // 聚合键：asset_id/biz_key/scene_code。
 	RequestId     string //
 	PayloadJson   string //
 	Status        string //
@@ -37,7 +37,7 @@ type MediaOutboxEventColumns struct {
 	UpdatedAt     string //
 }
 
-// mediaOutboxEventColumns holds the columns for the table media_outbox_event.
+// mediaOutboxEventColumns 保存 media_outbox_event 表的列名映射。
 var mediaOutboxEventColumns = MediaOutboxEventColumns{
 	Id:            "id",
 	EventId:       "event_id",
@@ -55,7 +55,7 @@ var mediaOutboxEventColumns = MediaOutboxEventColumns{
 	UpdatedAt:     "updated_at",
 }
 
-// NewMediaOutboxEventDao creates and returns a new DAO object for table data access.
+// NewMediaOutboxEventDao 创建并返回 media_outbox_event 表的数据访问对象。
 func NewMediaOutboxEventDao(handlers ...gdb.ModelHandler) *MediaOutboxEventDao {
 	return &MediaOutboxEventDao{
 		group:    "default",
@@ -65,27 +65,27 @@ func NewMediaOutboxEventDao(handlers ...gdb.ModelHandler) *MediaOutboxEventDao {
 	}
 }
 
-// DB retrieves and returns the underlying raw database management object of the current DAO.
+// DB 返回当前 DAO 的底层数据库管理对象。
 func (dao *MediaOutboxEventDao) DB() gdb.DB {
 	return g.DB(dao.group)
 }
 
-// Table returns the table name of the current DAO.
+// Table 返回当前 DAO 操作的表名。
 func (dao *MediaOutboxEventDao) Table() string {
 	return dao.table
 }
 
-// Columns returns all column names of the current DAO.
+// Columns 返回当前 DAO 的所有列名。
 func (dao *MediaOutboxEventDao) Columns() MediaOutboxEventColumns {
 	return dao.columns
 }
 
-// Group returns the database configuration group name of the current DAO.
+// Group 返回 DAO 使用的数据库配置分组名称。
 func (dao *MediaOutboxEventDao) Group() string {
 	return dao.group
 }
 
-// Ctx creates and returns a Model for the current DAO. It automatically sets the context for the current operation.
+// Ctx 创建并返回当前 DAO 的 Model，并自动设置操作上下文。
 func (dao *MediaOutboxEventDao) Ctx(ctx context.Context) *gdb.Model {
 	model := dao.DB().Model(dao.table)
 	for _, handler := range dao.handlers {
@@ -94,12 +94,11 @@ func (dao *MediaOutboxEventDao) Ctx(ctx context.Context) *gdb.Model {
 	return model.Safe().Ctx(ctx)
 }
 
-// Transaction wraps the transaction logic using function f.
-// It rolls back the transaction and returns the error if function f returns a non-nil error.
-// It commits the transaction and returns nil if function f returns nil.
+// Transaction 用参数函数 f 包裹事务逻辑。
+// 如果 f 返回非 nil 错误则回滚并返回该错误。
+// 如果 f 返回 nil 则提交并返回 nil。
 //
-// Note: Do not commit or roll back the transaction in function f,
-// as it is automatically handled by this function.
+// 注意：f 内请勿显式提交或回滚，事务由此方法自动管理。
 func (dao *MediaOutboxEventDao) Transaction(ctx context.Context, f func(ctx context.Context, tx gdb.TX) error) (err error) {
 	return dao.Ctx(ctx).Transaction(ctx, f)
 }

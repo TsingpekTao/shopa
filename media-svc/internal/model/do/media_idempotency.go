@@ -9,14 +9,14 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// MediaIdempotency is the golang structure of table media_idempotency for DAO operations like Where/Data.
+// MediaIdempotency 是 media_idempotency 表的 Go 结构体，供 DAO 的 Where/Data 等操作使用。
 type MediaIdempotency struct {
 	g.Meta         `orm:"table:media_idempotency, do:true"`
 	Id             any         //
-	ActorUserId    any         // User id from metadata
-	ActionCode     any         // InitUpload/BatchBindAssetsToBiz/...
-	IdempotencyKey any         // x-idempotency-key
-	RequestHash    any         // Request payload hash
+	ActorUserId    any         // metadata 中的用户 ID。
+	ActionCode     any         // 示例：InitUpload/BatchBindAssetsToBiz/...。
+	IdempotencyKey any         // x-idempotency-key 请求头。
+	RequestHash    any         // 请求有效载荷哈希。
 	SceneCode      any         //
 	BizType        any         //
 	BizNo          any         //

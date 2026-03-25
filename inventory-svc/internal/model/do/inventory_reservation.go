@@ -9,7 +9,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// InventoryReservation is the golang structure of table inventory_reservation for DAO operations like Where/Data.
+// InventoryReservation 是用于 DAO 操作（如 Where/Data）的 inventory_reservation 表 Go 结构体。
 type InventoryReservation struct {
 	g.Meta            `orm:"table:inventory_reservation, do:true"`
 	Id                any         //

@@ -8,7 +8,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// MediaOutboxEventArchive is the golang structure for table media_outbox_event_archive.
+// MediaOutboxEventArchive 是 media_outbox_event_archive 表的结构体。
 type MediaOutboxEventArchive struct {
 	Id            uint64      `json:"id"            orm:"id"             description:""` //
 	EventId       string      `json:"eventId"       orm:"event_id"       description:""` //

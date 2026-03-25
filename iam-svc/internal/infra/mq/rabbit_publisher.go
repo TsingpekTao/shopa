@@ -17,7 +17,7 @@ type rabbitPublisher struct {
 	ch   *amqp.Channel
 }
 
-// newRabbitPublisher 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// newRabbitPublisher 根据配置构建 RabbitMQ 发布器。
 func newRabbitPublisher(conf rabbitConf) (Publisher, error) {
 	p := &rabbitPublisher{conf: conf}
 	if err := p.ensureConnected(); err != nil {
@@ -26,12 +26,12 @@ func newRabbitPublisher(conf rabbitConf) (Publisher, error) {
 	return p, nil
 }
 
-// Enabled 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// Enabled 返回 RabbitMQ 发布器是否启用。
 func (p *rabbitPublisher) Enabled() bool {
 	return true
 }
 
-// PublishUserRegistered 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// PublishUserRegistered 发布用户注册事件到 RabbitMQ。
 func (p *rabbitPublisher) PublishUserRegistered(ctx context.Context, eventID string, payload []byte) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -55,14 +55,14 @@ func (p *rabbitPublisher) PublishUserRegistered(ctx context.Context, eventID str
 	return nil
 }
 
-// Close 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// Close 关闭发布器并释放连接资源。
 func (p *rabbitPublisher) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.closeLocked()
 }
 
-// ensureConnected 纭繚鍓嶇疆鐘舵€佸瓨鍦紝涓嶆弧瓒冲垯鑷姩琛ラ綈銆
+// ensureConnected 检查并维持与 RabbitMQ 的连接与 channel。
 func (p *rabbitPublisher) ensureConnected() error {
 	if p.conn != nil && !p.conn.IsClosed() && p.ch != nil {
 		return nil
@@ -91,7 +91,7 @@ func (p *rabbitPublisher) ensureConnected() error {
 	return nil
 }
 
-// closeLocked 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// closeLocked 在锁保护下关闭 channel 与连接。
 func (p *rabbitPublisher) closeLocked() error {
 	var firstErr error
 	if p.ch != nil {

@@ -17,125 +17,126 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// sAuth 负责网关侧统一鉴权能力：
-// 1) 从 HTTP 请求中提取 AccessToken；
-// 2) 调用 iam-svc 校验 token；
-// 3) 将 IAM 的枚举状态转换为前端可读的字符串码。
+// sAuth 负责网关统一鉴权：
+// 1) 从 HTTP 请求提取 access token。
+// 2) 调 IAM 校验 token 并拿到 user_id/角色信息。
+// 3) 将下游枚举转换为网关统一可读字段，供 BFF/代理层复用。
 type sAuth struct {
-	// once 用于保证 gRPC 客户端仅初始化一次，避免并发重复建连。
+	// once 保证 gRPC 客户端只初始化一次，避免高并发重复建连。
 	once sync.Once
 
-	// iamConn 为到 iam-svc 的长连接。
+	// iamConn 是到 IAM 的长连接。
 	iamConn *grpc.ClientConn
-	// iamClient 为 IAM 内部鉴权 RPC 客户端。
+	// iamClient 是 IAM 内部鉴权 RPC 客户端。
 	iamClient iamv1.InternalServiceClient
-	// initErr 记录首次初始化错误，后续调用直接复用该错误结果。
+	// initErr 记录首次初始化失败原因，后续请求直接返回同一错误。
 	initErr error
 }
 
-// New 创建鉴权服务实例。
+// New 创建鉴权服务实现。
 func New() *sAuth {
 	return &sAuth{}
 }
 
-// init 在程序启动时将当前实现注册到 service 门面。
+// init 启动时注册到 service 门面，供其他模块通过 service.Auth() 调用。
 func init() {
 	service.RegisterAuth(New())
 }
 
-// ExtractAccessToken 从请求头中提取 Bearer Token。
-// 兼容两种格式：
-// 1) Authorization: Bearer <token>
-// 2) Authorization: <token>
+// ExtractAccessToken 从请求头提取 token，兼容两种格式：
+// 说明：1) Authorization: Bearer <token>
+// 说明：2) Authorization: <token>
 func (s *sAuth) ExtractAccessToken(r *ghttp.Request) string {
-	// 请求为空时直接返回空串，调用方按未登录处理。
+	// 请求对象为空时直接返回空 token，上层按未登录处理。
 	if r == nil {
 		return ""
 	}
-	// 去掉首尾空白，避免网关层大小写/空格差异影响。
+	// 去掉头尾空白，避免代理层空格差异影响解析。
 	auth := strings.TrimSpace(r.Header.Get("Authorization"))
 	if auth == "" {
 		return ""
 	}
+
 	// 标准 Bearer 前缀（大小写不敏感）。
 	const prefix = "Bearer "
-	// 命中 Bearer 前缀时，仅返回真实 token 部分。
 	if len(auth) >= len(prefix) && strings.EqualFold(auth[:len(prefix)], prefix) {
+		// 命中 Bearer 时只返回 token 本体。
 		return strings.TrimSpace(auth[len(prefix):])
 	}
-	// 未使用 Bearer 前缀时，保留原值作为 token。
+	// 未使用 Bearer 前缀时，兼容旧客户端，直接把整段当 token。
 	return auth
 }
 
-// VerifyAccessToken 调 IAM 校验 token，并返回网关统一鉴权结果。
+// VerifyAccessToken 调 IAM 校验 token，并转换为网关统一鉴权结果。
 func (s *sAuth) VerifyAccessToken(ctx context.Context, accessToken string) (*service.VerifyResult, error) {
-	// 空 token 直接返回 401，避免无效下游调用。
+	// 空 token 直接 401，避免无意义下游调用。
 	if strings.TrimSpace(accessToken) == "" {
 		return nil, gerror.NewCode(gcode.CodeNotAuthorized, "missing access token")
 	}
-	// 确保 IAM gRPC 客户端就绪。
+	// 确保 IAM 客户端就绪。
 	if err := s.ensureClients(ctx); err != nil {
 		return nil, err
 	}
 
-	// 调用 IAM 内部接口验证 access token 合法性。
+	// 向 IAM 发起 token 校验。
 	res, err := s.iamClient.VerifyAccessToken(ctx, &iamv1.VerifyAccessTokenReq{AccessToken: accessToken})
 	if err != nil {
 		return nil, gerror.Wrap(err, "verify access token failed")
 	}
-	// token 无效或无 user_id 均视为未授权。
+	// valid=false 或 user_id=0 都视为未授权。
 	if !res.GetValid() || res.GetUserId() == 0 {
 		return nil, gerror.NewCode(gcode.CodeNotAuthorized, "invalid access token")
 	}
-	// 将 IAM 返回结构转换为网关内部统一结果。
+
+	// 组装网关统一结果：保留 user_id，状态码转换为可读字符串。
 	out := &service.VerifyResult{
-		UserID: res.GetUserId(),
-		// 统一输出语义字符串，例如 ACTIVE / DISABLED。
+		UserID:            res.GetUserId(),
 		AccountStatusCode: enumCode(res.GetAccountStatus().String(), "ACCOUNT_STATUS_"),
 	}
-	// 逐条拷贝角色信息，供 BFF 侧做权限/归属判断。
+
+	// 逐条拷贝角色信息，BFF/代理层可基于角色做权限与归属判断。
 	for _, role := range res.GetRoles() {
-		// scope_no 对外使用字符串，避免直接暴露下游数字语义。
+		// ScopeNo 对外使用字符串，减少前端对数值语义耦合。
 		scopeNo := ""
 		if role.GetScopeId() > 0 {
 			scopeNo = fmt.Sprintf("%d", role.GetScopeId())
 		}
 		out.Roles = append(out.Roles, service.AuthRole{
-			// 将 IAM 枚举名裁剪前缀后输出，减少前端对“魔术数字”依赖。
+			// 统一将 IAM 枚举裁剪前缀，输出业务码。
 			RoleCode:      enumCode(role.GetRoleCode().String(), "ROLE_CODE_"),
 			ScopeTypeCode: enumCode(role.GetScopeType().String(), "SCOPE_TYPE_"),
 			ScopeNo:       scopeNo,
-			// ScopeID 保留给内部逻辑使用（如精确鉴权/审计）。
+			// ScopeID 仍保留给网关内部逻辑（精细鉴权/审计）。
 			ScopeID: role.GetScopeId(),
 		})
 	}
 	return out, nil
 }
 
-// ensureClients 负责惰性初始化 IAM 客户端。
-// 使用 sync.Once 的目的是避免高并发请求下重复创建连接。
+// ensureClients 惰性初始化 IAM 客户端。
+// 使用 sync.Once 避免高并发下重复创建连接。
 func (s *sAuth) ensureClients(ctx context.Context) error {
 	s.once.Do(func() {
-		// 从配置读取 IAM gRPC 地址，默认回落本地开发地址。
+		// 从配置读取 IAM gRPC 地址，未配置时回落本地默认值。
 		addr := strings.TrimSpace(g.Cfg().MustGet(ctx, "upstream.iamGrpc", "127.0.0.1:9001").String())
-		// 建连超时控制，避免请求线程被长期阻塞。
+
+		// 建连超时保护，避免请求线程长期阻塞。
 		timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		// 使用 insecure 是因为当前链路处于内网信任域。
+		// 当前网关到 IAM 默认在内网链路，使用 insecure 传输。
 		s.iamConn, s.initErr = grpc.DialContext(timeoutCtx, addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if s.initErr != nil {
-			// 初始化失败时保留错误，后续调用直接返回该错误。
+			// 首次失败后保留错误，后续直接返回，避免反复拨号放大故障。
 			return
 		}
-		// 连接成功后创建 IAM RPC 客户端。
 		s.iamClient = iamv1.NewInternalServiceClient(s.iamConn)
 	})
 	return s.initErr
 }
 
-// enumCode 将枚举名从带前缀形式转换为纯业务码。
-// 例如 ACCOUNT_STATUS_ACTIVE -> ACTIVE。
+// enumCode 将带前缀枚举名转换为业务码。
+// 例如：ACCOUNT_STATUS_ACTIVE -> ACTIVE。
 func enumCode(v, prefix string) string {
 	if strings.HasPrefix(v, prefix) {
 		return strings.TrimPrefix(v, prefix)

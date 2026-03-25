@@ -12,6 +12,8 @@ import (
 )
 
 const (
+	// Argon2id 参数：在线鉴权场景下优先保证抗暴力破解能力，同时兼顾服务延迟。
+	// 这些参数需与 verifyPassword 使用同一组配置，否则会导致历史密码无法通过校验。
 	argon2Time    uint32 = 3
 	argon2Memory  uint32 = 64 * 1024
 	argon2Threads uint8  = 2
@@ -19,8 +21,12 @@ const (
 	saltLen              = 16
 )
 
-// makePasswordHash 生成 Argon2id 哈希与随机盐。
+// makePasswordHash 生成密码哈希。
+// 返回值约定：
+// 1) `hash`/`salt` 采用 base64.RawStdEncoding，便于数据库存储且不含填充符。
+// 2) `algo`/`version` 用于后续算法平滑升级（例如切换参数或算法时做兼容验证）。
 func makePasswordHash(password string) (hash, salt, algo string, version uint, err error) {
+	// 每次都生成独立随机盐，防止相同密码产出相同哈希。
 	rawSalt := make([]byte, saltLen)
 	if _, err = rand.Read(rawSalt); err != nil {
 		return "", "", "", 0, err
@@ -29,7 +35,10 @@ func makePasswordHash(password string) (hash, salt, algo string, version uint, e
 	return base64.RawStdEncoding.EncodeToString(key), base64.RawStdEncoding.EncodeToString(rawSalt), "argon2id", 1, nil
 }
 
-// verifyPassword 校验明文密码与存储哈希是否匹配。
+// verifyPassword 校验明文密码是否与已存哈希匹配。
+// 安全要点：
+// 1) 先做空值/算法白名单校验，避免异常数据绕过。
+// 2) 最终比较使用 ConstantTimeCompare，降低时序侧信道风险。
 func verifyPassword(password, hash, salt, algo string) bool {
 	if strings.TrimSpace(hash) == "" || strings.TrimSpace(salt) == "" {
 		return false
@@ -50,7 +59,8 @@ func verifyPassword(password, hash, salt, algo string) bool {
 	return subtle.ConstantTimeCompare(rawHash, key) == 1
 }
 
-// validateNewPassword 校验密码复杂度：8-20 位，且必须包含字母、数字、特殊字符。
+// validateNewPassword 校验新密码复杂度。
+// 规则：8~20 位，且必须同时包含字母、数字、特殊字符；不允许空白符。
 func validateNewPassword(p string) error {
 	password := strings.TrimSpace(p)
 	length := len([]rune(password))
