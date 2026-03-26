@@ -8,7 +8,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// InventoryLedger is the golang structure for table inventory_ledger.
+// InventoryLedger 是 inventory_ledger 表的 Go 结构体。
 type InventoryLedger struct {
 	Id                uint64      `json:"id"                orm:"id"                  ` //
 	TxnNo             string      `json:"txnNo"             orm:"txn_no"              ` //

@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "lib": ["DOM", "ESNext"],
+    "moduleResolution": "Bundler",
+    "allowJs": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "noEmit": true,
+    "jsx": "preserve",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["apps/seller-console/src/*"],
+      "@shopa/api-client": ["packages/api-client/src"],
+      "@shopa/api-client/*": ["packages/api-client/src/*"],
+      "@shopa/types": ["packages/types/src"],
+      "@shopa/types/*": ["packages/types/src/*"],
+      "@shopa/ui": ["packages/ui/src"],
+      "@shopa/ui/*": ["packages/ui/src/*"]
+    }
+  }
+}

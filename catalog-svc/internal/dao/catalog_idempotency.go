@@ -8,15 +8,15 @@ import (
 	"github.com/TsingpekTao/shopa/catalog-svc/internal/dao/internal"
 )
 
-// catalogIdempotencyDao is the data access object for the table catalog_idempotency.
-// You can define custom methods on it to extend its functionality as needed.
+// catalogIdempotencyDao 是 catalog_idempotency 表的 DAO。
+// 可按需在其上定义自定义方法以扩展其功能。
 type catalogIdempotencyDao struct {
 	*internal.CatalogIdempotencyDao
 }
 
 var (
-	// CatalogIdempotency is a globally accessible object for table catalog_idempotency operations.
+	// CatalogIdempotency 为 catalog_idempotency 表操作提供全局访问对象。
 	CatalogIdempotency = catalogIdempotencyDao{internal.NewCatalogIdempotencyDao()}
 )
 
-// Add your custom methods and functionality below.
+// 在此处扩展自定义方法和功能。

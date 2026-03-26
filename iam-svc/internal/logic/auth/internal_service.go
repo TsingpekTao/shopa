@@ -13,7 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// GetAuthUserById 按 user_id 查询认证摘要，供网关和内部服务调用。
+// GetAuthUserById 按 user_id 返回认证摘要，供网关和内部服务调用。
 func (s *Service) GetAuthUserById(ctx context.Context, req *v1.GetAuthUserByIdReq) (*v1.GetAuthUserByIdRes, error) {
 	if req.GetUserId() == 0 {
 		return nil, errs.New(errs.CodeInvalidParam)
@@ -34,7 +34,7 @@ func (s *Service) GetAuthUserById(ctx context.Context, req *v1.GetAuthUserByIdRe
 	return &v1.GetAuthUserByIdRes{User: user}, nil
 }
 
-// BatchGetAuthUsers 批量返回认证摘要，按请求顺序构造输出。
+// BatchGetAuthUsers 批量查询认证摘要，并保持与请求 user_ids 相同的输出顺序。
 func (s *Service) BatchGetAuthUsers(ctx context.Context, req *v1.BatchGetAuthUsersReq) (*v1.BatchGetAuthUsersRes, error) {
 	userIDs := req.GetUserIds()
 	if len(userIDs) == 0 {
@@ -68,22 +68,26 @@ func (s *Service) BatchGetAuthUsers(ctx context.Context, req *v1.BatchGetAuthUse
 		return nil, errs.Wrap(errs.CodeInternalError, err)
 	}
 
+	// 建立 user_id -> roles 的索引，避免输出阶段 O(n^2) 搜索。
 	roleMap := make(map[uint64][]*v1.RoleItem, len(users))
 	for _, role := range roles {
 		roleMap[role.UserId] = append(roleMap[role.UserId], s.roleToProto(role))
 	}
 
+	// 建立 user_id -> membership 索引。
 	memberMap := make(map[uint64]*v1.MembershipSummary, len(membership))
 	for _, m := range membership {
 		mm := m
 		memberMap[m.UserId] = s.membershipToProto(&mm)
 	}
 
+	// 建立 user_id -> auth 主记录索引。
 	userMap := make(map[uint64]entity.IamUserAuth, len(users))
 	for _, user := range users {
 		userMap[user.UserId] = user
 	}
 
+	// 严格按请求顺序输出，便于调用方按位对齐。
 	out := make([]*v1.AuthUserSummary, 0, len(userIDs))
 	for _, uid := range userIDs {
 		u, ok := userMap[uid]
@@ -105,7 +109,7 @@ func (s *Service) BatchGetAuthUsers(ctx context.Context, req *v1.BatchGetAuthUse
 	return &v1.BatchGetAuthUsersRes{Users: out}, nil
 }
 
-// VerifyAccessToken 供内部服务校验 access token，并返回角色/会员等鉴权上下文。
+// VerifyAccessToken 供内部服务校验 access token，并回传授权上下文。
 func (s *Service) VerifyAccessToken(ctx context.Context, req *v1.VerifyAccessTokenReq) (*v1.VerifyAccessTokenRes, error) {
 	token := strings.TrimSpace(req.GetAccessToken())
 	if token == "" {
@@ -114,6 +118,7 @@ func (s *Service) VerifyAccessToken(ctx context.Context, req *v1.VerifyAccessTok
 
 	claims, err := s.parseAccessToken(token)
 	if err != nil {
+		// 这里降级返回 Valid=false，不透出具体错误细节，减少信息泄露。
 		g.Log().Debugf(ctx, "[iam-svc] verify access token failed: %+v", err)
 		return &v1.VerifyAccessTokenRes{Valid: false}, nil
 	}
@@ -122,6 +127,7 @@ func (s *Service) VerifyAccessToken(ctx context.Context, req *v1.VerifyAccessTok
 	if err != nil || auth == nil {
 		return &v1.VerifyAccessTokenRes{Valid: false}, nil
 	}
+	// tokenVersion 不一致说明发生过改密、全端注销等全局失效动作。
 	if uint32(auth.TokenVersion) != claims.TokenVersion {
 		return &v1.VerifyAccessTokenRes{Valid: false}, nil
 	}

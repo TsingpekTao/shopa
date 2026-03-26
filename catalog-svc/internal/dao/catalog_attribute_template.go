@@ -8,15 +8,15 @@ import (
 	"github.com/TsingpekTao/shopa/catalog-svc/internal/dao/internal"
 )
 
-// catalogAttributeTemplateDao is the data access object for the table catalog_attribute_template.
-// You can define custom methods on it to extend its functionality as needed.
+// catalogAttributeTemplateDao 是 catalog_attribute_template 表的 DAO。
+// 可按需在其上定义自定义方法以扩展其功能。
 type catalogAttributeTemplateDao struct {
 	*internal.CatalogAttributeTemplateDao
 }
 
 var (
-	// CatalogAttributeTemplate is a globally accessible object for table catalog_attribute_template operations.
+	// CatalogAttributeTemplate 为 catalog_attribute_template 表提供全局可用的 DAO 对象。
 	CatalogAttributeTemplate = catalogAttributeTemplateDao{internal.NewCatalogAttributeTemplateDao()}
 )
 
-// Add your custom methods and functionality below.
+// 在此处扩展自定义方法和功能。

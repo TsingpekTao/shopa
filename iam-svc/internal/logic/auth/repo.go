@@ -17,7 +17,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// nextUserID 基于 snowflake 生成分布式唯一 user_id。
+// nextUserID 通过 snowflake 生成分布式唯一 user_id。
+// 该 ID 生成不依赖数据库自增，适合多实例并发注册。
 func (s *Service) nextUserID() uint64 {
 	return uint64(s.node.Generate().Int64())
 }
@@ -41,7 +42,8 @@ func (s *Service) findAuthByPhone(ctx context.Context, phone string) (*entity.Ia
 	return &auth, nil
 }
 
-// findAuthByIdentifier 按登录标识查询：包含 '@' 走邮箱，否则走手机号。
+// findAuthByIdentifier 按登录标识查询用户。
+// 路由规则：包含 "@" 走邮箱，否则走手机号。
 func (s *Service) findAuthByIdentifier(ctx context.Context, identifier string) (*entity.IamUserAuth, error) {
 	var (
 		cols   = dao.IamUserAuth.Columns()
@@ -86,7 +88,7 @@ func (s *Service) findAuthByUserID(ctx context.Context, userID uint64) (*entity.
 	return &auth, nil
 }
 
-// findRolesByUserID 查询用户当前有效角色列表。
+// findRolesByUserID 查询用户当前有效角色集合。
 func (s *Service) findRolesByUserID(ctx context.Context, userID uint64) ([]entity.IamUserRole, error) {
 	var (
 		cols  = dao.IamUserRole.Columns()
@@ -100,7 +102,7 @@ func (s *Service) findRolesByUserID(ctx context.Context, userID uint64) ([]entit
 	return roles, err
 }
 
-// findMembershipByUserID 查询会员等级与积分摘要。
+// findMembershipByUserID 查询会员等级与积分信息。
 func (s *Service) findMembershipByUserID(ctx context.Context, userID uint64) (*entity.IamMembership, error) {
 	var (
 		cols      = dao.IamMembership.Columns()
@@ -119,7 +121,7 @@ func (s *Service) findMembershipByUserID(ctx context.Context, userID uint64) (*e
 	return &membership, nil
 }
 
-// findRefreshSessionBySID 按会话 sid 查询 refresh session。
+// findRefreshSessionBySID 按 sid 查询 refresh 会话。
 func (s *Service) findRefreshSessionBySID(ctx context.Context, sid string) (*entity.IamRefreshSession, error) {
 	var (
 		cols      = dao.IamRefreshSession.Columns()
@@ -138,7 +140,7 @@ func (s *Service) findRefreshSessionBySID(ctx context.Context, sid string) (*ent
 	return &session, nil
 }
 
-// roleToProto 将角色实体映射为对外 proto。
+// roleToProto 将角色实体转换为对外协议对象。
 func (s *Service) roleToProto(role entity.IamUserRole) *v1.RoleItem {
 	return &v1.RoleItem{
 		RoleCode:  v1.RoleCode(role.RoleCode),
@@ -147,7 +149,7 @@ func (s *Service) roleToProto(role entity.IamUserRole) *v1.RoleItem {
 	}
 }
 
-// membershipToProto 将会员实体映射为对外 proto。
+// membershipToProto 将会员实体转换为对外协议对象。
 func (s *Service) membershipToProto(m *entity.IamMembership) *v1.MembershipSummary {
 	if m == nil {
 		return &v1.MembershipSummary{}
@@ -159,7 +161,7 @@ func (s *Service) membershipToProto(m *entity.IamMembership) *v1.MembershipSumma
 	}
 }
 
-// buildSessionSummary 聚合会话返回所需的角色、会员与最近登录信息。
+// buildSessionSummary 聚合会话摘要所需数据：角色、会员、最近登录信息。
 func (s *Service) buildSessionSummary(ctx context.Context, auth *entity.IamUserAuth) (*v1.SessionSummary, error) {
 	roles, err := s.findRolesByUserID(ctx, auth.UserId)
 	if err != nil {
@@ -185,7 +187,7 @@ func (s *Service) buildSessionSummary(ctx context.Context, auth *entity.IamUserA
 	}, nil
 }
 
-// buildAuthUserSummary 聚合内部查询接口所需的认证摘要。
+// buildAuthUserSummary 聚合内部查询接口需要的认证摘要。
 func (s *Service) buildAuthUserSummary(ctx context.Context, auth *entity.IamUserAuth) (*v1.AuthUserSummary, error) {
 	roles, err := s.findRolesByUserID(ctx, auth.UserId)
 	if err != nil {
@@ -213,14 +215,14 @@ func (s *Service) buildAuthUserSummary(ctx context.Context, auth *entity.IamUser
 	}, nil
 }
 
-// buildTokenAuthResult 把 token pair 包装到 AuthResult.oneof 中。
+// buildTokenAuthResult 将 tokenPair 包装到 AuthResult.oneof。
 func (s *Service) buildTokenAuthResult(pair *v1.TokenPair) *v1.AuthResult {
 	return &v1.AuthResult{
 		Result: &v1.AuthResult_TokenPair{TokenPair: pair},
 	}
 }
 
-// buildMFAAuthResult 把 MFA challenge 包装到 AuthResult.oneof 中。
+// buildMFAAuthResult 将 challenge 包装到 AuthResult.oneof。
 func (s *Service) buildMFAAuthResult(challengeID string, expireAt time.Time) *v1.AuthResult {
 	return &v1.AuthResult{
 		Result: &v1.AuthResult_MfaChallenge{
@@ -232,7 +234,8 @@ func (s *Service) buildMFAAuthResult(challengeID string, expireAt time.Time) *v1
 	}
 }
 
-// insertLoginLog 写入登录审计日志，不影响主流程返回。
+// insertLoginLog 写入登录审计日志。
+// 该链路“失败不阻断主流程”，因此忽略写库错误，避免日志系统影响登录可用性。
 func (s *Service) insertLoginLog(ctx context.Context, userID uint64, identifier string, channel v1.LoginChannel, success bool, failReason string, meta riskMeta) {
 	_, _ = dao.IamLoginLog.Ctx(ctx).Data(do.IamLoginLog{
 		UserId:      userID,
@@ -248,12 +251,15 @@ func (s *Service) insertLoginLog(ctx context.Context, userID uint64, identifier 
 }
 
 // insertSmsLog 写入短信发送审计日志。
-func (s *Service) insertSmsLog(ctx context.Context, scene v1.SmsScene, target string, success bool, code int, meta riskMeta) {
+func (s *Service) insertSmsLog(ctx context.Context, scene v1.SmsScene, target, provider, bizID string, success bool, code int, meta riskMeta) {
+	if strings.TrimSpace(provider) == "" {
+		provider = consts.SmsProviderMock
+	}
 	_, _ = dao.IamSmsLog.Ctx(ctx).Data(do.IamSmsLog{
 		Scene:       uint(scene),
 		Target:      target,
-		Provider:    consts.SmsProviderMock,
-		BizId:       "",
+		Provider:    provider,
+		BizId:       bizID,
 		Ip:          meta.ClientIP,
 		Ua:          meta.UserAgent,
 		Fingerprint: meta.Fingerprint,
@@ -262,7 +268,8 @@ func (s *Service) insertSmsLog(ctx context.Context, scene v1.SmsScene, target st
 	}).Insert()
 }
 
-// insertOutboxUserRegistered 将注册事件写入 outbox，交给后台 worker 异步投递。
+// insertOutboxUserRegistered 把“用户注册”事件写入 outbox。
+// 关键点：和主事务共用同一个 tx，确保“主业务成功”与“事件可投递”原子一致。
 func (s *Service) insertOutboxUserRegistered(ctx context.Context, tx gdb.TX, userID uint64, initName string) error {
 	eventID := newEventID()
 	occurredAt := time.Now().UTC()
@@ -291,7 +298,7 @@ func (s *Service) insertOutboxUserRegistered(ctx context.Context, tx gdb.TX, use
 	return err
 }
 
-// boolToInt 把布尔值转成数据库常用 0/1 表达。
+// boolToInt 把布尔值转换为数据库常见 0/1 表达。
 func boolToInt(v bool) int {
 	if v {
 		return 1
@@ -299,13 +306,14 @@ func boolToInt(v bool) int {
 	return 0
 }
 
-// hashSmsCode 对短信验证码做带场景和手机号的摘要，避免明文入库。
+// hashSmsCode 对短信验证码做带场景与手机号的摘要。
+// 这样即便同一验证码被复用，不同场景/手机号也不会产生相同摘要。
 func (s *Service) hashSmsCode(scene v1.SmsScene, phone, code string) string {
 	plain := strings.Join([]string{strconv.FormatInt(int64(scene), 10), phone, code, s.jwt.Secret}, "|")
 	return sha256Hex(plain)
 }
 
-// hashRefreshToken 对 refresh token 做不可逆摘要存储。
+// hashRefreshToken 对 refresh token 做不可逆摘要后存储。
 func (s *Service) hashRefreshToken(raw string) string {
 	return sha256Hex(raw)
 }

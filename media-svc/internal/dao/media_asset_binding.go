@@ -8,15 +8,15 @@ import (
 	"github.com/TsingpekTao/shopa/media-svc/internal/dao/internal"
 )
 
-// mediaAssetBindingDao is the data access object for the table media_asset_binding.
-// You can define custom methods on it to extend its functionality as needed.
+// mediaAssetBindingDao 是 media_asset_binding 表的数据访问对象。
+// 可在其上定义自定义方法以扩展功能。
 type mediaAssetBindingDao struct {
 	*internal.MediaAssetBindingDao
 }
 
 var (
-	// MediaAssetBinding is a globally accessible object for table media_asset_binding operations.
+	// MediaAssetBinding 是用于 media_asset_binding 表操作的全局对象。
 	MediaAssetBinding = mediaAssetBindingDao{internal.NewMediaAssetBindingDao()}
 )
 
-// Add your custom methods and functionality below.
+// 在下方添加自定义方法和功能。

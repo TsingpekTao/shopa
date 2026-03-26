@@ -8,7 +8,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// InventoryIdempotency is the golang structure for table inventory_idempotency.
+// InventoryIdempotency 是 inventory_idempotency 表的 Go 结构体。
 type InventoryIdempotency struct {
 	Id             uint64      `json:"id"             orm:"id"              ` //
 	ActorScope     string      `json:"actorScope"     orm:"actor_scope"     ` // SELLER/ORDER/ADMIN/SYSTEM

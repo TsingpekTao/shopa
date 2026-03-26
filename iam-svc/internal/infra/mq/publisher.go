@@ -7,7 +7,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 )
 
-// Publisher 鐎规矮绠?outbox 閸欐垵绔烽崳銊﹀复閸欙絻鈧
+// Publisher 定义 outbox 事件发布能力。
 type Publisher interface {
 	Enabled() bool
 	PublishUserRegistered(ctx context.Context, eventID string, payload []byte) error
@@ -16,22 +16,22 @@ type Publisher interface {
 
 type noopPublisher struct{}
 
-// NewNoopPublisher 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// NewNoopPublisher 创建空实现发布器。
 func NewNoopPublisher() Publisher {
 	return &noopPublisher{}
 }
 
-// Enabled 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// Enabled 返回当前发布器是否启用。
 func (p *noopPublisher) Enabled() bool {
 	return false
 }
 
-// PublishUserRegistered 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// PublishUserRegistered 发布用户注册事件。
 func (p *noopPublisher) PublishUserRegistered(ctx context.Context, eventID string, payload []byte) error {
 	return nil
 }
 
-// Close 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// Close 关闭发布器并释放资源。
 func (p *noopPublisher) Close() error {
 	return nil
 }
@@ -43,7 +43,7 @@ type rabbitConf struct {
 	RoutingKeyUserRegistered string
 }
 
-// loadRabbitConf 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// loadRabbitConf 加载 RabbitMQ 发布配置。
 func loadRabbitConf(ctx context.Context) rabbitConf {
 	return rabbitConf{
 		Enabled:                  g.Cfg().MustGet(ctx, "mq.rabbitmq.enabled", false).Bool(),
@@ -53,7 +53,7 @@ func loadRabbitConf(ctx context.Context) rabbitConf {
 	}
 }
 
-// NewPublisherFromConfig 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// NewPublisherFromConfig 按配置创建发布器。
 func NewPublisherFromConfig(ctx context.Context) (Publisher, error) {
 	conf := loadRabbitConf(ctx)
 	if !conf.Enabled {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/TsingpekTao/shopa/media-svc/internal/controller/api"
 	"github.com/TsingpekTao/shopa/media-svc/internal/controller/hello"
+	"github.com/TsingpekTao/shopa/media-svc/internal/controller/media"
 )
 
 var (
@@ -36,6 +37,7 @@ var (
 				group.Middleware(ghttp.MiddlewareHandlerResponse)
 				group.Bind(
 					hello.NewV1(),
+					media.NewV1(),
 				)
 			})
 			s.Run()

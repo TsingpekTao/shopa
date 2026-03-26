@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	v1 "github.com/TsingpekTao/shopa/points-svc/api/points/v1"
+	v1 "github.com/TsingpekTao/shopa/points-svc/api/v1"
 	"github.com/TsingpekTao/shopa/points-svc/internal/dao"
 	"github.com/TsingpekTao/shopa/points-svc/internal/model/do"
 	"github.com/TsingpekTao/shopa/points-svc/internal/model/entity"

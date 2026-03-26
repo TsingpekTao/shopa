@@ -8,15 +8,15 @@ import (
 	"github.com/TsingpekTao/shopa/user-profile-svc/internal/dao/internal"
 )
 
-// userProfileDao is the data access object for the table user_profile.
-// You can define custom methods on it to extend its functionality as needed.
+// userProfileDao 是 user_profile 表的数据访问对象。
+// 可以在此结构上定义自定义方法以扩展能力。
 type userProfileDao struct {
 	*internal.UserProfileDao
 }
 
 var (
-	// UserProfile is a globally accessible object for table user_profile operations.
+	// UserProfile 是 user_profile 表操作的全局访问对象。
 	UserProfile = userProfileDao{internal.NewUserProfileDao()}
 )
 
-// Add your custom methods and functionality below.
+// 可在下方补充自定义方法与扩展逻辑。

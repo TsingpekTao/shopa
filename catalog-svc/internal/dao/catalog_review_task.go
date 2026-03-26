@@ -8,15 +8,15 @@ import (
 	"github.com/TsingpekTao/shopa/catalog-svc/internal/dao/internal"
 )
 
-// catalogReviewTaskDao is the data access object for the table catalog_review_task.
-// You can define custom methods on it to extend its functionality as needed.
+// catalogReviewTaskDao 是 catalog_review_task 表的数据访问对象。
+// 可根据需要在其上添加自定义方法以扩展能力。
 type catalogReviewTaskDao struct {
 	*internal.CatalogReviewTaskDao
 }
 
 var (
-	// CatalogReviewTask is a globally accessible object for table catalog_review_task operations.
+	// CatalogReviewTask 为 catalog_review_task 表操作提供全局可用的 DAO 对象。
 	CatalogReviewTask = catalogReviewTaskDao{internal.NewCatalogReviewTaskDao()}
 )
 
-// Add your custom methods and functionality below.
+// 在下方添加自定义方法与扩展功能。

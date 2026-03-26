@@ -1,7 +1,7 @@
 package packed
 
 import (
-	// MySQL driver is required for gdb to create a mysql connection from the link string.
-	// We keep it as a blank import so it registers itself without polluting packages.
+	// MySQL 驱动用于让 gdb 能根据连接串建立连接。
+	// 以匿名导入方式注册驱动，避免污染其它包的命名空间。
 	_ "github.com/gogf/gf/contrib/drivers/mysql/v2"
 )

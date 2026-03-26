@@ -9,7 +9,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// MediaConsumerEventDedup is the golang structure of table media_consumer_event_dedup for DAO operations like Where/Data.
+// MediaConsumerEventDedup 是 media_consumer_event_dedup 表的 Go 结构体，供 DAO 的 Where/Data 等操作使用。
 type MediaConsumerEventDedup struct {
 	g.Meta       `orm:"table:media_consumer_event_dedup, do:true"`
 	Id           any         //

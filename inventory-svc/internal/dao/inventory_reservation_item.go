@@ -8,15 +8,15 @@ import (
 	"github.com/TsingpekTao/shopa/inventory-svc/internal/dao/internal"
 )
 
-// inventoryReservationItemDao is the data access object for the table inventory_reservation_item.
-// You can define custom methods on it to extend its functionality as needed.
+// inventoryReservationItemDao 是 inventory_reservation_item 表的数据访问对象。
+// 可在此基础上定义自定义方法以扩展功能。
 type inventoryReservationItemDao struct {
 	*internal.InventoryReservationItemDao
 }
 
 var (
-	// InventoryReservationItem is a globally accessible object for table inventory_reservation_item operations.
+	// InventoryReservationItem 是 inventory_reservation_item 表操作的全局可访问对象。
 	InventoryReservationItem = inventoryReservationItemDao{internal.NewInventoryReservationItemDao()}
 )
 
-// Add your custom methods and functionality below.
+// 在下方添加自定义方法与逻辑。

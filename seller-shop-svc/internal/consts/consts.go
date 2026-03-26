@@ -1,9 +1,9 @@
 package consts
 
-// 鍟嗗鍏ラ┗鍩熷叕鍏卞父閲忋€
+// Package consts 定义 seller-shop 服务中可复用的常量。
 const (
-	// ShopVisibilityVisible 琛ㄧず搴楅摵瀵逛拱瀹跺彲瑙併€
+	// ShopVisibilityVisible 表示店铺对外可见。
 	ShopVisibilityVisible = 1
-	// ShopVisibilityHidden 琛ㄧず搴楅摵瀵逛拱瀹朵笉鍙锛堜緥濡傚紑閫氫腑銆佸喕缁撱€佸叧闂級銆
+	// ShopVisibilityHidden 表示店铺对外不可见，通常用于后台隐藏状态。
 	ShopVisibilityHidden = 0
 )

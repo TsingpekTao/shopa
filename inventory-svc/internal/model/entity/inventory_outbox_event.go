@@ -8,7 +8,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// InventoryOutboxEvent is the golang structure for table inventory_outbox_event.
+// InventoryOutboxEvent 是 inventory_outbox_event 表的 Go 结构体。
 type InventoryOutboxEvent struct {
 	Id            uint64      `json:"id"            orm:"id"             ` //
 	EventId       string      `json:"eventId"       orm:"event_id"       ` //

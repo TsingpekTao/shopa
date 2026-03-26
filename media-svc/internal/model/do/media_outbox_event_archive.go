@@ -9,7 +9,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// MediaOutboxEventArchive is the golang structure of table media_outbox_event_archive for DAO operations like Where/Data.
+// MediaOutboxEventArchive 是 media_outbox_event_archive 表的 Go 结构体，供 DAO 的 Where/Data 等操作使用。
 type MediaOutboxEventArchive struct {
 	g.Meta        `orm:"table:media_outbox_event_archive, do:true"`
 	Id            any         //

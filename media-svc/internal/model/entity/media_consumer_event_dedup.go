@@ -8,7 +8,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// MediaConsumerEventDedup is the golang structure for table media_consumer_event_dedup.
+// MediaConsumerEventDedup 是 media_consumer_event_dedup 表的结构体。
 type MediaConsumerEventDedup struct {
 	Id           uint64      `json:"id"           orm:"id"            description:""` //
 	ConsumerName string      `json:"consumerName" orm:"consumer_name" description:""` //

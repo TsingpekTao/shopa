@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	// Main 鏄繘绋嬪叆鍙ｅ懡浠ゃ€?	// GoFrame 鍚姩鏃朵細鎵ц杩欎釜鍛戒护锛屼粠杩欓噷缁熶竴鎷夎捣 gRPC 涓?HTTP 涓ゅ鏈嶅姟銆
+	// Main 是服务启动主命令，统一拉起 gRPC 与 HTTP。
 	Main = gcmd.Command{
 		Name:  "main",
 		Usage: "main",
@@ -24,38 +24,38 @@ var (
 	}
 )
 
-// mainFunc 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// mainFunc 启动消费者、gRPC 服务与 HTTP 服务。
 func mainFunc(ctx context.Context, parser *gcmd.Parser) (err error) {
-	// 鍚姩鈥滄敞鍐屽悗鍒濆鍖栬祫鏂欌€濇秷鎭秷璐硅€呫€
+	// 启动“注册后初始化资料”消息消费者。
 	worker.StartRegisterInitConsumer(ctx)
 
-	// gRPC 鐢ㄥ崗绋嬪惎鍔紝閬垮厤闃诲褰撳墠涓诲崗绋嬶紝纭繚 HTTP 涔熻兘鍦ㄥ悓杩涚▼鍐呭悓鏃跺惎鍔ㄣ€
+	// gRPC 使用单独协程启动，避免阻塞当前主协程，确保 HTTP 也能同时启动。
 	go func() {
-		// 鍒涘缓 gRPC 鏈嶅姟鍣ㄩ厤缃紝鐢ㄤ簬鎸傝浇鎷︽埅鍣ㄩ摼銆
+		// 创建 gRPC 服务器配置，用于挂载拦截器链。
 		c := grpcx.Server.NewConfig()
-		// 鍦?Unary 鎷︽埅鍣ㄩ摼涓帴鍏ュ弬鏁版牎楠岋紝灏芥棭鎷︽埅闈炴硶璇锋眰銆
+		// 在 Unary 拦截器链中接入参数校验，尽早拦截非法请求。
 		c.Options = append(c.Options, []grpc.ServerOption{
 			grpcx.Server.ChainUnary(
 				grpcx.Server.UnaryValidate,
 			),
 		}...)
-		// 鍩轰簬閰嶇疆鏋勯€?gRPC 鏈嶅姟瀹炰緥銆
+		// 基于配置构造 gRPC 服务实例。
 		s := grpcx.Server.New(c)
-		// 娉ㄥ唽 user-profile 鐨?RPC 澶勭悊鍣ㄣ€
+		// 注册 user-profile 的 RPC 处理器。
 		api.Register(s)
-		// 鍚姩骞堕樆濉炲湪 gRPC 鏈嶅姟鍗忕▼涓€
+		// 启动并阻塞在 gRPC 服务协程中。
 		s.Run()
 	}()
 
-	// 鏋勫缓 HTTP 鏈嶅姟锛圫wagger/OpenAPI + 瀵瑰 HTTP 鎺ュ彛锛夈€
+	// 构建 HTTP 服务（Swagger/OpenAPI + 对外 HTTP 接口）。
 	httpServer := g.Server()
-	// 浣跨敤缁熶竴鍝嶅簲涓棿浠讹紝淇濊瘉杩斿洖缁撴瀯涓€鑷淬€
+	// 使用统一响应中间件，保证返回结构一致。
 	httpServer.Use(ghttp.MiddlewareHandlerResponse)
-	// 鎸夋ā鍧楁敞鍐岃矾鐢卞垎缁勩€
+	// 按模块注册 HTTP 路由分组。
 	router.RegisterHTTP(httpServer)
-	// 鑷畾涔?OpenAPI 鏂囨。淇℃伅銆
+	// 自定义 OpenAPI 文档信息。
 	router.EnhanceOpenAPIDoc(httpServer)
-	// 鍚姩 HTTP 骞堕樆濉炰富鍗忕▼銆
+	// 启动 HTTP 并阻塞主协程。
 	httpServer.Run()
 	return nil
 }

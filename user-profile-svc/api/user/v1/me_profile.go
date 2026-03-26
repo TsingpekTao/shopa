@@ -5,38 +5,38 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 )
 
-// GetMyProfileReq defines HTTP request to get current user profile.
+// GetMyProfileReq 定义获取当前用户画像的 HTTP 请求。
 type GetMyProfileReq struct {
-	// Meta declares route + OpenAPI metadata for this endpoint.
+	// Meta 声明此端点的路由与 OpenAPI 元数据。
 	g.Meta `path:"/profile" method:"get" tags:"User" summary:"Get my profile"`
-	// IncludeAddresses controls whether to include address list in the same response.
+	// IncludeAddresses 控制是否在同一次响应中返回地址列表。
 	IncludeAddresses bool `json:"include_addresses" in:"query"`
 }
 
-// GetMyProfileRes defines HTTP response for my profile.
+// GetMyProfileRes 定义用户画像的 HTTP 响应。
 type GetMyProfileRes struct {
-	// Profile is current user profile.
+	// Profile 是当前用户画像。
 	Profile *pb.UserProfile `json:"profile"`
-	// Addresses is optional address list.
+	// Addresses 是可选的地址列表。
 	Addresses []*pb.UserAddress `json:"addresses,omitempty"`
-	// AddressBookVersion is the current aggregate version for address-book updates.
+	// AddressBookVersion 表示地址簿汇总版本。
 	AddressBookVersion uint64 `json:"address_book_version,omitempty"`
 }
 
-// UpdateMyProfileReq defines HTTP request to patch current user profile.
+// UpdateMyProfileReq 定义更新当前用户画像的 HTTP 请求。
 type UpdateMyProfileReq struct {
-	// Meta declares route + OpenAPI metadata for this endpoint.
+	// Meta 声明此端点的路由与 OpenAPI 元数据。
 	g.Meta `path:"/profile" method:"patch" tags:"User" summary:"Patch my profile"`
-	// Profile is the patch payload (values for fields selected by update_mask).
+	// Profile 是补丁载荷（包含 update_mask 选中字段的值）。
 	Profile *pb.UserProfilePatch `json:"profile" v:"required#profile is required"`
-	// UpdateMask tells which fields in Profile should be applied.
+	// UpdateMask 指示需要应用的字段。
 	UpdateMask []string `json:"update_mask" v:"required#update_mask is required"`
-	// ExpectedProfileVersion is CAS version read from latest profile query.
+	// ExpectedProfileVersion 是从最近画像查询读取的 CAS 版本。
 	ExpectedProfileVersion uint64 `json:"expected_profile_version" v:"required#expected_profile_version is required"`
 }
 
-// UpdateMyProfileRes defines HTTP response for patched profile.
+// UpdateMyProfileRes 定义更新画像后的 HTTP 响应。
 type UpdateMyProfileRes struct {
-	// Profile is updated profile snapshot.
+	// Profile 是更新后的画像快照。
 	Profile *pb.UserProfile `json:"profile"`
 }

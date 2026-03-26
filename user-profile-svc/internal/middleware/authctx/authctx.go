@@ -10,10 +10,10 @@ import (
 	"github.com/gogf/gf/v2/util/gconv"
 )
 
-// UserIDFromHeader 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// UserIDFromHeader 从请求头读取用户 ID 并注入上下文。
 func UserIDFromHeader(r *ghttp.Request) {
-	// Read user id from common headers.
-	// In real production, this should be replaced by JWT verification (iam-svc) + user id claim.
+	// 先从常见请求头读取 user id。
+	// 生产环境应由 iam-svc 的 JWT 校验直接提供 user id。
 	var (
 		raw = r.GetHeader("X-User-Id")
 	)
@@ -27,29 +27,29 @@ func UserIDFromHeader(r *ghttp.Request) {
 		raw = r.GetHeader("X-Uid")
 	}
 
-	// Reject requests without user identity to prevent accidental anonymous access to "me/*" APIs.
+	// 若缺少用户标识，则拒绝请求，防止匿名访问 me/*。
 	if raw == "" {
-		// Set HTTP status for client side.
+		// 向客户端写入未授权状态码。
 		r.Response.WriteStatus(http.StatusUnauthorized)
-		// Attach error for unified response middleware + error logging.
+		// 设置 error 以便统一响应与日志记录。
 		r.SetError(gerror.NewCode(gcode.CodeNotAuthorized, "missing X-User-Id header"))
-		// Stop the request pipeline.
+		// 中止请求流程。
 		r.Exit()
 	}
 
-	// Convert to uint64 and validate.
+	// 转换为 uint64 并校验合法值。
 	userID := gconv.Uint64(raw)
 	if userID == 0 {
-		// Use gerror so it is logged with stack in GoFrame error logger.
+		// 通过 gerror 便于框架记录堆栈。
 		r.SetError(gerror.NewCode(gcode.CodeInvalidParameter, "invalid X-User-Id header"))
 		r.Response.WriteStatus(http.StatusBadRequest)
-		// Stop the request pipeline.
+		// 中止请求流程。
 		r.Exit()
 	}
 
-	// Store user id into request context for downstream handlers.
+	// 将用户 ID 写入请求上下文，供后续中间件/处理器使用。
 	r.SetCtxVar(ctxkey.UserIDKey{}, userID)
 
-	// Continue to next middleware/handler.
+	// 继续执行后续中间件与处理器。
 	r.Middleware.Next()
 }

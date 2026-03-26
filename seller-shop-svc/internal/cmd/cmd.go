@@ -11,6 +11,7 @@ import (
 
 	"github.com/TsingpekTao/shopa/seller-shop-svc/internal/controller/api"
 	"github.com/TsingpekTao/shopa/seller-shop-svc/internal/controller/hello"
+	"github.com/TsingpekTao/shopa/seller-shop-svc/internal/controller/seller"
 )
 
 var (
@@ -36,6 +37,7 @@ var (
 				group.Middleware(ghttp.MiddlewareHandlerResponse)
 				group.Bind(
 					hello.NewV1(),
+					seller.NewV1(),
 				)
 			})
 			s.Run()

@@ -8,15 +8,15 @@ import (
 	"github.com/TsingpekTao/shopa/user-profile-svc/internal/dao/internal"
 )
 
-// consumerEventDedupDao is the data access object for the table consumer_event_dedup.
-// You can define custom methods on it to extend its functionality as needed.
+// consumerEventDedupDao 是 consumer_event_dedup 表的数据访问对象。
+// 可在此结构上定义自定义方法以扩展能力。
 type consumerEventDedupDao struct {
 	*internal.ConsumerEventDedupDao
 }
 
 var (
-	// ConsumerEventDedup is a globally accessible object for table consumer_event_dedup operations.
+	// ConsumerEventDedup 是用于 consumer_event_dedup 表操作的全局对象。
 	ConsumerEventDedup = consumerEventDedupDao{internal.NewConsumerEventDedupDao()}
 )
 
-// Add your custom methods and functionality below.
+// 可在下方补充自定义方法与扩展行为。

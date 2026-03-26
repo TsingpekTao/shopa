@@ -8,15 +8,15 @@ import (
 	"github.com/TsingpekTao/shopa/catalog-svc/internal/dao/internal"
 )
 
-// catalogBrandDao is the data access object for the table catalog_brand.
-// You can define custom methods on it to extend its functionality as needed.
+// catalogBrandDao 是 catalog_brand 表的 DAO。
+// 可按需在其上定义自定义方法以扩展其功能。
 type catalogBrandDao struct {
 	*internal.CatalogBrandDao
 }
 
 var (
-	// CatalogBrand is a globally accessible object for table catalog_brand operations.
+	// CatalogBrand 为 catalog_brand 表操作提供全局可用的 DAO 对象。
 	CatalogBrand = catalogBrandDao{internal.NewCatalogBrandDao()}
 )
 
-// Add your custom methods and functionality below.
+// 在此处扩展自定义方法和功能。

@@ -6,7 +6,7 @@ import (
 	v1 "github.com/TsingpekTao/shopa/inventory-svc/api/inventory/v1"
 )
 
-// IInventoryV1 defines HTTP handlers for inventory business APIs.
+// IInventoryV1 定义库存业务 API 的 HTTP 处理器。
 type IInventoryV1 interface {
 	BatchAdjustMySkuStock(ctx context.Context, req *v1.BatchAdjustMySkuStockReq) (res *v1.BatchAdjustMySkuStockRes, err error)
 	ReserveStock(ctx context.Context, req *v1.ReserveStockReq) (res *v1.ReserveStockRes, err error)

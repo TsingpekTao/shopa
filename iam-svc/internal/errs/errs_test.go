@@ -7,7 +7,7 @@ import (
 	"github.com/gogf/gf/v2/errors/gerror"
 )
 
-// TestToBiz_PreservesBusinessCode 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// TestToBiz_PreservesBusinessCode 验证业务错误码不会被覆盖。
 func TestToBiz_PreservesBusinessCode(t *testing.T) {
 	err := New(CodePhoneRegistered)
 	code, msg := ToBiz(err)
@@ -19,7 +19,7 @@ func TestToBiz_PreservesBusinessCode(t *testing.T) {
 	}
 }
 
-// TestToBiz_MapsInvalidParameter 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// TestToBiz_MapsInvalidParameter 验证无效参数错误映射到业务码。
 func TestToBiz_MapsInvalidParameter(t *testing.T) {
 	err := gerror.NewCode(gcode.CodeInvalidParameter, "x")
 	code, _ := ToBiz(err)
@@ -28,7 +28,7 @@ func TestToBiz_MapsInvalidParameter(t *testing.T) {
 	}
 }
 
-// TestToBiz_MapsNotAuthorized 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// TestToBiz_MapsNotAuthorized 验证未授权错误映射到 access token 失效码。
 func TestToBiz_MapsNotAuthorized(t *testing.T) {
 	err := gerror.NewCode(gcode.CodeNotAuthorized, "x")
 	code, _ := ToBiz(err)
@@ -37,7 +37,7 @@ func TestToBiz_MapsNotAuthorized(t *testing.T) {
 	}
 }
 
-// TestToBiz_DefaultsToInternal 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// TestToBiz_DefaultsToInternal 验证未知错误默认映射到内部错误码。
 func TestToBiz_DefaultsToInternal(t *testing.T) {
 	err := gerror.New("boom")
 	code, _ := ToBiz(err)

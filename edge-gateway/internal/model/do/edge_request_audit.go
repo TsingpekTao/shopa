@@ -9,7 +9,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// EdgeRequestAudit is the golang structure of table edge_request_audit for DAO operations like Where/Data.
+// EdgeRequestAudit 是 edge_request_audit 表用于 DAO 操作（如 Where/Data）的 Go 结构体。
 type EdgeRequestAudit struct {
 	g.Meta             `orm:"table:edge_request_audit, do:true"`
 	Id                 any         // 涓婚敭ID

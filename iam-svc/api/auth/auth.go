@@ -6,7 +6,7 @@ import (
 	v1 "github.com/TsingpekTao/shopa/iam-svc/api/auth/v1"
 )
 
-// IAuthV1 鐎规矮绠?IAM 鐎电懓顦?HTTP 閹恒儱褰涢懗钘夊閵
+// IAuthV1 定义 IAM 对外 HTTP 认证接口能力。
 type IAuthV1 interface {
 	SendSmsCode(ctx context.Context, req *v1.SendSmsCodeReq) (res *v1.SendSmsCodeRes, err error)
 	RegisterByPassword(ctx context.Context, req *v1.RegisterByPasswordReq) (res *v1.RegisterByPasswordRes, err error)

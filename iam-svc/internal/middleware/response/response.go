@@ -9,11 +9,11 @@ import (
 	"github.com/gogf/gf/v2/net/ghttp"
 )
 
-// HandlerResponse 閺勵垳绮烘稉鈧?HTTP 閸濆秴绨叉担鎾剁波閺嬪嫨鈧
+// HandlerResponse 是统一 HTTP 响应结构。
 type HandlerResponse struct {
-	Code    int    `json:"code" dc:"娑撴艾濮熼柨娆掝嚖閻?`
-	Message string `json:"message" dc:"閹绘劗銇氭穱鈩冧紖"`
-	Data    any    `json:"data" dc:"閸濆秴绨查弫鐗堝祦"`
+	Code    int    `json:"code" dc:"响应码"`
+	Message string `json:"message" dc:"响应消息"`
+	Data    any    `json:"data" dc:"响应数据"`
 }
 
 const (
@@ -24,7 +24,7 @@ const (
 
 var streamContentTypes = []string{contentTypeEventStream, contentTypeOctetStream, contentTypeMixedReplace}
 
-// Middleware 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// Middleware 统一包装接口响应与错误。
 func Middleware(r *ghttp.Request) {
 	if isDocRoute(r.URL.Path) {
 		r.Middleware.Next()
@@ -73,7 +73,7 @@ func Middleware(r *ghttp.Request) {
 	})
 }
 
-// isDocRoute 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// isDocRoute 判断是否为文档路由。
 func isDocRoute(path string) bool {
 	if path == "/api.json" {
 		return true

@@ -37,12 +37,12 @@ type SellerProductSummary struct {
 type GetWorkbenchRes struct {
 	UserID uint64 `json:"userId"`
 
-	// Workbench only returns the first 10 shops.
+	// 工作台仅返回前 10 个店铺。
 	Shops          []SellerShopSummary `json:"shops"`
 	ShopsTotal     uint64              `json:"shopsTotal"`
 	ShopsTruncated bool                `json:"shopsTruncated"`
 
-	// Workbench only returns the latest 5 applications.
+	// 工作台仅返回最近 5 条申请。
 	LatestApplications    []SellerApplicationSummary `json:"latestApplications"`
 	ApplicationsTotal     uint64                     `json:"applicationsTotal"`
 	ApplicationsTruncated bool                       `json:"applicationsTruncated"`

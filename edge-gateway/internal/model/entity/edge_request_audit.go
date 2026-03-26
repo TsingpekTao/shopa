@@ -8,7 +8,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// EdgeRequestAudit is the golang structure for table edge_request_audit.
+// EdgeRequestAudit 是 edge_request_audit 表的 Go 结构体。
 type EdgeRequestAudit struct {
 	Id                 uint64      `json:"id"                 orm:"id"                   description:"涓婚敭ID"`          // 涓婚敭ID
 	RequestId          string      `json:"requestId"          orm:"request_id"           description:"璇锋眰ID锛堝叏灞?敮涓?級"` // 璇锋眰ID锛堝叏灞?敮涓?級

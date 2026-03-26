@@ -8,7 +8,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// InventoryOutboxEventArchive is the golang structure for table inventory_outbox_event_archive.
+// InventoryOutboxEventArchive 是 inventory_outbox_event_archive 表的 Go 结构体。
 type InventoryOutboxEventArchive struct {
 	Id            uint64      `json:"id"            orm:"id"             ` //
 	EventId       string      `json:"eventId"       orm:"event_id"       ` //

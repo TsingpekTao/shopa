@@ -1,0 +1,69 @@
+:root {
+  --shopa-orange-1: #ff6a1a;
+  --shopa-orange-2: #ff8f2b;
+  --shopa-ink-1: #2f1b09;
+  --shopa-bg-page: #fff7ef;
+  --shopa-bg-canvas: #fffdfb;
+}
+
+.skip-link {
+  position: absolute;
+  top: -44px;
+  left: 16px;
+  z-index: 1000;
+  padding: 10px 14px;
+  border-radius: 8px;
+  color: #fff;
+  background: #1f2a37;
+}
+
+.skip-link:focus-visible {
+  top: 12px;
+}
+
+.app-shell {
+  min-height: 100vh;
+  background:
+    radial-gradient(1200px 300px at 90% -10%, rgba(255, 187, 122, 0.28), transparent),
+    linear-gradient(180deg, var(--shopa-bg-page), var(--shopa-bg-canvas));
+}
+
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  height: 64px;
+  background: linear-gradient(90deg, var(--shopa-orange-1), var(--shopa-orange-2));
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  box-shadow: 0 10px 24px rgba(255, 106, 26, 0.24);
+}
+
+.logo {
+  font-size: 17px;
+}
+
+.header-badge {
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 12px;
+}
+
+.app-content {
+  padding: 28px 32px 36px;
+}
+
+.feature-card {
+  border: 1px solid rgba(255, 136, 60, 0.2);
+  background: linear-gradient(180deg, #fffaf3, #ffffff);
+}

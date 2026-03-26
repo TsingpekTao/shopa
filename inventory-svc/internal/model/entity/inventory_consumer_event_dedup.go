@@ -8,7 +8,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// InventoryConsumerEventDedup is the golang structure for table inventory_consumer_event_dedup.
+// InventoryConsumerEventDedup 是 inventory_consumer_event_dedup 表的 Go 结构体。
 type InventoryConsumerEventDedup struct {
 	Id           uint64      `json:"id"           orm:"id"            ` //
 	ConsumerName string      `json:"consumerName" orm:"consumer_name" ` //

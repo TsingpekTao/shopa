@@ -16,7 +16,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// riskMeta 聚合风控所需上下文，来源于 metadata 与 RiskContext。
+// riskMeta 汇总一次请求的风控上下文，供登录/注册/审计日志复用。
 type riskMeta struct {
 	ClientIP     string
 	UserAgent    string
@@ -27,14 +27,15 @@ type riskMeta struct {
 	CaptchaToken string
 }
 
-// mfaChallengePayload 是缓存到 Redis 的 MFA challenge 内容。
+// mfaChallengePayload 是 MFA challenge 在缓存中的序列化载荷。
+// 仅保存完成二次校验所需最小字段，避免缓存泄露时暴露过多信息。
 type mfaChallengePayload struct {
 	UserID     uint64 `json:"user_id"`
 	Phone      string `json:"phone"`
 	Identifier string `json:"identifier"`
 }
 
-// registerEventPayload 是写入 outbox 的注册事件体。
+// registerEventPayload 是用户注册事件写入 outbox 的消息体。
 type registerEventPayload struct {
 	EventID         string `json:"event_id"`
 	EventVersion    string `json:"event_version"`
@@ -49,7 +50,7 @@ func gctx() context.Context {
 	return context.Background()
 }
 
-// now 返回统一的 UTC 当前时间。
+// now 统一返回 UTC 当前时间，避免时区混用导致 token/过期判断偏差。
 func now() time.Time {
 	return time.Now().UTC()
 }
@@ -59,7 +60,7 @@ func newEventID() string {
 	return uuid.NewString()
 }
 
-// sceneKey 将短信场景枚举转换为稳定 key 字符串。
+// sceneKey 把短信场景枚举映射为稳定字符串键，用于缓存 key 拼接。
 func sceneKey(scene v1.SmsScene) string {
 	switch scene {
 	case v1.SmsScene_SMS_SCENE_REGISTER:
@@ -75,17 +76,18 @@ func sceneKey(scene v1.SmsScene) string {
 	}
 }
 
-// normalizePhone 归一化手机号输入。
+// normalizePhone 对手机号做最小归一化，当前策略仅 trim 空白。
 func normalizePhone(phone string) string {
 	return strings.TrimSpace(phone)
 }
 
 // normalizeIdentifier 归一化登录标识（手机号或邮箱）。
+// 邮箱场景统一转小写，减少同一账号的等价输入差异。
 func normalizeIdentifier(identifier string) string {
 	return strings.ToLower(strings.TrimSpace(identifier))
 }
 
-// toProtoTimestamp 把 gtime 转成 protobuf timestamp。
+// toProtoTimestamp 把 gtime 转为 protobuf timestamp。
 func toProtoTimestamp(t *gtime.Time) *timestamppb.Timestamp {
 	if t == nil || t.IsZero() {
 		return nil
@@ -93,13 +95,13 @@ func toProtoTimestamp(t *gtime.Time) *timestamppb.Timestamp {
 	return timestamppb.New(time.Unix(t.Timestamp(), 0).UTC())
 }
 
-// sha256Hex 计算字符串的 sha256 十六进制摘要。
+// sha256Hex 计算字符串的 SHA-256 十六进制摘要。
 func sha256Hex(raw string) string {
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
 }
 
-// randomDigits 生成定长数字串，用于验证码。
+// randomDigits 生成固定长度数字串（短信验证码）。
 func randomDigits(n int) (string, error) {
 	if n <= 0 {
 		return "", nil
@@ -116,7 +118,7 @@ func randomDigits(n int) (string, error) {
 	return b.String(), nil
 }
 
-// randomToken 生成无填充 Base32 随机串。
+// randomToken 生成无填充 Base32 随机串，默认大写便于日志和人工输入识别。
 func randomToken(size int) (string, error) {
 	if size <= 0 {
 		size = 16
@@ -129,7 +131,8 @@ func randomToken(size int) (string, error) {
 	return strings.ToUpper(enc.EncodeToString(buf)), nil
 }
 
-// makeInitDisplayName 生成注册后默认昵称，避免重复。
+// makeInitDisplayName 生成初始展示名。
+// 组合规则：`usernamePrefix + 随机后缀`，通过随机后缀降低重名概率。
 func (s *Service) makeInitDisplayName() (string, error) {
 	suffix, err := randomToken(4)
 	if err != nil {

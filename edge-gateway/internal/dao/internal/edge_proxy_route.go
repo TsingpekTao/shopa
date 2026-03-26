@@ -11,15 +11,15 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 )
 
-// EdgeProxyRouteDao is the data access object for the table edge_proxy_route.
+// EdgeProxyRouteDao 是 edge_proxy_route 表的数据访问对象。
 type EdgeProxyRouteDao struct {
-	table    string                // table is the underlying table name of the DAO.
-	group    string                // group is the database configuration group name of the current DAO.
-	columns  EdgeProxyRouteColumns // columns contains all the column names of Table for convenient usage.
-	handlers []gdb.ModelHandler    // handlers for customized model modification.
+	table    string                // 表示 DAO 操作对应的底层表名。
+	group    string                // 表示当前 DAO 使用的数据库配置分组。
+	columns  EdgeProxyRouteColumns // columns 保存 Table 所有列名，便于使用。
+	handlers []gdb.ModelHandler    // handlers 用于自定义模型的处理器。
 }
 
-// EdgeProxyRouteColumns defines and stores column names for the table edge_proxy_route.
+// EdgeProxyRouteColumns 定义并保存 edge_proxy_route 表的列名。
 type EdgeProxyRouteColumns struct {
 	Id                   string // 涓婚敭ID
 	RouteCode            string // 璺?敱缂栫爜锛堝叏灞?敮涓?級
@@ -39,7 +39,7 @@ type EdgeProxyRouteColumns struct {
 	DeletedAt            string // 杞?垹闄ゆ椂闂
 }
 
-// edgeProxyRouteColumns holds the columns for the table edge_proxy_route.
+// edgeProxyRouteColumns 定义 edge_proxy_route 表的列名。
 var edgeProxyRouteColumns = EdgeProxyRouteColumns{
 	Id:                   "id",
 	RouteCode:            "route_code",
@@ -59,7 +59,7 @@ var edgeProxyRouteColumns = EdgeProxyRouteColumns{
 	DeletedAt:            "deleted_at",
 }
 
-// NewEdgeProxyRouteDao creates and returns a new DAO object for table data access.
+// NewEdgeProxyRouteDao 创建并返回 edge_proxy_route 表的数据访问对象。
 func NewEdgeProxyRouteDao(handlers ...gdb.ModelHandler) *EdgeProxyRouteDao {
 	return &EdgeProxyRouteDao{
 		group:    "default",
@@ -69,27 +69,27 @@ func NewEdgeProxyRouteDao(handlers ...gdb.ModelHandler) *EdgeProxyRouteDao {
 	}
 }
 
-// DB retrieves and returns the underlying raw database management object of the current DAO.
+// DB 返回当前 DAO 的底层数据库管理对象。
 func (dao *EdgeProxyRouteDao) DB() gdb.DB {
 	return g.DB(dao.group)
 }
 
-// Table returns the table name of the current DAO.
+// Table 返回当前 DAO 操作的表名。
 func (dao *EdgeProxyRouteDao) Table() string {
 	return dao.table
 }
 
-// Columns returns all column names of the current DAO.
+// Columns 返回当前 DAO 的所有列名。
 func (dao *EdgeProxyRouteDao) Columns() EdgeProxyRouteColumns {
 	return dao.columns
 }
 
-// Group returns the database configuration group name of the current DAO.
+// Group 返回当前 DAO 使用的数据库配置分组名。
 func (dao *EdgeProxyRouteDao) Group() string {
 	return dao.group
 }
 
-// Ctx creates and returns a Model for the current DAO. It automatically sets the context for the current operation.
+// Ctx 创建并返回绑定当前上下文的 Model，自动带上当前操作的上下文。
 func (dao *EdgeProxyRouteDao) Ctx(ctx context.Context) *gdb.Model {
 	model := dao.DB().Model(dao.table)
 	for _, handler := range dao.handlers {
@@ -98,12 +98,12 @@ func (dao *EdgeProxyRouteDao) Ctx(ctx context.Context) *gdb.Model {
 	return model.Safe().Ctx(ctx)
 }
 
-// Transaction wraps the transaction logic using function f.
-// It rolls back the transaction and returns the error if function f returns a non-nil error.
-// It commits the transaction and returns nil if function f returns nil.
+// Transaction 使用函数 f 封装事务逻辑。
+// 如果 f 返回非 nil 错误，则回滚事务并返回该错误。
+// 如果 f 返回 nil，则提交事务并返回 nil。
 //
-// Note: Do not commit or roll back the transaction in function f,
-// as it is automatically handled by this function.
+// 注意：不要在 f 内显式提交或回滚事务，
+// 因为本函数会自动处理。
 func (dao *EdgeProxyRouteDao) Transaction(ctx context.Context, f func(ctx context.Context, tx gdb.TX) error) (err error) {
 	return dao.Ctx(ctx).Transaction(ctx, f)
 }

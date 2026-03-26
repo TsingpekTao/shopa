@@ -11,7 +11,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// withRequestMetadata 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// withRequestMetadata 从 HTTP 请求中提取 metadata 以透传到 gRPC。
 func withRequestMetadata(ctx context.Context) context.Context {
 	req := g.RequestFromCtx(ctx)
 	if req == nil {
@@ -28,7 +28,7 @@ func withRequestMetadata(ctx context.Context) context.Context {
 	return metadata.NewIncomingContext(ctx, md)
 }
 
-// toProtoRisk 灏嗗唴閮ㄧ粨鏋勮浆鎹负 Proto 杩斿洖缁撴瀯銆
+// toProtoRisk 把 HTTP 风控结构映射为 protobuf 风控结构。
 func toProtoRisk(in *authv1.RiskContext) *iamv1.RiskContext {
 	if in == nil {
 		return nil
@@ -40,7 +40,7 @@ func toProtoRisk(in *authv1.RiskContext) *iamv1.RiskContext {
 	}
 }
 
-// toHTTPTokenPair 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// toHTTPTokenPair 将 protobuf TokenPair 转换为 HTTP 侧结构。
 func toHTTPTokenPair(in *iamv1.TokenPair) *authv1.TokenPair {
 	if in == nil {
 		return nil
@@ -55,7 +55,7 @@ func toHTTPTokenPair(in *iamv1.TokenPair) *authv1.TokenPair {
 	}
 }
 
-// toHTTPAuthResult 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// toHTTPAuthResult 将 gRPC AuthResult 映射为 HTTP 友好的结构。
 func toHTTPAuthResult(in *iamv1.AuthResult) *authv1.AuthResult {
 	if in == nil {
 		return nil
@@ -73,7 +73,7 @@ func toHTTPAuthResult(in *iamv1.AuthResult) *authv1.AuthResult {
 	return out
 }
 
-// toHTTPSession 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// toHTTPSession 将 protobuf SessionSummary 转为 HTTP 会话摘要。
 func toHTTPSession(in *iamv1.SessionSummary) *authv1.SessionSummary {
 	if in == nil {
 		return nil
@@ -106,7 +106,7 @@ func toHTTPSession(in *iamv1.SessionSummary) *authv1.SessionSummary {
 	}
 }
 
-// toTimeString 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// toTimeString 把 protobuf Timestamp 格式化为 RFC3339 字符串。
 func toTimeString(ts *timestamppb.Timestamp) string {
 	if ts == nil {
 		return ""

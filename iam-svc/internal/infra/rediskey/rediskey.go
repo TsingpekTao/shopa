@@ -20,7 +20,7 @@ const (
 	TTLMFAChallenge     = 10 * time.Minute
 )
 
-// Builder 閹稿绮烘稉鈧崜宥囩磻鐟欏嫬鍨弸鍕紦 Redis Key閿涘矂浼╅崗宥咁樋閻滎垰顣?婢舵碍婀囬崝鈥冲暱缁愪降鈧
+// Builder 负责构建 IAM 领域的 Redis Key。
 type Builder struct {
 	env     string
 	project string
@@ -28,7 +28,7 @@ type Builder struct {
 	prefix  string
 }
 
-// New 鏋勯€犲嚱鏁帮細鍒涘缓骞惰繑鍥炴湇鍔″疄渚嬨€
+// New 从配置创建默认 Key Builder。
 func New() *Builder {
 	var (
 		ctx     = context.Background()
@@ -48,7 +48,7 @@ func New() *Builder {
 	return NewWith(env, project, service)
 }
 
-// NewWith 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// NewWith 按传入环境信息创建 Key Builder。
 func NewWith(env, project, service string) *Builder {
 	env = sanitizePart(env)
 	project = sanitizePart(project)
@@ -62,12 +62,12 @@ func NewWith(env, project, service string) *Builder {
 	}
 }
 
-// Prefix 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// Prefix 返回统一前缀。
 func (b *Builder) Prefix() string {
 	return b.prefix
 }
 
-// Key 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// Key 组装完整 Redis Key。
 func (b *Builder) Key(parts ...string) string {
 	out := make([]string, 0, 1+len(parts))
 	out = append(out, b.prefix)
@@ -77,42 +77,42 @@ func (b *Builder) Key(parts ...string) string {
 	return strings.Join(out, ":")
 }
 
-// RegIPLimitKey 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// RegIPLimitKey 生成注册 IP 限流键。
 func (b *Builder) RegIPLimitKey(ip string, t time.Time) string {
 	return b.Key("reg", "ip", ip, t.Format("2006010215"))
 }
 
-// SmsLockKey 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// SmsLockKey 生成短信发送锁键。
 func (b *Builder) SmsLockKey(scene, phone string) string {
 	return b.Key("sms", "lock", scene, phone)
 }
 
-// SmsCodeKey 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// SmsCodeKey 生成短信验证码键。
 func (b *Builder) SmsCodeKey(scene, phone string) string {
 	return b.Key("sms", "code", scene, phone)
 }
 
-// SmsCodeAttemptKey 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// SmsCodeAttemptKey 生成短信验证码尝试次数键。
 func (b *Builder) SmsCodeAttemptKey(scene, phone string) string {
 	return b.Key("sms", "code", "attempt", scene, phone)
 }
 
-// LoginFailKey 澶勭悊鐧诲綍璁よ瘉骞惰繑鍥炰細璇濈粨鏋溿€
+// LoginFailKey 生成登录失败计数键。
 func (b *Builder) LoginFailKey(identifier string) string {
 	return b.Key("login", "fail", identifier)
 }
 
-// LoginLockKey 澶勭悊鐧诲綍璁よ瘉骞惰繑鍥炰細璇濈粨鏋溿€
+// LoginLockKey 生成登录锁定键。
 func (b *Builder) LoginLockKey(identifier string) string {
 	return b.Key("login", "lock", identifier)
 }
 
-// MFAChallengeKey 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// MFAChallengeKey 生成 MFA 挑战键。
 func (b *Builder) MFAChallengeKey(challengeID string) string {
 	return b.Key("mfa", "challenge", challengeID)
 }
 
-// sanitizePart 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// sanitizePart 对 key 片段做安全规范化。
 func sanitizePart(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -125,7 +125,7 @@ func sanitizePart(s string) string {
 	return s
 }
 
-// MustFormat 瀹炵幇璇ュ嚱鏁板搴旂殑鏍稿績涓氬姟閫昏緫銆
+// MustFormat 按格式拼接字符串。
 func MustFormat(format string, args ...any) string {
 	return fmt.Sprintf(format, args...)
 }

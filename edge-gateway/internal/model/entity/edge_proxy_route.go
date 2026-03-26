@@ -8,7 +8,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// EdgeProxyRoute is the golang structure for table edge_proxy_route.
+// EdgeProxyRoute 是 edge_proxy_route 表的 Go 结构体。
 type EdgeProxyRoute struct {
 	Id                   uint64      `json:"id"                   orm:"id"                     description:"涓婚敭ID"`              // 涓婚敭ID
 	RouteCode            string      `json:"routeCode"            orm:"route_code"             description:"璺?敱缂栫爜锛堝叏灞?敮涓?級"`    // 璺?敱缂栫爜锛堝叏灞?敮涓?級

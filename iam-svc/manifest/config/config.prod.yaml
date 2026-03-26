@@ -52,6 +52,10 @@ sms:
     accessKeySecret: "replace-with-prod-sk"
     signName: "replace-with-sign-name"
     endpoint: "dysmsapi.aliyuncs.com"
+    templateCodeRegister: "replace-with-template-register"
+    templateCodeLogin: "replace-with-template-login"
+    templateCodeMfa: "replace-with-template-mfa"
+    templateCodeResetPassword: "replace-with-template-reset-password"
 
 risk:
   provider: "http"

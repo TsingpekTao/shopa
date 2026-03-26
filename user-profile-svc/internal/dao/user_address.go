@@ -8,15 +8,15 @@ import (
 	"github.com/TsingpekTao/shopa/user-profile-svc/internal/dao/internal"
 )
 
-// userAddressDao is the data access object for the table user_address.
-// You can define custom methods on it to extend its functionality as needed.
+// userAddressDao 是 user_address 表的数据访问对象。
+// 可以在此结构上添加自定义方法以扩展功能。
 type userAddressDao struct {
 	*internal.UserAddressDao
 }
 
 var (
-	// UserAddress is a globally accessible object for table user_address operations.
+	// UserAddress 是 user_address 表操作的全局访问对象。
 	UserAddress = userAddressDao{internal.NewUserAddressDao()}
 )
 
-// Add your custom methods and functionality below.
+// 可在下方补充自定义方法与扩展逻辑。

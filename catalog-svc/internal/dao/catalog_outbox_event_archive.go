@@ -8,15 +8,15 @@ import (
 	"github.com/TsingpekTao/shopa/catalog-svc/internal/dao/internal"
 )
 
-// catalogOutboxEventArchiveDao is the data access object for the table catalog_outbox_event_archive.
-// You can define custom methods on it to extend its functionality as needed.
+// catalogOutboxEventArchiveDao 是 catalog_outbox_event_archive 表的数据访问对象。
+// 可根据需要在其上添加自定义方法以扩展能力。
 type catalogOutboxEventArchiveDao struct {
 	*internal.CatalogOutboxEventArchiveDao
 }
 
 var (
-	// CatalogOutboxEventArchive is a globally accessible object for table catalog_outbox_event_archive operations.
+	// CatalogOutboxEventArchive 为 catalog_outbox_event_archive 表操作提供全局可用的 DAO 对象。
 	CatalogOutboxEventArchive = catalogOutboxEventArchiveDao{internal.NewCatalogOutboxEventArchiveDao()}
 )
 
-// Add your custom methods and functionality below.
+// 在下方添加自定义方法与扩展功能。

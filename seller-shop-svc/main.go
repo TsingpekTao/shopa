@@ -10,7 +10,7 @@ import (
 	"github.com/TsingpekTao/shopa/seller-shop-svc/internal/cmd"
 )
 
-// main 绋嬪簭鍏ュ彛锛氬惎鍔ㄥ懡浠ゅ苟杩涘叆鏈嶅姟鐢熷懡鍛ㄦ湡銆
+// main 是 seller-shop-svc 的程序入口。
 func main() {
 	cmd.Main.Run(gctx.GetInitCtx())
 }

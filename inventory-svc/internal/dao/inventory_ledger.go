@@ -8,15 +8,15 @@ import (
 	"github.com/TsingpekTao/shopa/inventory-svc/internal/dao/internal"
 )
 
-// inventoryLedgerDao is the data access object for the table inventory_ledger.
-// You can define custom methods on it to extend its functionality as needed.
+// inventoryLedgerDao 是 inventory_ledger 表的数据访问对象。
+// 可在此基础上定义自定义方法以扩展功能。
 type inventoryLedgerDao struct {
 	*internal.InventoryLedgerDao
 }
 
 var (
-	// InventoryLedger is a globally accessible object for table inventory_ledger operations.
+	// InventoryLedger 是 inventory_ledger 表操作的全局可访问对象。
 	InventoryLedger = inventoryLedgerDao{internal.NewInventoryLedgerDao()}
 )
 
-// Add your custom methods and functionality below.
+// 在下方添加自定义方法与逻辑。
