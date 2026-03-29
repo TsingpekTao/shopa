@@ -1,4 +1,4 @@
-package media
+﻿package media
 
 import (
 	"context"
@@ -52,6 +52,7 @@ func (c *ControllerV1) IssueReadUrl(ctx context.Context, req *httpv1.IssueReadUr
 	if out.GetExpiredAt() != nil {
 		expiredAt = out.GetExpiredAt().AsTime().Format("2006-01-02T15:04:05Z07:00")
 	}
+
 	return &httpv1.IssueReadUrlRes{
 		AssetId:   out.GetAssetId(),
 		Url:       out.GetUrl(),
@@ -176,3 +177,4 @@ func (c *ControllerV1) UpdateAssetProcessStatus(ctx context.Context, req *httpv1
 	}
 	return &httpv1.UpdateAssetProcessStatusRes{Updated: out.GetUpdated()}, nil
 }
+

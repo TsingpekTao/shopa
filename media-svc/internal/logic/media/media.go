@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"path"
 	"sort"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 	"github.com/TsingpekTao/shopa/media-svc/internal/model/do"
 	"github.com/TsingpekTao/shopa/media-svc/internal/model/entity"
 	"github.com/TsingpekTao/shopa/media-svc/internal/service"
+	"github.com/aliyun/aliyun-oss-go-sdk/oss"
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gcode"
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -188,6 +190,9 @@ func (s *sMedia) InitUpload(ctx context.Context, req *v1.InitUploadReq) (*v1.Ini
 	}
 	// 6) 返回上传凭证：客户端直接 PUT 到对象存储，服务端不接收大文件流。
 	uploadURL := buildUploadURL(ctx, bucket, objectKey)
+	if signedURL := buildSignedUploadURL(ctx, storageProvider, bucket, objectKey, req.GetMimeType(), 15*time.Minute); signedURL != "" {
+		uploadURL = signedURL
+	}
 	return &v1.InitUploadRes{
 		Asset: toProtoAsset(asset),
 		UploadTicket: &v1.UploadTicket{
@@ -1001,6 +1006,14 @@ func buildObjectKey(sceneCode string, fileName string) string {
 }
 
 func buildPublicURL(ctx context.Context, bucket string, objectKey string) string {
+	if isOSSProvider(cfgString(ctx, "storage.provider", "")) {
+		base := cfgString(ctx, "storage.cdnBaseUrl", "")
+		if base == "" {
+			base = cfgString(ctx, "storage.endpoint", "")
+		}
+		return buildOSSPublicURL(base, bucket, objectKey)
+	}
+
 	// 公开访问 URL 拼装策略：
 	// 1) 优先 cdnBaseUrl（外网加速）；
 	// 2) 回退 storage.endpoint（直连存储网关）。
@@ -1021,6 +1034,14 @@ func buildPublicURL(ctx context.Context, bucket string, objectKey string) string
 }
 
 func buildUploadURL(ctx context.Context, bucket string, objectKey string) string {
+	if isOSSProvider(cfgString(ctx, "storage.provider", "")) {
+		base := cfgString(ctx, "storage.uploadEndpoint", "")
+		if base == "" {
+			base = cfgString(ctx, "storage.endpoint", "")
+		}
+		return buildOSSPublicURL(base, bucket, objectKey)
+	}
+
 	// 上传地址拼装：
 	// - 优先 uploadEndpoint（读写分离时常见）；
 	// - 其次 endpoint；
@@ -1038,6 +1059,10 @@ func buildUploadURL(ctx context.Context, bucket string, objectKey string) string
 }
 
 func buildSignedReadURL(ctx context.Context, asset *entity.MediaAsset, expUnix int64) string {
+	if signedURL := buildSignedOSSReadURL(ctx, asset, expUnix); signedURL != "" {
+		return signedURL
+	}
+
 	// 轻量签名 URL：
 	// - 输入：asset_id + exp + secret；
 	// - 输出：base?exp=...&sig=sha256(...)；
@@ -1062,6 +1087,155 @@ func buildSignedReadURL(ctx context.Context, asset *entity.MediaAsset, expUnix i
 		separator = "&"
 	}
 	return fmt.Sprintf("%s%sexp=%d&sig=%s", base, separator, expUnix, sig)
+}
+
+func buildSignedUploadURL(
+	ctx context.Context,
+	storageProvider string,
+	bucket string,
+	objectKey string,
+	mimeType string,
+	expireAfter time.Duration,
+) string {
+	if !isOSSProvider(storageProvider) {
+		return ""
+	}
+	bucketClient, err := newOSSBucketClient(ctx, bucket)
+	if err != nil {
+		g.Log().Warningf(ctx, "[media] build signed upload url failed: %+v", err)
+		return ""
+	}
+
+	expireSeconds := int64(expireAfter / time.Second)
+	if expireSeconds <= 0 {
+		expireSeconds = 900
+	}
+	options := make([]oss.Option, 0, 1)
+	if strings.TrimSpace(mimeType) != "" {
+		options = append(options, oss.ContentType(strings.TrimSpace(mimeType)))
+	}
+	signedURL, err := bucketClient.SignURL(strings.TrimLeft(objectKey, "/"), oss.HTTPPut, expireSeconds, options...)
+	if err != nil {
+		g.Log().Warningf(ctx, "[media] sign oss upload url failed: %+v", err)
+		return ""
+	}
+	return signedURL
+}
+
+func buildSignedOSSReadURL(ctx context.Context, asset *entity.MediaAsset, expUnix int64) string {
+	if asset == nil || !isOSSProvider(asset.StorageProvider) {
+		return ""
+	}
+	bucketClient, err := newOSSBucketClient(ctx, asset.Bucket)
+	if err != nil {
+		g.Log().Warningf(ctx, "[media] build signed read url failed: %+v", err)
+		return ""
+	}
+	expireSeconds := expUnix - time.Now().Unix()
+	if expireSeconds <= 0 {
+		expireSeconds = 1
+	}
+	signedURL, err := bucketClient.SignURL(strings.TrimLeft(asset.ObjectKey, "/"), oss.HTTPGet, expireSeconds)
+	if err != nil {
+		g.Log().Warningf(ctx, "[media] sign oss read url failed: %+v", err)
+		return ""
+	}
+	return signedURL
+}
+
+func newOSSBucketClient(ctx context.Context, bucketName string) (*oss.Bucket, error) {
+	endpoint := cfgString(ctx, "storage.uploadEndpoint", "")
+	if endpoint == "" {
+		endpoint = cfgString(ctx, "storage.endpoint", "")
+	}
+	endpoint = normalizeStorageEndpoint(endpoint)
+	if endpoint == "" {
+		return nil, gerror.NewCode(gcode.CodeInvalidConfiguration, "missing storage endpoint for oss")
+	}
+
+	accessKeyID := cfgStringFirst(ctx, "storage.accessKeyId", "storage.accessKey")
+	accessKeySecret := cfgStringFirst(ctx, "storage.accessKeySecret", "storage.secretKey")
+	if accessKeyID == "" || accessKeySecret == "" {
+		return nil, gerror.NewCode(gcode.CodeInvalidConfiguration, "missing oss access key config")
+	}
+
+	targetBucket := strings.TrimSpace(bucketName)
+	if targetBucket == "" {
+		targetBucket = cfgString(ctx, "storage.bucket", "")
+	}
+	if targetBucket == "" {
+		return nil, gerror.NewCode(gcode.CodeInvalidConfiguration, "missing oss bucket config")
+	}
+
+	client, err := oss.New(endpoint, accessKeyID, accessKeySecret)
+	if err != nil {
+		return nil, gerror.Wrap(err, "create oss client failed")
+	}
+	bucketClient, err := client.Bucket(targetBucket)
+	if err != nil {
+		return nil, gerror.Wrap(err, "create oss bucket client failed")
+	}
+	return bucketClient, nil
+}
+
+func cfgStringFirst(ctx context.Context, keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(g.Cfg().MustGet(ctx, key).String()); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func isOSSProvider(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "oss", "aliyun", "aliyun-oss":
+		return true
+	default:
+		return false
+	}
+}
+
+func buildOSSPublicURL(endpoint string, bucket string, objectKey string) string {
+	endpoint = normalizeStorageEndpoint(endpoint)
+	if endpoint == "" {
+		return ""
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return ""
+	}
+	scheme := strings.TrimSpace(u.Scheme)
+	if scheme == "" {
+		scheme = "https"
+	}
+	host := strings.TrimSpace(u.Host)
+	if host == "" {
+		return ""
+	}
+	key := strings.TrimLeft(objectKey, "/")
+	if key == "" {
+		return ""
+	}
+	bucket = strings.TrimSpace(bucket)
+	if bucket == "" {
+		return fmt.Sprintf("%s://%s/%s", scheme, host, key)
+	}
+	if strings.HasPrefix(host, bucket+".") {
+		return fmt.Sprintf("%s://%s/%s", scheme, host, key)
+	}
+	return fmt.Sprintf("%s://%s.%s/%s", scheme, bucket, host, key)
+}
+
+func normalizeStorageEndpoint(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if strings.Contains(raw, "://") {
+		return strings.TrimRight(raw, "/")
+	}
+	return "https://" + strings.TrimRight(raw, "/")
 }
 
 func hashStorageObject(provider string, bucket string, objectKey string) string {

@@ -139,3 +139,17 @@ type SearchProductsReq struct {
 	SortBy     pb.SortBy `json:"sort_by"`
 }
 type SearchProductsRes = pb.SearchProductsRes
+
+type ListBuyerProductImagesReq struct {
+	g.Meta `path:"/v1/catalog/buyer/product-images" method:"get" tags:"Catalog-Buyer" summary:"List product images"`
+	SpuNos string `json:"spu_nos" dc:"comma separated spu_no list"`
+}
+
+type BuyerProductImageItem struct {
+	SpuNo    string `json:"spu_no"`
+	ImageUrl string `json:"image_url"`
+}
+
+type ListBuyerProductImagesRes struct {
+	Items []BuyerProductImageItem `json:"items"`
+}

@@ -83,6 +83,9 @@ enum RoleCode {
   ROLE_CODE_SELLER = 2;
   ROLE_CODE_ADMIN = 3;
   ROLE_CODE_CS = 4;
+  ROLE_CODE_SUPER_ADMIN = 5;
+  ROLE_CODE_AUDITOR = 6;
+  ROLE_CODE_OPS_ANALYST = 7;
 }
 
 enum ScopeType {
@@ -326,6 +329,7 @@ message VerifyAccessTokenRes {
   repeated RoleItem roles = 6;
   MembershipSummary membership = 7;
   google.protobuf.Timestamp expires_at = 8;
+  repeated string permissions = 9;
 }
 
 message CheckKycStatusReq {

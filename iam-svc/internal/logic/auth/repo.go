@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -100,6 +101,61 @@ func (s *Service) findRolesByUserID(ctx context.Context, userID uint64) ([]entit
 			Scan(&roles)
 	)
 	return roles, err
+}
+
+// findPermissionsByRoles 查询角色集合映射的权限点列表。
+func (s *Service) findPermissionsByRoles(ctx context.Context, roles []entity.IamUserRole) ([]string, error) {
+	if len(roles) == 0 {
+		return []string{}, nil
+	}
+
+	roleCodes := make([]uint, 0, len(roles))
+	seenRoleCode := make(map[uint]struct{}, len(roles))
+	for _, role := range roles {
+		if _, ok := seenRoleCode[role.RoleCode]; ok {
+			continue
+		}
+		seenRoleCode[role.RoleCode] = struct{}{}
+		roleCodes = append(roleCodes, role.RoleCode)
+	}
+	if len(roleCodes) == 0 {
+		return []string{}, nil
+	}
+
+	var records []struct {
+		PermissionKey string `json:"permission_key"`
+	}
+	err := dao.IamUserRole.DB().
+		Model("iam_role_permission rp").
+		Ctx(ctx).
+		LeftJoin("iam_permission p", "p.permission_key = rp.permission_key").
+		Fields("rp.permission_key").
+		WhereIn("rp.role_code", roleCodes).
+		Where("rp.status", consts.StatusActive).
+		Where("p.status", consts.StatusActive).
+		Scan(&records)
+	if err != nil {
+		return nil, err
+	}
+	if len(records) == 0 {
+		return []string{}, nil
+	}
+
+	permissionSet := make(map[string]struct{}, len(records))
+	permissions := make([]string, 0, len(records))
+	for _, row := range records {
+		key := strings.TrimSpace(row.PermissionKey)
+		if key == "" {
+			continue
+		}
+		if _, ok := permissionSet[key]; ok {
+			continue
+		}
+		permissionSet[key] = struct{}{}
+		permissions = append(permissions, key)
+	}
+	sort.Strings(permissions)
+	return permissions, nil
 }
 
 // findMembershipByUserID 查询会员等级与积分信息。

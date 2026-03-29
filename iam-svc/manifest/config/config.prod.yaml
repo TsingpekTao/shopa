@@ -6,6 +6,11 @@ server:
   openapiPath: "/api.json"
   swaggerPath: "/swagger"
 
+grpc:
+  address: ":9001"
+  name: "iam.svc"
+  logStdout: true
+
 app:
   env: "prod"
   project: "shopa"

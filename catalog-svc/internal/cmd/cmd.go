@@ -12,6 +12,7 @@ import (
 	"github.com/TsingpekTao/shopa/catalog-svc/internal/controller/api"
 	"github.com/TsingpekTao/shopa/catalog-svc/internal/controller/catalog"
 	"github.com/TsingpekTao/shopa/catalog-svc/internal/controller/hello"
+	"github.com/TsingpekTao/shopa/catalog-svc/internal/middleware/i18n"
 )
 
 var (
@@ -34,7 +35,10 @@ var (
 
 			s := g.Server()
 			s.Group("/", func(group *ghttp.RouterGroup) {
-				group.Middleware(ghttp.MiddlewareHandlerResponse)
+				group.Middleware(
+					i18n.Middleware,
+					ghttp.MiddlewareHandlerResponse,
+				)
 				group.Bind(
 					hello.NewV1(),
 					catalog.NewV1(),

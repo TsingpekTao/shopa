@@ -113,6 +113,23 @@ func (s *Service) IsLoginLocked(ctx context.Context, identifier string) (locked 
 	return n > 0, nil
 }
 
+// LoginLockRemainingSeconds 返回登录锁剩余秒数。
+// 若未上锁或读取不到 TTL，返回 0。
+func (s *Service) LoginLockRemainingSeconds(ctx context.Context, identifier string) (int64, error) {
+	v, err := g.Redis().Do(ctx, "TTL", s.keys.LoginLockKey(identifier))
+	if err != nil {
+		return 0, err
+	}
+	if v == nil || v.IsNil() {
+		return 0, nil
+	}
+	ttl := v.Int64()
+	if ttl <= 0 {
+		return 0, nil
+	}
+	return ttl, nil
+}
+
 // LockLogin 锁定登录（30 分钟）。
 func (s *Service) LockLogin(ctx context.Context, identifier string) error {
 	return g.Redis().SetEX(ctx, s.keys.LoginLockKey(identifier), "1", int64(rediskey.TTLLoginLock/time.Second))

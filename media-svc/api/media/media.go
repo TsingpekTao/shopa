@@ -1,4 +1,4 @@
-package media
+﻿package media
 
 import (
 	"context"
@@ -6,9 +6,9 @@ import (
 	v1 "github.com/TsingpekTao/shopa/media-svc/api/media/v1"
 )
 
-// IMediaV1 定义 media-svc 的 HTTP API。
+// IMediaV1 瀹氫箟 media-svc 鐨?HTTP API銆?
 type IMediaV1 interface {
-	// 外部媒体接口
+	// 澶栭儴濯掍綋鎺ュ彛
 	InitUpload(ctx context.Context, req *v1.InitUploadReq) (res *v1.InitUploadRes, err error)
 	CompleteUpload(ctx context.Context, req *v1.CompleteUploadReq) (res *v1.CompleteUploadRes, err error)
 	IssueReadUrl(ctx context.Context, req *v1.IssueReadUrlReq) (res *v1.IssueReadUrlRes, err error)
@@ -19,7 +19,8 @@ type IMediaV1 interface {
 	BatchUnbindAssetsFromBiz(ctx context.Context, req *v1.BatchUnbindAssetsFromBizReq) (res *v1.BatchUnbindAssetsFromBizRes, err error)
 	GetBizAssets(ctx context.Context, req *v1.GetBizAssetsReq) (res *v1.GetBizAssetsRes, err error)
 
-	// 内部媒体接口
+	// 鍐呴儴濯掍綋鎺ュ彛
 	CreateDerivedAsset(ctx context.Context, req *v1.CreateDerivedAssetReq) (res *v1.CreateDerivedAssetRes, err error)
 	UpdateAssetProcessStatus(ctx context.Context, req *v1.UpdateAssetProcessStatusReq) (res *v1.UpdateAssetProcessStatusRes, err error)
 }
+

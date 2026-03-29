@@ -1,4 +1,4 @@
-package api
+﻿package api
 
 import (
 	"context"
@@ -58,3 +58,4 @@ func (*Controller) BatchGetSkuInventory(ctx context.Context, req *v1.BatchGetSku
 func (*Controller) UpsertSkuContext(ctx context.Context, req *v1.UpsertSkuContextReq) (*v1.UpsertSkuContextRes, error) {
 	return service.Inventory().UpsertSkuContext(ctx, req)
 }
+

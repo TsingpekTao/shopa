@@ -17,7 +17,7 @@ app:
 # External dependencies.
 database:
   default:
-    link: "mysql:root:123456@tcp(127.0.0.1:3306)/shopa_edge_gateway?charset=utf8mb4&parseTime=true&loc=Local"
+    link: "mysql:root:123456@tcp(127.0.0.1:3307)/shopa_edge_gateway?charset=utf8mb4&parseTime=true&loc=Local"
 
 redis:
   default:
@@ -50,12 +50,29 @@ upstream:
   pointsGrpc: "127.0.0.1:8012"
 
 gateway:
+  cors:
+    allowedOrigins:
+      - "http://127.0.0.1:3000"
+      - "http://localhost:3000"
+      - "http://127.0.0.1:3100"
+      - "http://localhost:3100"
+      - "http://127.0.0.1:3200"
+      - "http://localhost:3200"
+      - "http://localhost:3000"
+      - "http://localhost:3100"
+      - "http://localhost:3200"
+    allowedMethods: "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+    allowedHeaders: "Authorization,Content-Type,X-Request-Id,X-User-Id,X-Account-Status-Code"
+    allowCredentials: true
   proxy:
     defaultTimeoutMs: 15000
     maxBodySizeMb: 64
     streamTimeoutMs: 600000
     writeRateLimitRps: 1000
     streamRateLimitRps: 200
+    buyerProductsCacheEnabled: true
+    buyerProductsCacheTtlSeconds: 30
+    buyerProductsCacheLruCap: 512
 
 # Object storage / media placeholders.
 storage:
@@ -68,3 +85,4 @@ storage:
 logger:
   level: "all"
   stdout: true
+

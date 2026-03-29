@@ -1,4 +1,4 @@
-package seller
+﻿package seller
 
 import (
 	"context"
@@ -7,9 +7,10 @@ import (
 	pb "github.com/TsingpekTao/shopa/seller-shop-svc/api/v1"
 	"github.com/gogf/gf/v2/frame/g"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
-// withRequestMetadata 将 HTTP 请求头透传为 gRPC metadata，复用 logic 层已有鉴权/审计读取逻辑。
+// withRequestMetadata 灏?HTTP 璇锋眰澶撮€忎紶涓?gRPC metadata锛屽鐢?logic 灞傚凡鏈夐壌鏉?瀹¤璇诲彇閫昏緫銆?
 func withRequestMetadata(ctx context.Context) context.Context {
 	req := g.RequestFromCtx(ctx)
 	if req == nil {
@@ -41,6 +42,13 @@ func toPBApplicationStatuses(in []int32) []pb.ApplicationStatus {
 	return out
 }
 
+func toFieldMask(in []string) *fieldmaskpb.FieldMask {
+	if len(in) == 0 {
+		return nil
+	}
+	return &fieldmaskpb.FieldMask{Paths: in}
+}
+
 func toHTTPListMyApplicationsRes(in *pb.ListMyApplicationsRes) *sellerv1.ListMyApplicationsRes {
 	if in == nil {
 		return &sellerv1.ListMyApplicationsRes{}
@@ -64,3 +72,4 @@ func toHTTPListApplicationsRes(in *pb.ListApplicationsRes) *sellerv1.ListApplica
 		Total:        in.GetTotal(),
 	}
 }
+

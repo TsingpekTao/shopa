@@ -20,4 +20,6 @@ type VerifyResult struct {
 	AccountStatusCode string
 	// Roles 当前主体关联的角色集合。
 	Roles []AuthRole
+	// Permissions 当前主体拥有的扁平化权限点集合。
+	Permissions []string
 }

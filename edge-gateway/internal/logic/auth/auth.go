@@ -93,6 +93,18 @@ func (s *sAuth) VerifyAccessToken(ctx context.Context, accessToken string) (*ser
 		UserID:            res.GetUserId(),
 		AccountStatusCode: enumCode(res.GetAccountStatus().String(), "ACCOUNT_STATUS_"),
 	}
+	permissionSet := make(map[string]struct{}, len(res.GetPermissions()))
+	for _, permission := range res.GetPermissions() {
+		permission = strings.TrimSpace(permission)
+		if permission == "" {
+			continue
+		}
+		if _, ok := permissionSet[permission]; ok {
+			continue
+		}
+		permissionSet[permission] = struct{}{}
+		out.Permissions = append(out.Permissions, permission)
+	}
 
 	// 逐条拷贝角色信息，BFF/代理层可基于角色做权限与归属判断。
 	for _, role := range res.GetRoles() {

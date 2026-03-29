@@ -1017,7 +1017,9 @@ func upsertEntityTx(ctx context.Context, tx gdb.TX, ownerUserID uint64, p *v1.En
 	cols := dao.SellerEntity.Columns()
 	var row entity.SellerEntity
 	if err := tx.Model(dao.SellerEntity.Table()).Where(cols.EntityNo, p.GetEntityNo()).Scan(&row); err != nil {
-		return 0, gerror.Wrap(err, "query entity failed")
+		if !strings.Contains(strings.ToLower(err.Error()), "no rows in result set") {
+			return 0, gerror.Wrap(err, "query entity failed")
+		}
 	}
 
 	legal := p.GetLegalSubject()

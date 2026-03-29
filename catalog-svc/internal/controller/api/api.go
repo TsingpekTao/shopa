@@ -1,4 +1,4 @@
-package api
+﻿package api
 
 import (
 	"context"
@@ -123,3 +123,4 @@ func (*Controller) UpsertSkuStockProjection(ctx context.Context, req *v1.UpsertS
 func (*Controller) RecomputeSpuAggregation(ctx context.Context, req *v1.RecomputeSpuAggregationReq) (*v1.RecomputeSpuAggregationRes, error) {
 	return service.Catalog().RecomputeSpuAggregation(ctx, req)
 }
+

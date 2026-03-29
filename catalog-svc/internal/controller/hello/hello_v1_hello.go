@@ -1,4 +1,4 @@
-﻿package hello
+package hello
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 )
 
 func (c *ControllerV1) Hello(ctx context.Context, req *v1.HelloReq) (res *v1.HelloRes, err error) {
-	g.RequestFromCtx(ctx).Response.Writeln("Hello World!")
+	message := g.I18n().T(ctx, "hello_world")
+	g.RequestFromCtx(ctx).Response.Writeln(message)
 	return
 }
-

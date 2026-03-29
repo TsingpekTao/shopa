@@ -16,6 +16,9 @@ const (
 	RoleCodeSeller   = 2
 	RoleCodeAdmin    = 3
 	RoleCodeCS       = 4
+	RoleCodeSuperAdmin = 5
+	RoleCodeAuditor    = 6
+	RoleCodeOpsAnalyst = 7
 )
 
 const (

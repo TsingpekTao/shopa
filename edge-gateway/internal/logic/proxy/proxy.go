@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,9 +9,11 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/TsingpekTao/shopa/edge-gateway/internal/consts"
 	"github.com/TsingpekTao/shopa/edge-gateway/internal/dao"
 	"github.com/TsingpekTao/shopa/edge-gateway/internal/model/do"
 	"github.com/TsingpekTao/shopa/edge-gateway/internal/model/entity"
@@ -19,42 +22,42 @@ import (
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
+	"github.com/gogf/gf/v2/os/gcache"
 	"github.com/gogf/gf/v2/os/gctx"
 	"github.com/gogf/gf/v2/util/guid"
+	"golang.org/x/sync/singleflight"
 )
 
-// sProxy 负责网关请求透传：
-// - 命中白名单路由后执行鉴权、上下文注入、反向代理。
-// - 请求结束后异步写审计日志。
-// - 对大 body 采用流式转发，不读入网关内存。
-type sProxy struct{}
-
-// New 创建透传服务实例。
-func New() *sProxy {
-	return &sProxy{}
+type sProxy struct {
+	buyerProductsCache *gcache.Cache
+	buyerProductsGroup singleflight.Group
 }
 
-// init 启动时注册透传实现到 service 门面。
+func New() *sProxy {
+	ctx := gctx.New()
+	lruCap := g.Cfg().MustGet(ctx, "gateway.proxy.buyerProductsCacheLruCap", 512).Int()
+	if lruCap <= 0 {
+		lruCap = 512
+	}
+	return &sProxy{
+		buyerProductsCache: gcache.New(lruCap),
+	}
+}
+
 func init() {
 	service.RegisterProxy(New())
 }
 
-// HandleProxyRequest 处理代理请求。
-// 返回 handled=true 表示该请求已被 proxy 接管（无论成功或失败都不应再走后续 handler）。
 func (s *sProxy) HandleProxyRequest(ctx context.Context, r *ghttp.Request) (bool, error) {
-	// 空请求直接忽略。
 	if r == nil {
 		return false, nil
 	}
 
-	// 统一规范化 Method，避免大小写差异。
 	method := strings.ToUpper(strings.TrimSpace(r.Method))
-	// 只代理白名单方法；其他方法继续走常规链路。
 	if !isProxyMethod(method) {
 		return false, nil
 	}
 
-	// 先查数据库路由；数据库不可用时回退到内置路由，保证核心链路可用。
 	route, err := s.matchRoute(ctx, method, r.URL.Path)
 	if err != nil {
 		g.Log().Warningf(ctx, "[edge-gateway] query proxy route failed, fallback builtin route, err=%+v", err)
@@ -66,25 +69,27 @@ func (s *sProxy) HandleProxyRequest(ctx context.Context, r *ghttp.Request) (bool
 		return false, nil
 	}
 
-	// 读取或生成 request_id，保证全链路可追踪。
 	requestID := strings.TrimSpace(r.Header.Get("X-Request-Id"))
 	if requestID == "" {
 		requestID = strings.ReplaceAll(guid.S(), "-", "")
 		r.Header.Set("X-Request-Id", requestID)
 	}
 
-	// 记录起始时间用于审计耗时统计。
 	startAt := time.Now()
+	params := extractPathParams(route.PathPattern, r.URL.Path)
+	action := strings.TrimSpace(route.Action)
+	if action == "" {
+		action = strings.TrimSpace(route.RouteCode)
+	}
+	resourceID := pickResourceID(route.ResourceIdPathKey, params)
+
 	var (
-		// userID 用于审计落库；未鉴权路由保持 0。
-		userID uint64
-		// statusCode 默认 502，若代理正常返回会被 recorder 覆盖。
-		statusCode = http.StatusBadGateway
-		// errCode 记录代理错误码，方便运维检索。
-		errCode string
+		userID        uint64
+		statusCode    = http.StatusBadGateway
+		errCode       string
+		permissionKey = strings.TrimSpace(route.RequiredPermissionKey)
 	)
 
-	// 按路由配置决定是否要求鉴权。
 	if route.AuthRequired == 1 {
 		verified, verifyErr := service.Auth().VerifyAccessToken(ctx, service.Auth().ExtractAccessToken(r))
 		if verifyErr != nil {
@@ -92,56 +97,86 @@ func (s *sProxy) HandleProxyRequest(ctx context.Context, r *ghttp.Request) (bool
 		}
 		userID = verified.UserID
 
-		// 需要注入用户上下文时，透传身份 Header 给下游。
+		if permissionKey != "" && !hasPermission(verified.Permissions, permissionKey) {
+			return true, gerror.NewCodef(consts.CodeForbidden, "permission denied: %s", permissionKey)
+		}
+
 		if route.InjectUserContext == 1 {
 			r.Header.Set("X-User-Id", fmt.Sprintf("%d", verified.UserID))
 			r.Header.Set("X-Account-Status-Code", verified.AccountStatusCode)
 		}
 	}
 
-	// 解析上游服务地址。
 	targetBase, err := s.resolveUpstream(ctx, route.UpstreamService)
 	if err != nil {
 		return true, err
 	}
-	// 规范化为 ReverseProxy 可用 URL。
 	targetURL, err := parseUpstreamURL(targetBase)
 	if err != nil {
 		return true, err
 	}
 
-	// 支持配置化改写目标路径；未配置则沿用原始路径。
 	upstreamPath := strings.TrimSpace(route.UpstreamPathTemplate)
 	if upstreamPath == "" {
 		upstreamPath = r.URL.Path
 	}
+	upstreamPath = applyPathParams(upstreamPath, params)
 
-	// 创建标准单上游反向代理。
-	proxy := httputil.NewSingleHostReverseProxy(targetURL)
-	defaultDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
-		// 先执行默认 Director，保留标准转发行为。
-		defaultDirector(req)
-		// 再按路由配置覆盖路径与 Host。
-		req.URL.Path = upstreamPath
-		req.Host = targetURL.Host
-		// 强制透传 request_id，便于上下游日志对齐。
-		req.Header.Set("X-Request-Id", requestID)
+	cacheEnabled := s.isBuyerProductsCacheEnabled(ctx) && isBuyerProductsListPath(method, r.URL.Path)
+	if cacheEnabled {
+		cacheKey := buildBuyerProductsCacheKey(method, r.URL.Path, r.URL.RawQuery)
+		if payload, ok := s.getBuyerProductsCache(ctx, cacheKey); ok {
+			s.writeBufferedResponse(r, payload, "HIT")
+			statusCode = payload.StatusCode
+		} else {
+			value, doErr, _ := s.buyerProductsGroup.Do(cacheKey, func() (interface{}, error) {
+				reqClone := r.Request.Clone(ctx)
+				return s.proxyToBuffer(targetURL, upstreamPath, requestID, reqClone), nil
+			})
+			if doErr != nil {
+				return true, doErr
+			}
+			payload, _ := value.(*cachedProxyResponse)
+			if payload == nil {
+				payload = &cachedProxyResponse{
+					StatusCode:  http.StatusBadGateway,
+					ContentType: "text/plain; charset=utf-8",
+					Body:        []byte("proxy response is empty"),
+				}
+				errCode = "UPSTREAM_PROXY_ERROR"
+			}
+
+			s.writeBufferedResponse(r, payload, "MISS")
+			statusCode = payload.StatusCode
+
+			if payload.StatusCode == http.StatusOK {
+				ttlSeconds := s.getBuyerProductsCacheTTLSeconds(ctx)
+				_ = s.buyerProductsCache.Set(ctx, cacheKey, payload, time.Duration(ttlSeconds)*time.Second)
+			}
+			if payload.StatusCode == http.StatusBadGateway {
+				errCode = "UPSTREAM_PROXY_ERROR"
+			}
+		}
+	} else {
+		proxy := httputil.NewSingleHostReverseProxy(targetURL)
+		defaultDirector := proxy.Director
+		proxy.Director = func(req *http.Request) {
+			defaultDirector(req)
+			req.URL.Path = upstreamPath
+			req.Host = targetURL.Host
+			req.Header.Set("X-Request-Id", requestID)
+		}
+		proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, proxyErr error) {
+			statusCode = http.StatusBadGateway
+			errCode = "UPSTREAM_PROXY_ERROR"
+			http.Error(rw, proxyErr.Error(), http.StatusBadGateway)
+		}
+
+		recorder := &statusRecorder{ResponseWriter: r.Response.Writer, statusCode: http.StatusOK}
+		proxy.ServeHTTP(recorder, r.Request)
+		statusCode = recorder.StatusCode()
 	}
-	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, proxyErr error) {
-		// 代理失败时写 502，并打上统一错误码供审计。
-		statusCode = http.StatusBadGateway
-		errCode = "UPSTREAM_PROXY_ERROR"
-		http.Error(rw, proxyErr.Error(), http.StatusBadGateway)
-	}
 
-	// 包装响应写入器，捕获最终 HTTP 状态码。
-	recorder := &statusRecorder{ResponseWriter: r.Response.Writer, statusCode: http.StatusOK}
-	// 大 body 场景必须流式透传：不读取 body，不做 io.ReadAll。
-	proxy.ServeHTTP(recorder, r.Request)
-	statusCode = recorder.StatusCode()
-
-	// 异步写审计，避免阻塞主请求返回。
 	go s.writeAudit(gctx.New(), &do.EdgeRequestAudit{
 		RequestId:       requestID,
 		RouteCode:       route.RouteCode,
@@ -155,11 +190,13 @@ func (s *sProxy) HandleProxyRequest(ctx context.Context, r *ghttp.Request) (bool
 		ErrorCode:       errCode,
 		ClientIp:        r.GetClientIp(),
 		UserAgent:       r.Header.Get("User-Agent"),
+		PermissionKey:   permissionKey,
+		Action:          action,
+		ResourceId:      resourceID,
 	})
 	return true, nil
 }
 
-// matchRoute 按 method+path 从数据库路由白名单中匹配可用路由。
 func (s *sProxy) matchRoute(ctx context.Context, method, path string) (*entity.EdgeProxyRoute, error) {
 	var routes []*entity.EdgeProxyRoute
 	err := dao.EdgeProxyRoute.Ctx(ctx).
@@ -172,7 +209,6 @@ func (s *sProxy) matchRoute(ctx context.Context, method, path string) (*entity.E
 		return nil, gerror.Wrap(err, "query proxy routes failed")
 	}
 
-	// 按 ID 升序遍历，保证匹配顺序稳定可预期。
 	for _, route := range routes {
 		if route == nil {
 			continue
@@ -184,7 +220,6 @@ func (s *sProxy) matchRoute(ctx context.Context, method, path string) (*entity.E
 	return nil, nil
 }
 
-// resolveUpstream 将逻辑服务名映射到具体配置项。
 func (s *sProxy) resolveUpstream(ctx context.Context, upstreamService string) (string, error) {
 	key := ""
 	switch strings.ToLower(strings.TrimSpace(upstreamService)) {
@@ -211,13 +246,10 @@ func (s *sProxy) resolveUpstream(ctx context.Context, upstreamService string) (s
 	return value, nil
 }
 
-// writeAudit 写入网关请求审计。
-// 审计策略：仅记元数据，不保存请求 body，避免敏感信息泄露。
 func (s *sProxy) writeAudit(ctx context.Context, data *do.EdgeRequestAudit) {
 	if data == nil {
 		return
 	}
-	// 兼容 degraded_fields 以 []string 传入时的序列化。
 	if fields, ok := data.DegradedFieldsJson.([]string); ok {
 		b, _ := json.Marshal(fields)
 		data.DegradedFieldsJson = string(b)
@@ -225,7 +257,6 @@ func (s *sProxy) writeAudit(ctx context.Context, data *do.EdgeRequestAudit) {
 	_, _ = dao.EdgeRequestAudit.Ctx(ctx).Data(data).Insert()
 }
 
-// isProxyMethod 判断请求方法是否纳入透传处理。
 func isProxyMethod(method string) bool {
 	switch method {
 	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
@@ -235,7 +266,6 @@ func isProxyMethod(method string) bool {
 	}
 }
 
-// matchBuiltinRoute 数据库路由缺失或查询失败时，回退到内置路由。
 func (s *sProxy) matchBuiltinRoute(method, path string) *entity.EdgeProxyRoute {
 	for _, route := range builtinProxyRoutes() {
 		if !strings.EqualFold(route.Method, method) {
@@ -249,15 +279,16 @@ func (s *sProxy) matchBuiltinRoute(method, path string) *entity.EdgeProxyRoute {
 	return nil
 }
 
-// builtinProxyRoutes 定义网关核心路由的最小可用集合。
 func builtinProxyRoutes() []entity.EdgeProxyRoute {
 	return []entity.EdgeProxyRoute{
 		{RouteCode: "BUILTIN_IAM_SMS_SEND", Method: http.MethodPost, PathPattern: "/v1/auth/sms/send", UpstreamService: "iam", UpstreamPathTemplate: "/v1/auth/sms/send", AuthRequired: 0, InjectUserContext: 0},
 		{RouteCode: "BUILTIN_IAM_REGISTER_PASSWORD", Method: http.MethodPost, PathPattern: "/v1/auth/register/password", UpstreamService: "iam", UpstreamPathTemplate: "/v1/auth/register/password", AuthRequired: 0, InjectUserContext: 0},
 		{RouteCode: "BUILTIN_IAM_LOGIN_PASSWORD", Method: http.MethodPost, PathPattern: "/v1/auth/login/password", UpstreamService: "iam", UpstreamPathTemplate: "/v1/auth/login/password", AuthRequired: 0, InjectUserContext: 0},
 		{RouteCode: "BUILTIN_IAM_LOGIN_SMS", Method: http.MethodPost, PathPattern: "/v1/auth/login/sms", UpstreamService: "iam", UpstreamPathTemplate: "/v1/auth/login/sms", AuthRequired: 0, InjectUserContext: 0},
+		{RouteCode: "BUILTIN_IAM_RESET_PASSWORD_SMS", Method: http.MethodPost, PathPattern: "/v1/auth/password/reset/sms", UpstreamService: "iam", UpstreamPathTemplate: "/v1/auth/password/reset/sms", AuthRequired: 0, InjectUserContext: 0},
 		{RouteCode: "BUILTIN_IAM_REFRESH_TOKEN", Method: http.MethodPost, PathPattern: "/v1/auth/token/refresh", UpstreamService: "iam", UpstreamPathTemplate: "/v1/auth/token/refresh", AuthRequired: 0, InjectUserContext: 0},
 		{RouteCode: "BUILTIN_IAM_LOGOUT", Method: http.MethodPost, PathPattern: "/v1/auth/logout", UpstreamService: "iam", UpstreamPathTemplate: "/v1/auth/logout", AuthRequired: 1, InjectUserContext: 1},
+
 		{RouteCode: "BUILTIN_PROFILE_GET", Method: http.MethodGet, PathPattern: "/v1/me/profile", UpstreamService: "user_profile", UpstreamPathTemplate: "/v1/me/profile", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_PROFILE_PATCH", Method: http.MethodPatch, PathPattern: "/v1/me/profile", UpstreamService: "user_profile", UpstreamPathTemplate: "/v1/me/profile", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_ADDRESS_LIST", Method: http.MethodGet, PathPattern: "/v1/me/addresses", UpstreamService: "user_profile", UpstreamPathTemplate: "/v1/me/addresses", AuthRequired: 1, InjectUserContext: 1},
@@ -265,16 +296,166 @@ func builtinProxyRoutes() []entity.EdgeProxyRoute {
 		{RouteCode: "BUILTIN_ADDRESS_PATCH", Method: http.MethodPatch, PathPattern: "/v1/me/addresses/{addressId}", UpstreamService: "user_profile", UpstreamPathTemplate: "/v1/me/addresses/{addressId}", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_ADDRESS_DELETE", Method: http.MethodDelete, PathPattern: "/v1/me/addresses/{addressId}", UpstreamService: "user_profile", UpstreamPathTemplate: "/v1/me/addresses/{addressId}", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_ADDRESS_SET_DEFAULT", Method: http.MethodPost, PathPattern: "/v1/me/addresses/default", UpstreamService: "user_profile", UpstreamPathTemplate: "/v1/me/addresses/default", AuthRequired: 1, InjectUserContext: 1},
+
+		{RouteCode: "BUILTIN_SELLER_APPLICATION_LIST", Method: http.MethodGet, PathPattern: "/v1/seller/applications", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/seller/applications", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_SELLER_APPLICATION_GET", Method: http.MethodGet, PathPattern: "/v1/seller/applications/{applicationNo}", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/seller/applications/{applicationNo}", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_SELLER_APPLICATION_CREATE_DRAFT", Method: http.MethodPost, PathPattern: "/v1/seller/applications/draft", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/seller/applications/draft", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_SELLER_APPLICATION_UPDATE_DRAFT", Method: http.MethodPatch, PathPattern: "/v1/seller/applications/{applicationNo}/draft", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/seller/applications/{applicationNo}/draft", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_SELLER_APPLICATION_SUBMIT", Method: http.MethodPost, PathPattern: "/v1/seller/applications/{applicationNo}/submit", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/seller/applications/{applicationNo}/submit", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_SELLER_APPLICATION_RESUBMIT", Method: http.MethodPost, PathPattern: "/v1/seller/applications/{rejectedApplicationNo}/resubmit", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/seller/applications/{rejectedApplicationNo}/resubmit", AuthRequired: 1, InjectUserContext: 1},
+
 		{RouteCode: "BUILTIN_CATALOG_LIST_MY_PRODUCTS", Method: http.MethodGet, PathPattern: "/v1/catalog/seller/products", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/seller/products", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_CATALOG_GET_MY_PRODUCT", Method: http.MethodGet, PathPattern: "/v1/catalog/seller/products/{spu_no}", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/seller/products/{spu_no}", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_CATALOG_CREATE_DRAFT", Method: http.MethodPost, PathPattern: "/v1/catalog/seller/products/draft", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/seller/products/draft", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_CATALOG_UPDATE_DRAFT", Method: http.MethodPut, PathPattern: "/v1/catalog/seller/products/draft", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/seller/products/draft", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_CATALOG_UPSERT_SKU", Method: http.MethodPost, PathPattern: "/v1/catalog/seller/products/skus:upsert", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/seller/products/skus:upsert", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CATALOG_LIST_BUYER_PRODUCTS", Method: http.MethodGet, PathPattern: "/v1/catalog/buyer/products", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/buyer/products", AuthRequired: 0, InjectUserContext: 0},
+		{RouteCode: "BUILTIN_CATALOG_LIST_BUYER_PRODUCT_IMAGES", Method: http.MethodGet, PathPattern: "/v1/catalog/buyer/product-images", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/buyer/product-images", AuthRequired: 0, InjectUserContext: 0},
+		{RouteCode: "BUILTIN_CATALOG_SEARCH_BUYER_PRODUCTS", Method: http.MethodGet, PathPattern: "/v1/catalog/buyer/products/search", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/buyer/products/search", AuthRequired: 0, InjectUserContext: 0},
+		{RouteCode: "BUILTIN_CATALOG_GET_BUYER_PRODUCT", Method: http.MethodGet, PathPattern: "/v1/catalog/buyer/products/{spu_no}", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/buyer/products/{spu_no}", AuthRequired: 0, InjectUserContext: 0},
+
 		{RouteCode: "BUILTIN_INVENTORY_ADJUST", Method: http.MethodPost, PathPattern: "/v1/inventory/seller/stock:adjust", UpstreamService: "inventory", UpstreamPathTemplate: "/v1/inventory/seller/stock:adjust", AuthRequired: 1, InjectUserContext: 1},
+
+		{RouteCode: "BUILTIN_MEDIA_UPLOAD_INIT", Method: http.MethodPost, PathPattern: "/v1/media/upload/init", UpstreamService: "media", UpstreamPathTemplate: "/v1/media/upload/init", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_MEDIA_UPLOAD_COMPLETE", Method: http.MethodPost, PathPattern: "/v1/media/upload/complete", UpstreamService: "media", UpstreamPathTemplate: "/v1/media/upload/complete", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_MEDIA_ASSET_PROCESS_STATUS", Method: http.MethodGet, PathPattern: "/v1/media/assets/{assetId}/process-status", UpstreamService: "media", UpstreamPathTemplate: "/v1/media/assets/{assetId}/process-status", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_MEDIA_ASSET_READ_URL", Method: http.MethodGet, PathPattern: "/v1/media/assets/{assetId}/read-url", UpstreamService: "media", UpstreamPathTemplate: "/v1/media/assets/{assetId}/read-url", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_MEDIA_BINDING_REPLACE", Method: http.MethodPost, PathPattern: "/v1/media/bindings/replace", UpstreamService: "media", UpstreamPathTemplate: "/v1/media/bindings/replace", AuthRequired: 1, InjectUserContext: 1},
+
+		{RouteCode: "BUILTIN_ADMIN_SELLER_APPLICATIONS", Method: http.MethodGet, PathPattern: "/v1/admin/seller/applications", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/admin/seller/applications", AuthRequired: 1, InjectUserContext: 1, RequiredPermissionKey: "merchant:review:view", Action: "merchant.review.list"},
+		{RouteCode: "BUILTIN_ADMIN_SELLER_APPLICATION_DETAIL", Method: http.MethodGet, PathPattern: "/v1/admin/seller/applications/{applicationNo}", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/admin/seller/applications/{applicationNo}", AuthRequired: 1, InjectUserContext: 1, RequiredPermissionKey: "merchant:review:view", Action: "merchant.review.detail", ResourceIdPathKey: "applicationNo"},
+		{RouteCode: "BUILTIN_ADMIN_SELLER_APPLICATION_APPROVE", Method: http.MethodPost, PathPattern: "/v1/admin/seller/applications/{applicationNo}/approve", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/admin/seller/applications/{applicationNo}/approve", AuthRequired: 1, InjectUserContext: 1, RequiredPermissionKey: "merchant:review:approve", Action: "merchant.review.approve", ResourceIdPathKey: "applicationNo"},
+		{RouteCode: "BUILTIN_ADMIN_SELLER_APPLICATION_REJECT", Method: http.MethodPost, PathPattern: "/v1/admin/seller/applications/{applicationNo}/reject", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/admin/seller/applications/{applicationNo}/reject", AuthRequired: 1, InjectUserContext: 1, RequiredPermissionKey: "merchant:review:reject", Action: "merchant.review.reject", ResourceIdPathKey: "applicationNo"},
+		{RouteCode: "BUILTIN_ADMIN_SHOP_FREEZE", Method: http.MethodPost, PathPattern: "/v1/admin/seller/shops/{shopNo}/freeze", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/admin/seller/shops/{shopNo}/freeze", AuthRequired: 1, InjectUserContext: 1, RequiredPermissionKey: "shop:manage:freeze", Action: "shop.manage.freeze", ResourceIdPathKey: "shopNo"},
+		{RouteCode: "BUILTIN_ADMIN_SHOP_CLOSE", Method: http.MethodPost, PathPattern: "/v1/admin/seller/shops/{shopNo}/close", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/admin/seller/shops/{shopNo}/close", AuthRequired: 1, InjectUserContext: 1, RequiredPermissionKey: "shop:manage:close", Action: "shop.manage.close", ResourceIdPathKey: "shopNo"},
+
+		{RouteCode: "BUILTIN_ADMIN_PRODUCT_REVIEW_TASKS", Method: http.MethodGet, PathPattern: "/v1/catalog/admin/review/tasks", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/admin/review/tasks", AuthRequired: 1, InjectUserContext: 1, RequiredPermissionKey: "product:review:view", Action: "product.review.list"},
+		{RouteCode: "BUILTIN_ADMIN_PRODUCT_REVIEW_DETAIL", Method: http.MethodGet, PathPattern: "/v1/catalog/admin/review/{spu_no}", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/admin/review/{spu_no}", AuthRequired: 1, InjectUserContext: 1, RequiredPermissionKey: "product:review:view", Action: "product.review.detail", ResourceIdPathKey: "spu_no"},
+		{RouteCode: "BUILTIN_ADMIN_PRODUCT_APPROVE", Method: http.MethodPost, PathPattern: "/v1/catalog/admin/review/approve", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/admin/review/approve", AuthRequired: 1, InjectUserContext: 1, RequiredPermissionKey: "product:review:approve", Action: "product.review.approve"},
+		{RouteCode: "BUILTIN_ADMIN_PRODUCT_REJECT", Method: http.MethodPost, PathPattern: "/v1/catalog/admin/review/reject", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/admin/review/reject", AuthRequired: 1, InjectUserContext: 1, RequiredPermissionKey: "product:review:reject", Action: "product.review.reject"},
+		{RouteCode: "BUILTIN_ADMIN_PRODUCT_FREEZE", Method: http.MethodPost, PathPattern: "/v1/catalog/admin/review/freeze", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/admin/review/freeze", AuthRequired: 1, InjectUserContext: 1, RequiredPermissionKey: "product:review:freeze", Action: "product.review.freeze"},
+		{RouteCode: "BUILTIN_ADMIN_PRODUCT_UNFREEZE", Method: http.MethodPost, PathPattern: "/v1/catalog/admin/review/unfreeze", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/admin/review/unfreeze", AuthRequired: 1, InjectUserContext: 1, RequiredPermissionKey: "product:review:unfreeze", Action: "product.review.unfreeze"},
+		{RouteCode: "BUILTIN_ADMIN_PRODUCT_FORCE_OFF_SHELF", Method: http.MethodPost, PathPattern: "/v1/catalog/admin/review/force-off-shelf", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/admin/review/force-off-shelf", AuthRequired: 1, InjectUserContext: 1, RequiredPermissionKey: "product:review:force_off_shelf", Action: "product.review.force_off_shelf"},
 	}
 }
 
-// parseUpstreamURL 解析上游地址；缺失协议时默认补 http://。
+func isBuyerProductsListPath(method, path string) bool {
+	return strings.EqualFold(strings.TrimSpace(method), http.MethodGet) &&
+		strings.EqualFold(strings.TrimSpace(path), "/v1/catalog/buyer/products")
+}
+
+func (s *sProxy) isBuyerProductsCacheEnabled(ctx context.Context) bool {
+	return g.Cfg().MustGet(ctx, "gateway.proxy.buyerProductsCacheEnabled", true).Bool()
+}
+
+func (s *sProxy) getBuyerProductsCacheTTLSeconds(ctx context.Context) int {
+	ttl := g.Cfg().MustGet(ctx, "gateway.proxy.buyerProductsCacheTtlSeconds", 30).Int()
+	if ttl <= 0 {
+		return 30
+	}
+	return ttl
+}
+
+func buildBuyerProductsCacheKey(method, path, rawQuery string) string {
+	return strings.Join([]string{
+		strings.ToUpper(strings.TrimSpace(method)),
+		strings.TrimSpace(path),
+		canonicalQueryString(rawQuery),
+	}, "|")
+}
+
+func canonicalQueryString(rawQuery string) string {
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil || len(values) == 0 {
+		return ""
+	}
+
+	keys := make([]string, 0, len(values))
+	normalized := make(url.Values, len(values))
+	for key, items := range values {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		copied := append([]string(nil), items...)
+		sort.Strings(copied)
+		normalized[key] = copied
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	canonical := make(url.Values, len(keys))
+	for _, key := range keys {
+		canonical[key] = normalized[key]
+	}
+	return canonical.Encode()
+}
+
+func (s *sProxy) getBuyerProductsCache(ctx context.Context, key string) (*cachedProxyResponse, bool) {
+	if s.buyerProductsCache == nil || strings.TrimSpace(key) == "" {
+		return nil, false
+	}
+	value, err := s.buyerProductsCache.Get(ctx, key)
+	if err != nil || value == nil {
+		return nil, false
+	}
+	payload, ok := value.Val().(*cachedProxyResponse)
+	if !ok || payload == nil {
+		return nil, false
+	}
+	return payload, true
+}
+
+func (s *sProxy) writeBufferedResponse(r *ghttp.Request, payload *cachedProxyResponse, cacheStatus string) {
+	if r == nil || payload == nil {
+		return
+	}
+	if payload.ContentType != "" {
+		r.Response.Header().Set("Content-Type", payload.ContentType)
+	}
+	if strings.TrimSpace(cacheStatus) != "" {
+		r.Response.Header().Set("X-Shopa-Edge-Cache", cacheStatus)
+	}
+	statusCode := payload.StatusCode
+	if statusCode <= 0 {
+		statusCode = http.StatusOK
+	}
+	r.Response.Writer.WriteHeader(statusCode)
+	if len(payload.Body) > 0 {
+		_, _ = r.Response.Writer.Write(payload.Body)
+	}
+}
+
+func (s *sProxy) proxyToBuffer(
+	targetURL *url.URL,
+	upstreamPath string,
+	requestID string,
+	req *http.Request,
+) *cachedProxyResponse {
+	if targetURL == nil || req == nil {
+		return &cachedProxyResponse{
+			StatusCode:  http.StatusBadGateway,
+			ContentType: "text/plain; charset=utf-8",
+			Body:        []byte("invalid proxy request"),
+		}
+	}
+
+	recorder := newBufferedProxyResponseRecorder()
+	proxy := httputil.NewSingleHostReverseProxy(targetURL)
+	defaultDirector := proxy.Director
+	proxy.Director = func(proxyReq *http.Request) {
+		defaultDirector(proxyReq)
+		proxyReq.URL.Path = upstreamPath
+		proxyReq.Host = targetURL.Host
+		proxyReq.Header.Set("X-Request-Id", requestID)
+	}
+	proxy.ErrorHandler = func(rw http.ResponseWriter, proxyReq *http.Request, proxyErr error) {
+		http.Error(rw, proxyErr.Error(), http.StatusBadGateway)
+	}
+	proxy.ServeHTTP(recorder, req)
+	return recorder.ToCachedResponse()
+}
+
 func parseUpstreamURL(raw string) (*url.URL, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -290,10 +471,6 @@ func parseUpstreamURL(raw string) (*url.URL, error) {
 	return u, nil
 }
 
-// matchPathPattern 支持三种匹配：
-// 1) 完全匹配。
-// 2) 路由参数匹配（如 /v1/shops/{shop_no}）。
-// 3) 通配符匹配（*）。
 func matchPathPattern(pattern, actual string) bool {
 	pattern = strings.TrimSpace(pattern)
 	if pattern == "" {
@@ -317,19 +494,163 @@ func matchPathPattern(pattern, actual string) bool {
 	return false
 }
 
-// statusRecorder 用于捕获反向代理返回的最终状态码。
+func extractPathParams(pattern, actual string) map[string]string {
+	params := map[string]string{}
+	if !strings.Contains(pattern, "{") || !strings.Contains(pattern, "}") {
+		return params
+	}
+	pSeg := splitPath(pattern)
+	aSeg := splitPath(actual)
+	if len(pSeg) != len(aSeg) {
+		return params
+	}
+	for i := 0; i < len(pSeg); i++ {
+		segment := pSeg[i]
+		if strings.HasPrefix(segment, "{") && strings.HasSuffix(segment, "}") {
+			key := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(segment, "{"), "}"))
+			if key != "" {
+				params[key] = aSeg[i]
+			}
+		}
+	}
+	return params
+}
+
+func splitPath(path string) []string {
+	trimmed := strings.Trim(path, "/")
+	if trimmed == "" {
+		return []string{}
+	}
+	return strings.Split(trimmed, "/")
+}
+
+func applyPathParams(template string, params map[string]string) string {
+	if len(params) == 0 {
+		return template
+	}
+	out := template
+	for key, value := range params {
+		out = strings.ReplaceAll(out, "{"+key+"}", value)
+	}
+	return out
+}
+
+func pickResourceID(resourceIDPathKey string, params map[string]string) string {
+	resourceIDPathKey = strings.TrimSpace(resourceIDPathKey)
+	if resourceIDPathKey != "" {
+		if v := strings.TrimSpace(params[resourceIDPathKey]); v != "" {
+			return v
+		}
+	}
+	if len(params) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if v := strings.TrimSpace(params[key]); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func hasPermission(granted []string, required string) bool {
+	required = strings.TrimSpace(required)
+	if required == "" {
+		return true
+	}
+	for _, item := range granted {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if item == required || item == "*:*:*" {
+			return true
+		}
+		if wildcardPermissionMatch(item, required) {
+			return true
+		}
+	}
+	return false
+}
+
+func wildcardPermissionMatch(pattern, target string) bool {
+	if !strings.Contains(pattern, "*") {
+		return false
+	}
+	patternParts := strings.Split(pattern, ":")
+	targetParts := strings.Split(target, ":")
+	if len(patternParts) != len(targetParts) {
+		return false
+	}
+	for i := range patternParts {
+		if patternParts[i] == "*" {
+			continue
+		}
+		if patternParts[i] != targetParts[i] {
+			return false
+		}
+	}
+	return true
+}
+
+type cachedProxyResponse struct {
+	StatusCode  int
+	ContentType string
+	Body        []byte
+}
+
+type bufferedProxyResponseRecorder struct {
+	header     http.Header
+	body       bytes.Buffer
+	statusCode int
+}
+
+func newBufferedProxyResponseRecorder() *bufferedProxyResponseRecorder {
+	return &bufferedProxyResponseRecorder{
+		header:     make(http.Header),
+		statusCode: http.StatusOK,
+	}
+}
+
+func (r *bufferedProxyResponseRecorder) Header() http.Header {
+	return r.header
+}
+
+func (r *bufferedProxyResponseRecorder) WriteHeader(code int) {
+	r.statusCode = code
+}
+
+func (r *bufferedProxyResponseRecorder) Write(data []byte) (int, error) {
+	if r.statusCode <= 0 {
+		r.statusCode = http.StatusOK
+	}
+	return r.body.Write(data)
+}
+
+func (r *bufferedProxyResponseRecorder) ToCachedResponse() *cachedProxyResponse {
+	bodyBytes := append([]byte(nil), r.body.Bytes()...)
+	return &cachedProxyResponse{
+		StatusCode:  r.statusCode,
+		ContentType: strings.TrimSpace(r.header.Get("Content-Type")),
+		Body:        bodyBytes,
+	}
+}
+
 type statusRecorder struct {
 	http.ResponseWriter
 	statusCode int
 }
 
-// WriteHeader 写响应头时记录状态码。
 func (r *statusRecorder) WriteHeader(code int) {
 	r.statusCode = code
 	r.ResponseWriter.WriteHeader(code)
 }
 
-// StatusCode 返回最终状态码；未显式写入时回退 200。
 func (r *statusRecorder) StatusCode() int {
 	if r.statusCode <= 0 {
 		return http.StatusOK

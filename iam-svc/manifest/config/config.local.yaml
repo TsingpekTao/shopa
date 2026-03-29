@@ -1,4 +1,4 @@
-﻿# Default configuration for local development.
+# Default configuration for local development.
 # Start command example:
 #   gf run main.go --gf.gcfg.file=config.local.yaml
 
@@ -6,6 +6,11 @@ server:
   address: ":8001"
   openapiPath: "/api.json"
   swaggerPath: "/swagger"
+
+grpc:
+  address: ":9001"
+  name: "iam.svc"
+  logStdout: true
 
 app:
   env: "local"
@@ -22,7 +27,7 @@ iam:
     defaultUsernamePrefix: "用户_"
   security:
     loginFailMax: 5
-    mfaOnIpChange: true
+    mfaOnIpChange: false
   snowflake:
     node: 1
 
@@ -33,7 +38,7 @@ jwt:
   refreshExpireSeconds: 2592000
 security:
   loginFailMax: 5
-  mfaOnIpChange: true
+  mfaOnIpChange: false
 snowflake:
   node: 1
 

@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 
+	"github.com/TsingpekTao/shopa/edge-gateway/internal/consts"
 	"github.com/TsingpekTao/shopa/edge-gateway/internal/service"
 	"github.com/gogf/gf/v2/errors/gcode"
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -15,6 +16,8 @@ func Proxy(r *ghttp.Request) {
 	if err != nil {
 		status := http.StatusInternalServerError
 		switch {
+		case gerror.HasCode(err, consts.CodeForbidden):
+			status = http.StatusForbidden
 		case gerror.HasCode(err, gcode.CodeNotAuthorized):
 			status = http.StatusUnauthorized
 		case gerror.HasCode(err, gcode.CodeInvalidParameter):

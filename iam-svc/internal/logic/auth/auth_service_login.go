@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -272,8 +273,9 @@ func (s *Service) LoginByPassword(ctx context.Context, req *v1.LoginByPasswordRe
 	if locked, err := s.cache.IsLoginLocked(ctx, identifier); err != nil {
 		return nil, errs.Wrap(errs.CodeInternalError, err)
 	} else if locked {
+		remaining, _ := s.cache.LoginLockRemainingSeconds(ctx, identifier)
 		s.insertLoginLog(ctx, 0, identifier, v1.LoginChannel_LOGIN_CHANNEL_PASSWORD, false, "redis_lock", meta)
-		return nil, errs.New(errs.CodeAccountLocked)
+		return nil, errs.New(errs.CodeAccountLocked, accountLockedMessage(remaining))
 	}
 
 	auth, err := s.findAuthByIdentifier(ctx, identifier)
@@ -289,8 +291,12 @@ func (s *Service) LoginByPassword(ctx context.Context, req *v1.LoginByPasswordRe
 		return nil, errs.New(errs.CodeAccountDisabled)
 	}
 	if auth.AccountStatus == consts.AccountStatusLocked && auth.LockedUntil != nil && auth.LockedUntil.Timestamp() > time.Now().UTC().Unix() {
+		remaining := auth.LockedUntil.Timestamp() - time.Now().UTC().Unix()
+		if remaining < 0 {
+			remaining = 0
+		}
 		s.insertLoginLog(ctx, auth.UserId, identifier, v1.LoginChannel_LOGIN_CHANNEL_PASSWORD, false, "locked_until", meta)
-		return nil, errs.New(errs.CodeAccountLocked)
+		return nil, errs.New(errs.CodeAccountLocked, accountLockedMessage(remaining))
 	}
 
 	if !verifyPassword(password, auth.PasswordHash, auth.PasswordSalt, auth.PasswordAlgo) {
@@ -336,8 +342,9 @@ func (s *Service) LoginBySms(ctx context.Context, req *v1.LoginBySmsReq) (*v1.Lo
 	if locked, err := s.cache.IsLoginLocked(ctx, phone); err != nil {
 		return nil, errs.Wrap(errs.CodeInternalError, err)
 	} else if locked {
+		remaining, _ := s.cache.LoginLockRemainingSeconds(ctx, phone)
 		s.insertLoginLog(ctx, 0, phone, v1.LoginChannel_LOGIN_CHANNEL_SMS, false, "redis_lock", meta)
-		return nil, errs.New(errs.CodeAccountLocked)
+		return nil, errs.New(errs.CodeAccountLocked, accountLockedMessage(remaining))
 	}
 
 	if err := s.verifySmsCode(ctx, v1.SmsScene_SMS_SCENE_LOGIN, phone, smsCode); err != nil {
@@ -358,8 +365,12 @@ func (s *Service) LoginBySms(ctx context.Context, req *v1.LoginBySmsReq) (*v1.Lo
 		return nil, errs.New(errs.CodeAccountDisabled)
 	}
 	if auth.AccountStatus == consts.AccountStatusLocked && auth.LockedUntil != nil && auth.LockedUntil.Timestamp() > time.Now().UTC().Unix() {
+		remaining := auth.LockedUntil.Timestamp() - time.Now().UTC().Unix()
+		if remaining < 0 {
+			remaining = 0
+		}
 		s.insertLoginLog(ctx, auth.UserId, phone, v1.LoginChannel_LOGIN_CHANNEL_SMS, false, "locked_until", meta)
-		return nil, errs.New(errs.CodeAccountLocked)
+		return nil, errs.New(errs.CodeAccountLocked, accountLockedMessage(remaining))
 	}
 
 	pair, session, err := s.finishLogin(ctx, auth, phone, v1.LoginChannel_LOGIN_CHANNEL_SMS, meta)
@@ -480,9 +491,16 @@ func (s *Service) onLoginFailed(ctx context.Context, auth *entity.IamUserAuth, i
 	s.insertLoginLog(ctx, uid, identifier, channel, false, reason, meta)
 
 	if count >= s.security.LoginFailMax {
-		return errs.New(errs.CodeAccountLocked)
+		return errs.New(errs.CodeAccountLocked, accountLockedMessage(int64(consts.DefaultLockDuration/time.Second)))
 	}
 	return errs.New(errs.CodeInvalidCredential)
+}
+
+func accountLockedMessage(remainingSeconds int64) string {
+	if remainingSeconds <= 0 {
+		remainingSeconds = int64(consts.DefaultLockDuration / time.Second)
+	}
+	return fmt.Sprintf("Account locked, retry after %d seconds", remainingSeconds)
 }
 
 // buildMFAChallenge 生成 MFA challenge 并写入 Redis。

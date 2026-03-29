@@ -17,7 +17,7 @@ app:
 # External dependencies.
 database:
   default:
-    link: "mysql:root:123456@tcp(127.0.0.1:3306)/shopa_media_svc?charset=utf8mb4&parseTime=true&loc=Local"
+    link: "mysql:root:123456@tcp(127.0.0.1:3307)/shopa_media_svc?charset=utf8mb4&parseTime=true&loc=Local"
 
 redis:
   default:
@@ -39,12 +39,14 @@ upstream:
 
 # Object storage / media placeholders.
 storage:
-  provider: "local"
-  endpoint: ""
-  accessKey: ""
-  secretKey: ""
-  bucket: "shopa"
+  provider: "oss"
+  endpoint: "oss-cn-beijing.aliyuncs.com"
+  uploadEndpoint: "oss-cn-beijing.aliyuncs.com"
+  accessKeyId: "replace-with-local-ak"
+  accessKeySecret: "replace-with-local-sk"
+  bucket: "shopa-picture-1"
 
 logger:
   level: "all"
   stdout: true
+

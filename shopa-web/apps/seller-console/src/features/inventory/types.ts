@@ -17,10 +17,23 @@ export interface InventorySummary {
   lastUpdated: string;
 }
 
+export type AdjustReasonCode =
+  | "SELLER_REPLENISH"
+  | "SELLER_CORRECTION"
+  | "ADMIN_MANUAL"
+  | "PURCHASE_IN"
+  | "RETURN_IN"
+  | "DAMAGE_OUT"
+  | "RECONCILE";
+
 export interface InventoryAdjustPayload {
   skuNo: string;
   delta: number;
   reason?: string;
+  reasonCode?: AdjustReasonCode;
+  bizNo?: string;
+  remark?: string;
+  idempotencyKey?: string;
 }
 
 export interface FailedItem {
@@ -31,4 +44,5 @@ export interface FailedItem {
 export interface InventoryAdjustResponse {
   success: boolean;
   failedItems: FailedItem[];
+  results?: InventoryRecord[];
 }

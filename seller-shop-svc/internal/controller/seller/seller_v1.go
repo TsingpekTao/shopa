@@ -1,11 +1,10 @@
-package seller
+﻿package seller
 
 import (
 	"context"
 
 	sellerv1 "github.com/TsingpekTao/shopa/seller-shop-svc/api/seller/v1"
 	pb "github.com/TsingpekTao/shopa/seller-shop-svc/api/v1"
-	fieldmaskpb "google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
 func (c *ControllerV1) CreateApplicationDraft(ctx context.Context, req *sellerv1.CreateApplicationDraftReq) (res *sellerv1.CreateApplicationDraftRes, err error) {
@@ -25,7 +24,7 @@ func (c *ControllerV1) UpdateApplicationDraft(ctx context.Context, req *sellerv1
 		ExpectedVersion: req.ExpectedVersion,
 		Entity:          req.Entity,
 		Shop:            req.Shop,
-		UpdateMask:      &fieldmaskpb.FieldMask{Paths: req.UpdateMask},
+		UpdateMask:      toFieldMask(req.UpdateMask),
 	})
 	if err != nil {
 		return nil, err
@@ -50,7 +49,7 @@ func (c *ControllerV1) ResubmitApplication(ctx context.Context, req *sellerv1.Re
 		ExpectedVersion:       req.ExpectedVersion,
 		Entity:                req.Entity,
 		Shop:                  req.Shop,
-		UpdateMask:            &fieldmaskpb.FieldMask{Paths: req.UpdateMask},
+		UpdateMask:            toFieldMask(req.UpdateMask),
 		SubmitImmediately:     req.SubmitImmediately,
 	})
 	if err != nil {
@@ -208,3 +207,4 @@ func (c *ControllerV1) IsUserShopOwner(ctx context.Context, req *sellerv1.IsUser
 	}
 	return &sellerv1.IsUserShopOwnerRes{IsOwner: out.GetIsOwner()}, nil
 }
+

@@ -139,6 +139,10 @@ func (s *Service) VerifyAccessToken(ctx context.Context, req *v1.VerifyAccessTok
 	if err != nil {
 		return nil, errs.Wrap(errs.CodeInternalError, err)
 	}
+	permissions, err := s.findPermissionsByRoles(ctx, roles)
+	if err != nil {
+		return nil, errs.Wrap(errs.CodeInternalError, err)
+	}
 	membership, err := s.findMembershipByUserID(ctx, auth.UserId)
 	if err != nil {
 		return nil, errs.Wrap(errs.CodeInternalError, err)
@@ -163,5 +167,6 @@ func (s *Service) VerifyAccessToken(ctx context.Context, req *v1.VerifyAccessTok
 		Roles:         roleItems,
 		Membership:    s.membershipToProto(membership),
 		ExpiresAt:     expiresAt,
+		Permissions:   permissions,
 	}, nil
 }

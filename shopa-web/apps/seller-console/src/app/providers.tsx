@@ -1,6 +1,6 @@
 "use client";
 
-import { ReactNode, useEffect, useState } from "react";
+import { ReactNode, useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { notification } from "antd";
 import { apiClient } from "@shopa/api-client";
@@ -12,8 +12,6 @@ type Props = {
 };
 
 export function Providers({ children }: Props) {
-  const [apiReady, setApiReady] = useState(false);
-
   useEffect(() => {
     notification.config({
       placement: "topRight",
@@ -64,13 +62,7 @@ export function Providers({ children }: Props) {
         });
       }
     });
-
-    setApiReady(true);
   }, []);
-
-  if (!apiReady) {
-    return null;
-  }
 
   return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
 }

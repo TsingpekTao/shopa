@@ -4,7 +4,7 @@
 
 # HTTP server configuration (OpenAPI/Swagger + optional REST APIs).
 server:
-  address: ":8003"
+  address: ":8007"
   openapiPath: "/api.json"
   swaggerPath: "/swagger"
 
@@ -17,7 +17,7 @@ app:
 # External dependencies.
 database:
   default:
-    link: "mysql:root:123456@tcp(127.0.0.1:3306)/shopa_seller_shop_svc?charset=utf8mb4&parseTime=true&loc=Local"
+    link: "mysql:root:123456@tcp(127.0.0.1:3307)/shopa_seller_shop_svc?charset=utf8mb4&parseTime=true&loc=Local"
 
 redis:
   default:
@@ -48,3 +48,4 @@ storage:
 logger:
   level: "all"
   stdout: true
+

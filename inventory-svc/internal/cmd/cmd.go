@@ -12,6 +12,7 @@ import (
 	"github.com/TsingpekTao/shopa/inventory-svc/internal/controller/api"
 	"github.com/TsingpekTao/shopa/inventory-svc/internal/controller/hello"
 	"github.com/TsingpekTao/shopa/inventory-svc/internal/controller/inventory"
+	i18nmw "github.com/TsingpekTao/shopa/inventory-svc/internal/middleware/i18n"
 )
 
 var (
@@ -34,7 +35,10 @@ var (
 
 			s := g.Server()
 			s.Group("/", func(group *ghttp.RouterGroup) {
-				group.Middleware(ghttp.MiddlewareHandlerResponse)
+				group.Middleware(
+					i18nmw.Middleware,
+					ghttp.MiddlewareHandlerResponse,
+				)
 				group.Bind(
 					hello.NewV1(),
 					inventory.NewV1(),

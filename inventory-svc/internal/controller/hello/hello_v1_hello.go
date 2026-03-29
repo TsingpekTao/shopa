@@ -8,6 +8,6 @@ import (
 )
 
 func (c *ControllerV1) Hello(ctx context.Context, req *v1.HelloReq) (res *v1.HelloRes, err error) {
-	g.RequestFromCtx(ctx).Response.Writeln("Hello World!")
+	g.RequestFromCtx(ctx).Response.Writeln(g.I18n().T(ctx, "hello_world"))
 	return
 }

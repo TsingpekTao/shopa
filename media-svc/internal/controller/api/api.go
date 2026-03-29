@@ -1,4 +1,4 @@
-package api
+﻿package api
 
 import (
 	"context"
@@ -8,13 +8,13 @@ import (
 	"github.com/gogf/gf/contrib/rpc/grpcx/v2"
 )
 
-// Controller 实现了对外与内部的媒体 RPC 服务。
+// Controller 鐎圭偟骞囨禍鍡楊嚠婢舵牔绗岄崘鍛村劥閻ㄥ嫬鐛熸担?RPC 閺堝秴濮熼妴?
 type Controller struct {
 	v1.UnimplementedMediaServiceServer
 	v1.UnimplementedMediaInternalServiceServer
 }
 
-// Register 将媒体 RPC 服务注册到 gRPC 服务器。
+// Register 鐏忓棗鐛熸担?RPC 閺堝秴濮熷▔銊ュ斀閸?gRPC 閺堝秴濮熼崳銊ｂ偓?
 func Register(s *grpcx.GrpcServer) {
 	ctrl := &Controller{}
 	v1.RegisterMediaServiceServer(s.Server, ctrl)
@@ -64,3 +64,4 @@ func (*Controller) CreateDerivedAsset(ctx context.Context, req *v1.CreateDerived
 func (*Controller) UpdateAssetProcessStatus(ctx context.Context, req *v1.UpdateAssetProcessStatusReq) (res *v1.UpdateAssetProcessStatusRes, err error) {
 	return service.Media().UpdateAssetProcessStatus(ctx, req)
 }
+

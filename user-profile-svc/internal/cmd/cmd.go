@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/TsingpekTao/shopa/user-profile-svc/internal/controller/api"
+	"github.com/TsingpekTao/shopa/user-profile-svc/internal/middleware/i18n"
 	"github.com/TsingpekTao/shopa/user-profile-svc/internal/router"
 	"github.com/TsingpekTao/shopa/user-profile-svc/internal/worker"
 )
@@ -50,6 +51,7 @@ func mainFunc(ctx context.Context, parser *gcmd.Parser) (err error) {
 	// 构建 HTTP 服务（Swagger/OpenAPI + 对外 HTTP 接口）。
 	httpServer := g.Server()
 	// 使用统一响应中间件，保证返回结构一致。
+	httpServer.Use(i18n.Middleware)
 	httpServer.Use(ghttp.MiddlewareHandlerResponse)
 	// 按模块注册 HTTP 路由分组。
 	router.RegisterHTTP(httpServer)

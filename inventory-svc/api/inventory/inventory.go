@@ -1,12 +1,12 @@
-package inventory
+﻿package inventory
 
 import (
 	"context"
 
-	v1 "github.com/TsingpekTao/shopa/inventory-svc/api/inventory/v1"
+	v1 "github.com/TsingpekTao/shopa/inventory-svc/api/v1"
 )
 
-// IInventoryV1 定义库存业务 API 的 HTTP 处理器。
+// IInventoryV1 瀹氫箟搴撳瓨涓氬姟 API 鐨?HTTP 澶勭悊鍣ㄣ€?
 type IInventoryV1 interface {
 	BatchAdjustMySkuStock(ctx context.Context, req *v1.BatchAdjustMySkuStockReq) (res *v1.BatchAdjustMySkuStockRes, err error)
 	ReserveStock(ctx context.Context, req *v1.ReserveStockReq) (res *v1.ReserveStockRes, err error)
@@ -18,3 +18,4 @@ type IInventoryV1 interface {
 	BatchGetSkuInventory(ctx context.Context, req *v1.BatchGetSkuInventoryReq) (res *v1.BatchGetSkuInventoryRes, err error)
 	UpsertSkuContext(ctx context.Context, req *v1.UpsertSkuContextReq) (res *v1.UpsertSkuContextRes, err error)
 }
+

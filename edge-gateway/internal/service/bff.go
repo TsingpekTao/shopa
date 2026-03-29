@@ -8,6 +8,7 @@ package service
 import (
 	"context"
 
+	adminv1 "github.com/TsingpekTao/shopa/edge-gateway/api/admin/v1"
 	mev1 "github.com/TsingpekTao/shopa/edge-gateway/api/me/v1"
 	sellerv1 "github.com/TsingpekTao/shopa/edge-gateway/api/seller/v1"
 )
@@ -19,6 +20,10 @@ type (
 	// - BuildSellerShopDashboard: 店铺仪表盘聚合。
 	IBff interface {
 		BuildMyOverview(ctx context.Context, accessToken string) (*mev1.GetOverviewRes, error)
+		BuildAdminOverview(ctx context.Context, accessToken string) (*adminv1.GetOverviewRes, error)
+		BuildAdminDashboardOverview(ctx context.Context, accessToken string) (*adminv1.GetDashboardOverviewRes, error)
+		BuildAdminShopInsights(ctx context.Context, accessToken string, shopNo string) (*adminv1.GetShopInsightsRes, error)
+		BuildAdminConversationList(ctx context.Context, accessToken string) (*adminv1.ListConversationsRes, error)
 		BuildSellerWorkbench(ctx context.Context, accessToken string) (*sellerv1.GetWorkbenchRes, error)
 		BuildSellerShopDashboard(ctx context.Context, accessToken string, shopNo string) (*sellerv1.GetShopDashboardRes, error)
 	}

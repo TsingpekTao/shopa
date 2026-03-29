@@ -5,6 +5,8 @@ export type Profile = {
   avatarUrl?: string;
   bio?: string;
   updatedAt?: string;
+  version?: number;
+  addressBookVersion?: number;
 };
 
 export type Address = {
@@ -15,4 +17,6 @@ export type Address = {
   fullAddress: string;
   isDefault: boolean;
   updatedAt?: string;
+  version?: number;
+  addressBookVersion?: number;
 };

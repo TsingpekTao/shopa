@@ -1,6 +1,6 @@
-// =================================================================================
-// 本文件定义用户 API (v1) 的 HTTP 控制器接口。
-// 保持与 GoFrame 生成风格一致，确保控制器结构统一。
+﻿// =================================================================================
+// 鏈枃浠跺畾涔夌敤鎴?API (v1) 鐨?HTTP 鎺у埗鍣ㄦ帴鍙ｃ€?
+// 淇濇寔涓?GoFrame 鐢熸垚椋庢牸涓€鑷达紝纭繚鎺у埗鍣ㄧ粨鏋勭粺涓€銆?
 // =================================================================================
 
 package user
@@ -8,27 +8,28 @@ package user
 import (
 	"context"
 
-	v1 "github.com/TsingpekTao/shopa/user-profile-svc/api/user/v1"
+	v1 "github.com/TsingpekTao/shopa/user-profile-svc/api/v1"
 )
 
-// IUserV1 是当前用户画像/地址管理的 HTTP API 接口。
-// 注意：认证/授权由 middleware/iam-svc 负责，本服务仅利用上下文中的 user_id。
+// IUserV1 鏄綋鍓嶇敤鎴风敾鍍?鍦板潃绠＄悊鐨?HTTP API 鎺ュ彛銆?
+// 娉ㄦ剰锛氳璇?鎺堟潈鐢?middleware/iam-svc 璐熻矗锛屾湰鏈嶅姟浠呭埄鐢ㄤ笂涓嬫枃涓殑 user_id銆?
 type IUserV1 interface {
-	// GetMyProfile 返回当前用户画像，可选包含地址列表。
+	// GetMyProfile 杩斿洖褰撳墠鐢ㄦ埛鐢诲儚锛屽彲閫夊寘鍚湴鍧€鍒楄〃銆?
 	GetMyProfile(ctx context.Context, req *v1.GetMyProfileReq) (res *v1.GetMyProfileRes, err error)
-	// UpdateMyProfile 按更新掩码补丁当前用户画像。
+	// UpdateMyProfile 鎸夋洿鏂版帺鐮佽ˉ涓佸綋鍓嶇敤鎴风敾鍍忋€?
 	UpdateMyProfile(ctx context.Context, req *v1.UpdateMyProfileReq) (res *v1.UpdateMyProfileRes, err error)
 
-	// ListMyAddresses 列出当前用户的所有地址。
+	// ListMyAddresses 鍒楀嚭褰撳墠鐢ㄦ埛鐨勬墍鏈夊湴鍧€銆?
 	ListMyAddresses(ctx context.Context, req *v1.ListMyAddressesReq) (res *v1.ListMyAddressesRes, err error)
-	// CreateMyAddress 创建一条用户地址。
+	// CreateMyAddress 鍒涘缓涓€鏉＄敤鎴峰湴鍧€銆?
 	CreateMyAddress(ctx context.Context, req *v1.CreateMyAddressReq) (res *v1.CreateMyAddressRes, err error)
-	// ReplaceMyAddress 通过新建行替换指定地址。
+	// ReplaceMyAddress 閫氳繃鏂板缓琛屾浛鎹㈡寚瀹氬湴鍧€銆?
 	ReplaceMyAddress(ctx context.Context, req *v1.ReplaceMyAddressReq) (res *v1.ReplaceMyAddressRes, err error)
-	// UpdateMyAddress 补丁指定地址。
+	// UpdateMyAddress 琛ヤ竵鎸囧畾鍦板潃銆?
 	UpdateMyAddress(ctx context.Context, req *v1.UpdateMyAddressReq) (res *v1.UpdateMyAddressRes, err error)
-	// DeleteMyAddress 软删除指定地址。
+	// DeleteMyAddress 杞垹闄ゆ寚瀹氬湴鍧€銆?
 	DeleteMyAddress(ctx context.Context, req *v1.DeleteMyAddressReq) (res *v1.DeleteMyAddressRes, err error)
-	// SetMyDefaultAddress 设置或清空默认地址。
+	// SetMyDefaultAddress 璁剧疆鎴栨竻绌洪粯璁ゅ湴鍧€銆?
 	SetMyDefaultAddress(ctx context.Context, req *v1.SetMyDefaultAddressReq) (res *v1.SetMyDefaultAddressRes, err error)
 }
+

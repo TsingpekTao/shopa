@@ -1,18 +1,17 @@
-package user
+﻿package user
 
 import (
 	"context"
 
-	v1 "github.com/TsingpekTao/shopa/user-profile-svc/api/user/v1"
+	v1 "github.com/TsingpekTao/shopa/user-profile-svc/api/v1"
 	pb "github.com/TsingpekTao/shopa/user-profile-svc/api/v1"
 	"github.com/TsingpekTao/shopa/user-profile-svc/internal/service"
 	"github.com/gogf/gf/v2/errors/gerror"
-	fieldmaskpb "google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
-// GetMyProfile 返回当前用户的画像及可选地址。
+// GetMyProfile 杩斿洖褰撳墠鐢ㄦ埛鐨勭敾鍍忓強鍙€夊湴鍧€銆?
 func (*ControllerV1) GetMyProfile(ctx context.Context, req *v1.GetMyProfileReq) (res *v1.GetMyProfileRes, err error) {
-	// 直接调用 gRPC 形式的服务实现，避免重复业务逻辑。
+	// 鐩存帴璋冪敤 gRPC 褰㈠紡鐨勬湇鍔″疄鐜帮紝閬垮厤閲嶅涓氬姟閫昏緫銆?
 	out, err := service.UserProfile().GetMyProfile(ctx, &pb.GetMyProfileReq{
 		IncludeAddresses: req.IncludeAddresses,
 	})
@@ -26,20 +25,16 @@ func (*ControllerV1) GetMyProfile(ctx context.Context, req *v1.GetMyProfileReq) 
 	}, nil
 }
 
-// UpdateMyProfile 更新当前用户画像并返回最新结果。
+// UpdateMyProfile 鏇存柊褰撳墠鐢ㄦ埛鐢诲儚骞惰繑鍥炴渶鏂扮粨鏋溿€?
 func (*ControllerV1) UpdateMyProfile(ctx context.Context, req *v1.UpdateMyProfileReq) (res *v1.UpdateMyProfileRes, err error) {
-	// 校验请求载荷不为 nil。
+	// 鏍￠獙璇锋眰杞借嵎涓嶄负 nil銆?
 	if req.Profile == nil {
 		return nil, gerror.New("profile is required")
 	}
-	// 将字段掩码转换为 protobuf FieldMask。
-	mask := &fieldmaskpb.FieldMask{
-		Paths: req.UpdateMask,
-	}
-	// 转发到服务层以保持业务逻辑一致。
+	// 杞彂鍒版湇鍔″眰浠ヤ繚鎸佷笟鍔￠€昏緫涓€鑷淬€?
 	out, err := service.UserProfile().UpdateMyProfile(ctx, &pb.UpdateMyProfileReq{
 		Profile:                req.Profile,
-		UpdateMask:             mask,
+		UpdateMask:             req.UpdateMask,
 		ExpectedProfileVersion: req.ExpectedProfileVersion,
 	})
 	if err != nil {
@@ -50,9 +45,9 @@ func (*ControllerV1) UpdateMyProfile(ctx context.Context, req *v1.UpdateMyProfil
 	}, nil
 }
 
-// ListMyAddresses 返回当前用户的地址列表。
+// ListMyAddresses 杩斿洖褰撳墠鐢ㄦ埛鐨勫湴鍧€鍒楄〃銆?
 func (*ControllerV1) ListMyAddresses(ctx context.Context, req *v1.ListMyAddressesReq) (res *v1.ListMyAddressesRes, err error) {
-	// 直接调用服务层，当前 proto 已移除分页请求字段。
+	// 鐩存帴璋冪敤鏈嶅姟灞傦紝褰撳墠 proto 宸茬Щ闄ゅ垎椤佃姹傚瓧娈点€?
 	out, err := service.UserProfile().ListMyAddresses(ctx, &pb.ListMyAddressesReq{
 		IncludeDeleted: req.IncludeDeleted,
 	})
@@ -68,13 +63,13 @@ func (*ControllerV1) ListMyAddresses(ctx context.Context, req *v1.ListMyAddresse
 	}, nil
 }
 
-// CreateMyAddress 创建一条用户地址。
+// CreateMyAddress 鍒涘缓涓€鏉＄敤鎴峰湴鍧€銆?
 func (*ControllerV1) CreateMyAddress(ctx context.Context, req *v1.CreateMyAddressReq) (res *v1.CreateMyAddressRes, err error) {
-	// 校验地址载荷不为 nil。
+	// 鏍￠獙鍦板潃杞借嵎涓嶄负 nil銆?
 	if req.Address == nil {
 		return nil, gerror.New("address is required")
 	}
-	// 转发到服务层以复用事务和默认地址逻辑。
+	// 杞彂鍒版湇鍔″眰浠ュ鐢ㄤ簨鍔″拰榛樿鍦板潃閫昏緫銆?
 	out, err := service.UserProfile().CreateMyAddress(ctx, &pb.CreateMyAddressReq{
 		Address:                    req.Address,
 		SetAsDefault:               req.SetAsDefault,
@@ -89,21 +84,17 @@ func (*ControllerV1) CreateMyAddress(ctx context.Context, req *v1.CreateMyAddres
 	}, nil
 }
 
-// UpdateMyAddress 更新指定的用户地址。
+// UpdateMyAddress 鏇存柊鎸囧畾鐨勭敤鎴峰湴鍧€銆?
 func (*ControllerV1) UpdateMyAddress(ctx context.Context, req *v1.UpdateMyAddressReq) (res *v1.UpdateMyAddressRes, err error) {
-	// 校验地址载荷不为 nil。
+	// 鏍￠獙鍦板潃杞借嵎涓嶄负 nil銆?
 	if req.Address == nil {
 		return nil, gerror.New("address is required")
 	}
-	// 将字段掩码转换为 protobuf FieldMask。
-	mask := &fieldmaskpb.FieldMask{
-		Paths: req.UpdateMask,
-	}
-	// 转发到服务层以保持一致的规则处理。
+	// 杞彂鍒版湇鍔″眰浠ヤ繚鎸佷竴鑷寸殑瑙勫垯澶勭悊銆?
 	out, err := service.UserProfile().UpdateMyAddress(ctx, &pb.UpdateMyAddressReq{
 		AddressId:              req.AddressId,
 		Address:                req.Address,
-		UpdateMask:             mask,
+		UpdateMask:             req.UpdateMask,
 		ExpectedAddressVersion: req.ExpectedAddressVersion,
 	})
 	if err != nil {
@@ -115,21 +106,17 @@ func (*ControllerV1) UpdateMyAddress(ctx context.Context, req *v1.UpdateMyAddres
 	}, nil
 }
 
-// ReplaceMyAddress 新建一条地址替换原地址并更新默认态势。
+// ReplaceMyAddress 鏂板缓涓€鏉″湴鍧€鏇挎崲鍘熷湴鍧€骞舵洿鏂伴粯璁ゆ€佸娍銆?
 func (*ControllerV1) ReplaceMyAddress(ctx context.Context, req *v1.ReplaceMyAddressReq) (res *v1.ReplaceMyAddressRes, err error) {
-	// 校验地址载荷不为 nil。
+	// 鏍￠獙鍦板潃杞借嵎涓嶄负 nil銆?
 	if req.Address == nil {
 		return nil, gerror.New("address is required")
 	}
-	// 将字段掩码转换为 protobuf FieldMask。
-	mask := &fieldmaskpb.FieldMask{
-		Paths: req.UpdateMask,
-	}
-	// 转发到服务层以复用替换事务逻辑。
+	// 杞彂鍒版湇鍔″眰浠ュ鐢ㄦ浛鎹簨鍔￠€昏緫銆?
 	out, err := service.UserProfile().ReplaceMyAddress(ctx, &pb.ReplaceMyAddressReq{
 		SourceAddressId:              req.SourceAddressId,
 		Address:                      req.Address,
-		UpdateMask:                   mask,
+		UpdateMask:                   req.UpdateMask,
 		SetAsDefault:                 req.SetAsDefault,
 		ExpectedSourceAddressVersion: req.ExpectedSourceAddressVersion,
 		ExpectedAddressBookVersion:   req.ExpectedAddressBookVersion,
@@ -144,9 +131,9 @@ func (*ControllerV1) ReplaceMyAddress(ctx context.Context, req *v1.ReplaceMyAddr
 	}, nil
 }
 
-// DeleteMyAddress 删除指定地址并保留版本追踪。
+// DeleteMyAddress 鍒犻櫎鎸囧畾鍦板潃骞朵繚鐣欑増鏈拷韪€?
 func (*ControllerV1) DeleteMyAddress(ctx context.Context, req *v1.DeleteMyAddressReq) (res *v1.DeleteMyAddressRes, err error) {
-	// 转发到服务层以复用归属校验与软删行为。
+	// 杞彂鍒版湇鍔″眰浠ュ鐢ㄥ綊灞炴牎楠屼笌杞垹琛屼负銆?
 	out, err := service.UserProfile().DeleteMyAddress(ctx, &pb.DeleteMyAddressReq{
 		AddressId:              req.AddressId,
 		ExpectedAddressVersion: req.ExpectedAddressVersion,
@@ -159,9 +146,9 @@ func (*ControllerV1) DeleteMyAddress(ctx context.Context, req *v1.DeleteMyAddres
 	}, nil
 }
 
-// SetMyDefaultAddress 设置或清除用户的默认地址。
+// SetMyDefaultAddress 璁剧疆鎴栨竻闄ょ敤鎴风殑榛樿鍦板潃銆?
 func (*ControllerV1) SetMyDefaultAddress(ctx context.Context, req *v1.SetMyDefaultAddressReq) (res *v1.SetMyDefaultAddressRes, err error) {
-	// 转发到服务层以保证默认地址唯一。
+	// 杞彂鍒版湇鍔″眰浠ヤ繚璇侀粯璁ゅ湴鍧€鍞竴銆?
 	out, err := service.UserProfile().SetMyDefaultAddress(ctx, &pb.SetMyDefaultAddressReq{
 		AddressId:                  req.AddressId,
 		ExpectedAddressBookVersion: req.ExpectedAddressBookVersion,
@@ -174,3 +161,4 @@ func (*ControllerV1) SetMyDefaultAddress(ctx context.Context, req *v1.SetMyDefau
 		AddressBookVersion: out.GetAddressBookVersion(),
 	}, nil
 }
+

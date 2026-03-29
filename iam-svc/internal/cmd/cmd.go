@@ -12,6 +12,7 @@ import (
 	"github.com/TsingpekTao/shopa/iam-svc/internal/controller/api"
 	"github.com/TsingpekTao/shopa/iam-svc/internal/controller/auth"
 	"github.com/TsingpekTao/shopa/iam-svc/internal/controller/hello"
+	"github.com/TsingpekTao/shopa/iam-svc/internal/middleware/i18n"
 	"github.com/TsingpekTao/shopa/iam-svc/internal/middleware/response"
 	"github.com/TsingpekTao/shopa/iam-svc/internal/service"
 )
@@ -38,7 +39,7 @@ var (
 
 			s := g.Server()
 			s.Group("/", func(group *ghttp.RouterGroup) {
-				group.Middleware(response.Middleware)
+				group.Middleware(i18n.Middleware, response.Middleware)
 				group.Bind(
 					hello.NewV1(),
 					auth.NewV1(),

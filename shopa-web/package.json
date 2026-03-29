@@ -7,9 +7,15 @@
     "packages/*"
   ],
   "scripts": {
-    "dev:seller": "npm run dev --workspace seller-console",
-    "build:seller": "npm run build --workspace seller-console",
-    "lint:seller": "npm run lint --workspace seller-console"
+    "dev:mall": "node ./scripts/mall-web.cjs dev",
+    "build:mall": "node ./scripts/mall-web.cjs build",
+    "lint:mall": "node ./scripts/mall-web.cjs lint",
+    "dev:admin": "node ./scripts/admin-console.cjs dev",
+    "build:admin": "node ./scripts/admin-console.cjs build",
+    "lint:admin": "node ./scripts/admin-console.cjs lint",
+    "dev:seller-admin": "node ./scripts/seller-admin.cjs dev",
+    "build:seller-admin": "node ./scripts/seller-admin.cjs build",
+    "lint:seller-admin": "node ./scripts/seller-admin.cjs lint"
   },
   "devDependencies": {
     "@types/prop-types": "15.7.12",
