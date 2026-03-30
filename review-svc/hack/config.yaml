@@ -1,10 +1,9 @@
-
-# CLI tool, only in development environment.
+﻿# CLI tool, only in development environment.
 # https://goframe.org/docs/cli
 gfcli:
   gen:
     dao:
-      - link: "mysql:root:12345678@tcp(127.0.0.1:3306)/test"
+      - link: "mysql:root:123456@tcp(127.0.0.1:3307)/shopa_review_svc"
         descriptionTag: true
 
   docker:

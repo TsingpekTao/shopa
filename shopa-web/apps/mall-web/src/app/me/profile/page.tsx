@@ -14,8 +14,8 @@ type ProfileImage = {
 type RawProfile = {
   display_name?: string;
   displayName?: string;
-  updated_at?: string;
-  updatedAt?: string;
+  updated_at?: string | { seconds?: number | string; nanos?: number | string };
+  updatedAt?: string | { seconds?: number | string; nanos?: number | string };
   avatar?: ProfileImage;
   ext?: Record<string, string>;
 };
@@ -93,13 +93,28 @@ function maskPhone(raw?: string): string {
   return value;
 }
 
-function formatTime(raw?: string, locale?: string): string {
-  if (!raw) {
-    return "-";
+function toDate(value?: string | { seconds?: number | string; nanos?: number | string }): Date | null {
+  if (!value) {
+    return null;
   }
-  const dt = new Date(raw);
-  if (Number.isNaN(dt.getTime())) {
-    return raw;
+  if (typeof value === "string") {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const seconds = Number(value.seconds ?? 0);
+  const nanos = Number(value.nanos ?? 0);
+  if (!Number.isFinite(seconds) && !Number.isFinite(nanos)) {
+    return null;
+  }
+  const milliseconds = seconds * 1000 + Math.floor(nanos / 1_000_000);
+  const date = new Date(milliseconds);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatTime(raw?: string | { seconds?: number | string; nanos?: number | string }, locale?: string): string {
+  const dt = toDate(raw);
+  if (!dt) {
+    return "-";
   }
   return dt.toLocaleString(locale === "zh-CN" ? "zh-CN" : "en-US", {
     year: "numeric",

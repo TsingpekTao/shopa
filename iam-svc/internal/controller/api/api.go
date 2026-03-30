@@ -6,6 +6,8 @@ import (
 	v1 "github.com/TsingpekTao/shopa/iam-svc/api/v1"
 	"github.com/TsingpekTao/shopa/iam-svc/internal/service"
 	"github.com/gogf/gf/contrib/rpc/grpcx/v2"
+	"github.com/gogf/gf/v2/errors/gcode"
+	"github.com/gogf/gf/v2/errors/gerror"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -101,4 +103,20 @@ func (c *Controller) BatchGetAuthUsers(ctx context.Context, req *v1.BatchGetAuth
 // VerifyAccessToken 校验访问令牌的有效性。
 func (c *Controller) VerifyAccessToken(ctx context.Context, req *v1.VerifyAccessTokenReq) (*v1.VerifyAccessTokenRes, error) {
 	return c.auth.VerifyAccessToken(ctx, req)
+}
+
+func (*Controller) CheckKycStatus(ctx context.Context, req *v1.CheckKycStatusReq) (res *v1.CheckKycStatusRes, err error) {
+	return nil, gerror.NewCode(gcode.CodeNotImplemented)
+}
+
+func (*Controller) HasShopRole(ctx context.Context, req *v1.HasShopRoleReq) (res *v1.HasShopRoleRes, err error) {
+	return nil, gerror.NewCode(gcode.CodeNotImplemented)
+}
+
+func (*Controller) AssignShopSellerRole(ctx context.Context, req *v1.AssignShopSellerRoleReq) (res *v1.AssignShopSellerRoleRes, err error) {
+	return nil, gerror.NewCode(gcode.CodeNotImplemented)
+}
+
+func (*Controller) RevokeShopSellerRoleAndBumpToken(ctx context.Context, req *v1.RevokeShopSellerRoleAndBumpTokenReq) (res *v1.RevokeShopSellerRoleAndBumpTokenRes, err error) {
+	return nil, gerror.NewCode(gcode.CodeNotImplemented)
 }

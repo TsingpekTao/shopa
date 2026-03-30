@@ -16,12 +16,39 @@ export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
       tokenPair: undefined,
-      setTokenPair: (tokenPair) => set({ tokenPair }),
-      clear: () => set({ tokenPair: undefined })
+      setTokenPair: (tokenPair) => {
+        if (typeof window !== "undefined") {
+          localStorage.setItem("shopa_mall_access_token", tokenPair.accessToken);
+          if (tokenPair.refreshToken) {
+            localStorage.setItem("shopa_mall_refresh_token", tokenPair.refreshToken);
+          }
+        }
+        set({ tokenPair });
+      },
+      clear: () => {
+        if (typeof window !== "undefined") {
+          localStorage.removeItem("shopa_mall_access_token");
+          localStorage.removeItem("shopa_mall_refresh_token");
+        }
+        set({ tokenPair: undefined });
+      }
     }),
     {
       name: "shopa-mall-auth",
-      storage
+      storage,
+      onRehydrateStorage: () => (state) => {
+        if (typeof window === "undefined") {
+          return;
+        }
+        const accessToken = state?.tokenPair?.accessToken?.trim() ?? "";
+        const refreshToken = state?.tokenPair?.refreshToken?.trim() ?? "";
+        if (accessToken) {
+          localStorage.setItem("shopa_mall_access_token", accessToken);
+        }
+        if (refreshToken) {
+          localStorage.setItem("shopa_mall_refresh_token", refreshToken);
+        }
+      }
     }
   )
 );

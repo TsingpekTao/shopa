@@ -1,0 +1,189 @@
+syntax = "proto3";
+
+package shopa.search.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/search-svc/api/v1;searchv1";
+
+import "google/protobuf/timestamp.proto";
+
+// PublicSearchService 面向前台的搜索读取接口
+service PublicSearchService {
+  // SearchProducts 关键字 + 过滤条件分页检索商品
+  rpc SearchProducts(SearchProductsReq) returns (SearchProductsRes);
+  // SuggestKeywords 根据前缀返回联想词
+  rpc SuggestKeywords(SuggestKeywordsReq) returns (SuggestKeywordsRes);
+  // BatchGetSpuCards 按 spu_no 批量获取卡片
+  rpc BatchGetSpuCards(BatchGetSpuCardsReq) returns (BatchGetSpuCardsRes);
+}
+
+// InternalSearchService 面向内部的索引维护接口
+service InternalSearchService {
+  // UpsertSpuDoc 写入或更新商品文档
+  rpc UpsertSpuDoc(UpsertSpuDocReq) returns (UpsertSpuDocRes);
+  // DeleteSpuDoc 删除商品文档
+  rpc DeleteSpuDoc(DeleteSpuDocReq) returns (DeleteSpuDocRes);
+  // RebuildIndex 触发重建任务
+  rpc RebuildIndex(RebuildIndexReq) returns (RebuildIndexRes);
+}
+
+// SpuCard 搜索结果卡片
+message SpuCard {
+  // 商品编号
+  string spu_no = 1;
+  // 商品标题
+  string title = 2;
+  // 封面资源 ID
+  uint64 cover_asset_id = 3;
+  // 封面直链
+  string cover_url = 4;
+  // 最低售价（分）
+  uint64 min_price = 5;
+  // 最高售价（分）
+  uint64 max_price = 6;
+  // 店铺编号
+  string shop_no = 7;
+  // 店铺名称
+  string shop_name = 8;
+  // 店铺状态码
+  string shop_status_code = 9;
+  // 上架状态码
+  string on_shelf_status_code = 10;
+  // 累计销量
+  uint64 sales_count = 11;
+  // 库存总量
+  uint64 stock_total = 12;
+  // 平均评分 x100
+  uint64 avg_score_x100 = 13;
+  // 评价总数
+  uint64 review_total = 14;
+  // 更新时间
+  google.protobuf.Timestamp updated_at = 15;
+}
+
+// SearchProductsReq 搜索请求
+message SearchProductsReq {
+  // 关键词，支持空字符串
+  string query = 1;
+  // 店铺过滤
+  string shop_no = 2;
+  // 分类过滤
+  string category_no = 3;
+  // 排序编码（如 sales_desc/price_asc）
+  string sort_code = 4;
+  // 分页大小，默认 20，最大 100
+  int32 page_size = 5;
+  // 下一页游标
+  string next_cursor = 6;
+}
+
+// SearchProductsRes 搜索响应
+message SearchProductsRes {
+  // 结果列表
+  repeated SpuCard list = 1;
+  // 下一页游标
+  string next_cursor = 2;
+  // 是否还有更多
+  bool has_more = 3;
+  // 是否降级返回
+  bool partial = 4;
+  // 被降级的字段列表
+  repeated string degraded_fields = 5;
+}
+
+// SuggestKeywordsReq 关键词联想请求
+message SuggestKeywordsReq {
+  // 前缀
+  string prefix = 1;
+  // 返回条数上限，默认 10
+  int32 limit = 2;
+}
+
+// SuggestKeywordsRes 关键词联想响应
+message SuggestKeywordsRes {
+  // 关键词集合
+  repeated string keywords = 1;
+}
+
+// BatchGetSpuCardsReq 批量获取卡片请求
+message BatchGetSpuCardsReq {
+  // 要查询的 spu 编号列表
+  repeated string spu_nos = 1;
+}
+
+// BatchGetSpuCardsRes 批量获取卡片响应
+message BatchGetSpuCardsRes {
+  // 返回的卡片列表
+  repeated SpuCard list = 1;
+}
+
+// UpsertSpuDocReq 写入/更新文档
+message UpsertSpuDocReq {
+  // 商品编号（必填）
+  string spu_no = 1;
+  // 商品标题
+  string title = 2;
+  // 店铺编号
+  string shop_no = 3;
+  // 分类编号
+  string category_no = 4;
+  // 最低价（分）
+  uint64 min_price = 5;
+  // 最高价（分）
+  uint64 max_price = 6;
+  // 库存
+  uint64 stock_total = 7;
+  // 平均评分 x100
+  uint64 avg_score_x100 = 8;
+  // 评价总数
+  uint64 review_total = 9;
+  // 属性 JSON（结构由上游定义）
+  string attrs_json = 10;
+  // 更新时间
+  google.protobuf.Timestamp updated_at = 11;
+  // 店铺状态码
+  string shop_status_code = 12;
+  // 上架状态码
+  string on_shelf_status_code = 13;
+  // 店铺名称
+  string shop_name = 14;
+  // 封面资源 ID
+  uint64 cover_asset_id = 15;
+  // 封面直链
+  string cover_url = 16;
+  // 销量
+  uint64 sales_count = 17;
+}
+
+// UpsertSpuDocRes 写入/更新响应
+message UpsertSpuDocRes {
+  // 是否成功
+  bool ok = 1;
+}
+
+// DeleteSpuDocReq 删除文档请求
+message DeleteSpuDocReq {
+  // 要删除的 spu 编号
+  string spu_no = 1;
+}
+
+// DeleteSpuDocRes 删除文档响应
+message DeleteSpuDocRes {
+  // 是否成功
+  bool ok = 1;
+}
+
+// RebuildIndexReq 重建索引请求
+message RebuildIndexReq {
+  // 触发原因编码，便于审计
+  string reason_code = 1;
+  // 幂等键，避免重复触发
+  string idempotency_key = 99;
+}
+
+// RebuildIndexRes 重建索引响应
+message RebuildIndexRes {
+  // 任务编号
+  string job_no = 1;
+  // 任务状态
+  string status_code = 2;
+}

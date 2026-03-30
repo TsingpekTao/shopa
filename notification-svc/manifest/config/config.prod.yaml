@@ -1,0 +1,29 @@
+# notification-svc configuration (prod environment).
+server:
+  address: ":8016"
+  openapiPath: "/api.json"
+  swaggerPath: "/swagger"
+
+grpc:
+  address: ":9017"
+  name: "notification.svc"
+  logStdout: true
+
+app:
+  env: "prod"
+  project: "shopa"
+  service: "notification-svc"
+
+database:
+  default:
+    link: "mysql:root:123456@tcp(127.0.0.1:3306)/shopa_notification_svc?charset=utf8mb4&parseTime=true&loc=Local"
+
+redis:
+  default:
+    address: "127.0.0.1:6379"
+    db: 0
+    pass: ""
+
+logger:
+  level: "all"
+  stdout: true

@@ -3,10 +3,11 @@
 import (
 	"context"
 
-	v1 "github.com/TsingpekTao/shopa/user-profile-svc/api/v1"
+	v1 "github.com/TsingpekTao/shopa/user-profile-svc/api/user/v1"
 	pb "github.com/TsingpekTao/shopa/user-profile-svc/api/v1"
 	"github.com/TsingpekTao/shopa/user-profile-svc/internal/service"
 	"github.com/gogf/gf/v2/errors/gerror"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
 // GetMyProfile 杩斿洖褰撳墠鐢ㄦ埛鐨勭敾鍍忓強鍙€夊湴鍧€銆?
@@ -34,7 +35,7 @@ func (*ControllerV1) UpdateMyProfile(ctx context.Context, req *v1.UpdateMyProfil
 	// 杞彂鍒版湇鍔″眰浠ヤ繚鎸佷笟鍔￠€昏緫涓€鑷淬€?
 	out, err := service.UserProfile().UpdateMyProfile(ctx, &pb.UpdateMyProfileReq{
 		Profile:                req.Profile,
-		UpdateMask:             req.UpdateMask,
+		UpdateMask:             toFieldMask(req.UpdateMask),
 		ExpectedProfileVersion: req.ExpectedProfileVersion,
 	})
 	if err != nil {
@@ -94,7 +95,7 @@ func (*ControllerV1) UpdateMyAddress(ctx context.Context, req *v1.UpdateMyAddres
 	out, err := service.UserProfile().UpdateMyAddress(ctx, &pb.UpdateMyAddressReq{
 		AddressId:              req.AddressId,
 		Address:                req.Address,
-		UpdateMask:             req.UpdateMask,
+		UpdateMask:             toFieldMask(req.UpdateMask),
 		ExpectedAddressVersion: req.ExpectedAddressVersion,
 	})
 	if err != nil {
@@ -116,7 +117,7 @@ func (*ControllerV1) ReplaceMyAddress(ctx context.Context, req *v1.ReplaceMyAddr
 	out, err := service.UserProfile().ReplaceMyAddress(ctx, &pb.ReplaceMyAddressReq{
 		SourceAddressId:              req.SourceAddressId,
 		Address:                      req.Address,
-		UpdateMask:                   req.UpdateMask,
+		UpdateMask:                   toFieldMask(req.UpdateMask),
 		SetAsDefault:                 req.SetAsDefault,
 		ExpectedSourceAddressVersion: req.ExpectedSourceAddressVersion,
 		ExpectedAddressBookVersion:   req.ExpectedAddressBookVersion,
@@ -160,5 +161,12 @@ func (*ControllerV1) SetMyDefaultAddress(ctx context.Context, req *v1.SetMyDefau
 		DefaultAddressId:   out.GetDefaultAddressId(),
 		AddressBookVersion: out.GetAddressBookVersion(),
 	}, nil
+}
+
+func toFieldMask(paths []string) *fieldmaskpb.FieldMask {
+	if len(paths) == 0 {
+		return nil
+	}
+	return &fieldmaskpb.FieldMask{Paths: paths}
 }
 

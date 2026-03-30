@@ -38,3 +38,29 @@ export type BuyerProductImageItem = {
   spuNo: string;
   imageUrl: string;
 };
+
+export type BuyerProductDetailSku = {
+  skuNo: string;
+  spuNo: string;
+  shopNo: string;
+  skuName: string;
+  skuImageAssetId: string;
+  salePrice: number;
+  marketPrice: number;
+  stockStatus: number;
+  saleAttrsJson: string;
+};
+
+export type BuyerProductDetail = {
+  spuNo: string;
+  shopNo: string;
+  title: string;
+  subTitle: string;
+  minSalePrice: number;
+  maxSalePrice: number;
+  minMarketPrice: number;
+  maxMarketPrice: number;
+  mainImageAssetIds: string[];
+  detailImageAssetIds: string[];
+  skus: BuyerProductDetailSku[];
+};

@@ -1,0 +1,64 @@
+# user-profile-svc configuration (local environment).
+# Start command example:
+#   gf run main.go --gf.gcfg.file=config.local.yaml
+
+# gRPC server configuration.
+grpc:
+  address: ":8002"
+  name: "user-profile.svc"
+  logPath: ""
+  logStdout: true
+  errorStack: true
+  errorLogEnabled: true
+  errorLogPattern: "error-{Ymd}.log"
+  accessLogEnabled: true
+  accessLogPattern: "access-{Ymd}.log"
+
+# HTTP server configuration (OpenAPI/Swagger + optional REST APIs).
+server:
+  address: ":8003"
+  openapiPath: "/api.json"
+  swaggerPath: "/swagger"
+
+# Application identity, used for key prefix and tracing labels.
+app:
+  env: "local"
+  project: "shopa"
+  service: "user-profile-svc"
+
+# External dependencies.
+database:
+  default:
+    link: "mysql:root:123456@tcp(127.0.0.1:3307)/shopa_user_profile_svc?charset=utf8mb4&parseTime=true&loc=Local"
+
+redis:
+  default:
+    address: "127.0.0.1:6379"
+    db: 0
+    pass: ""
+
+mq:
+  rabbitmq:
+    enabled: false
+    url: "amqp://guest:guest@127.0.0.1:5672/"
+    exchange: "shopa.events"
+    queueRegisterInit: "user-profile.register-init.q"
+    routingKeyUserRegistered: "iam.user.registered"
+
+# Service-to-service addresses (for RPC/http client usage, can be overridden per env).
+upstream:
+  edgeGateway: "127.0.0.1:8000"
+  iam: "127.0.0.1:8001"
+  userProfile: "127.0.0.1:8003"
+
+# Object storage / media placeholders.
+storage:
+  provider: "local"
+  endpoint: ""
+  accessKey: ""
+  secretKey: ""
+  bucket: "shopa"
+
+logger:
+  level: "all"
+  stdout: true

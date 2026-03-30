@@ -1,0 +1,137 @@
+syntax = "proto3";
+
+package shopa.risk.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/risk-svc/api/v1;riskv1";
+
+import "google/protobuf/timestamp.proto";
+
+service RiskDecisionService {
+  rpc PreCreateOrderCheck(PreCreateOrderCheckReq) returns (RiskDecisionRes);
+  rpc PrePayCheck(PrePayCheckReq) returns (RiskDecisionRes);
+  rpc PreRefundCheck(PreRefundCheckReq) returns (RiskDecisionRes);
+}
+
+service InternalRiskService {
+  rpc IngestRiskEvent(IngestRiskEventReq) returns (IngestRiskEventRes);
+  rpc RebuildUserFeatures(RebuildUserFeaturesReq) returns (RebuildUserFeaturesRes);
+}
+
+service AdminRiskService {
+  rpc UpsertRule(UpsertRuleReq) returns (UpsertRuleRes);
+  rpc EnableRule(EnableRuleReq) returns (EnableRuleRes);
+  rpc ListRiskHits(ListRiskHitsReq) returns (ListRiskHitsRes);
+}
+
+enum RiskDecision {
+  RISK_DECISION_UNSPECIFIED = 0;
+  RISK_DECISION_ALLOW = 1;
+  RISK_DECISION_REVIEW = 2;
+  RISK_DECISION_REJECT = 3;
+}
+
+message RiskDecisionRes {
+  RiskDecision decision = 1;
+  uint32 risk_score = 2;
+  repeated string matched_rule_codes = 3;
+  repeated string reason_codes = 4;
+  bool degraded = 5;
+  repeated string degraded_fields = 6;
+}
+
+message PreCreateOrderCheckReq {
+  uint64 user_id = 1;
+  string order_no = 2;
+  uint64 payable_amount = 3;
+  string device_id = 4;
+  string ip = 5;
+  repeated string category_nos = 6;
+  bool contains_virtual_item = 7;
+  string idempotency_key = 99;
+}
+
+message PrePayCheckReq {
+  uint64 user_id = 1;
+  string order_no = 2;
+  string payment_no = 3;
+  uint64 payable_amount = 4;
+  string device_id = 5;
+  string ip = 6;
+  string idempotency_key = 99;
+}
+
+message PreRefundCheckReq {
+  uint64 user_id = 1;
+  string order_no = 2;
+  string after_sale_no = 3;
+  uint64 refund_amount = 4;
+  string idempotency_key = 99;
+}
+
+message IngestRiskEventReq {
+  string event_id = 1;
+  string event_type = 2;
+  uint64 user_id = 3;
+  string biz_no = 4;
+  string payload_json = 5;
+  google.protobuf.Timestamp occurred_at = 6;
+}
+
+message IngestRiskEventRes {
+  bool accepted = 1;
+}
+
+message RebuildUserFeaturesReq {
+  uint64 user_id = 1;
+  string reason_code = 2;
+}
+
+message RebuildUserFeaturesRes {
+  uint64 user_id = 1;
+  google.protobuf.Timestamp updated_at = 2;
+}
+
+message UpsertRuleReq {
+  string rule_code = 1;
+  string rule_name = 2;
+  string rule_expr_json = 3;
+  uint32 priority = 4;
+  bool enabled = 5;
+  string idempotency_key = 99;
+}
+
+message UpsertRuleRes {
+  string rule_code = 1;
+}
+
+message EnableRuleReq {
+  string rule_code = 1;
+  bool enabled = 2;
+  string idempotency_key = 99;
+}
+
+message EnableRuleRes {
+  string rule_code = 1;
+  bool enabled = 2;
+}
+
+message RiskHit {
+  string hit_no = 1;
+  uint64 user_id = 2;
+  string rule_code = 3;
+  string biz_type = 4;
+  string biz_no = 5;
+  RiskDecision decision = 6;
+  google.protobuf.Timestamp created_at = 7;
+}
+
+message ListRiskHitsReq {
+  int32 page_size = 1;
+  string next_cursor = 2;
+}
+
+message ListRiskHitsRes {
+  repeated RiskHit list = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+}

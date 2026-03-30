@@ -8,7 +8,7 @@ package user
 import (
 	"context"
 
-	v1 "github.com/TsingpekTao/shopa/user-profile-svc/api/v1"
+	v1 "github.com/TsingpekTao/shopa/user-profile-svc/api/user/v1"
 )
 
 // IUserV1 鏄綋鍓嶇敤鎴风敾鍍?鍦板潃绠＄悊鐨?HTTP API 鎺ュ彛銆?

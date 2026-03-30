@@ -1,0 +1,232 @@
+syntax = "proto3";
+
+package shopa.payment.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/payment-svc/api/v1;paymentv1";
+
+import "google/protobuf/timestamp.proto";
+
+service BuyerPaymentService {
+  rpc CreatePaymentIntent(CreatePaymentIntentReq) returns (CreatePaymentIntentRes);
+  rpc QueryPaymentIntent(QueryPaymentIntentReq) returns (QueryPaymentIntentRes);
+}
+
+service InternalPaymentService {
+  rpc HandleGatewayCallback(HandleGatewayCallbackReq) returns (HandleGatewayCallbackRes);
+  rpc ClosePaymentIntent(ClosePaymentIntentReq) returns (ClosePaymentIntentRes);
+  rpc CreateRefundTask(CreateRefundTaskReq) returns (CreateRefundTaskRes);
+  rpc ExecuteRefundTask(ExecuteRefundTaskReq) returns (ExecuteRefundTaskRes);
+  rpc RunDailyReconciliation(RunDailyReconciliationReq) returns (RunDailyReconciliationRes);
+  rpc ListReconciliationDiffs(ListReconciliationDiffsReq) returns (ListReconciliationDiffsRes);
+  rpc ResolveReconciliationDiff(ResolveReconciliationDiffReq) returns (ResolveReconciliationDiffRes);
+  rpc GetPaymentSnapshot(GetPaymentSnapshotReq) returns (GetPaymentSnapshotRes);
+}
+
+enum PayChannel {
+  PAY_CHANNEL_UNSPECIFIED = 0;
+  PAY_CHANNEL_MOCK = 1;
+  PAY_CHANNEL_ALIPAY = 2;
+  PAY_CHANNEL_WECHAT = 3;
+}
+
+enum PaymentIntentStatus {
+  PAYMENT_INTENT_STATUS_UNSPECIFIED = 0;
+  PAYMENT_INTENT_STATUS_CREATED = 1;
+  PAYMENT_INTENT_STATUS_PAYING = 2;
+  PAYMENT_INTENT_STATUS_PAID = 3;
+  PAYMENT_INTENT_STATUS_CLOSED = 4;
+  PAYMENT_INTENT_STATUS_REFUNDING = 5;
+  PAYMENT_INTENT_STATUS_REFUNDED = 6;
+  PAYMENT_INTENT_STATUS_FAILED = 7;
+}
+
+enum GatewayCloseStatus {
+  GATEWAY_CLOSE_STATUS_UNSPECIFIED = 0;
+  GATEWAY_CLOSE_STATUS_CLOSED = 1;
+  GATEWAY_CLOSE_STATUS_ALREADY_CLOSED = 2;
+  GATEWAY_CLOSE_STATUS_ALREADY_PAID = 3;
+  GATEWAY_CLOSE_STATUS_FAILED_RETRYABLE = 4;
+  GATEWAY_CLOSE_STATUS_FAILED_FINAL = 5;
+}
+
+enum RefundTaskStatus {
+  REFUND_TASK_STATUS_UNSPECIFIED = 0;
+  REFUND_TASK_STATUS_PENDING = 1;
+  REFUND_TASK_STATUS_PROCESSING = 2;
+  REFUND_TASK_STATUS_SUCCEEDED = 3;
+  REFUND_TASK_STATUS_FAILED = 4;
+  REFUND_TASK_STATUS_DEAD_LETTER = 5;
+}
+
+enum ReconciliationDiffType {
+  RECON_DIFF_TYPE_UNSPECIFIED = 0;
+  RECON_DIFF_TYPE_GATEWAY_PAID_LOCAL_UNPAID = 1;
+  RECON_DIFF_TYPE_LOCAL_PAID_GATEWAY_MISSING = 2;
+  RECON_DIFF_TYPE_MISSING_CALLBACK = 3;
+  RECON_DIFF_TYPE_OVER_REFUND_RISK = 4;
+}
+
+message PaymentIntent {
+  string payment_no = 1;
+  string order_no = 2;
+  uint64 user_id = 3;
+  PayChannel pay_channel = 4;
+  PaymentIntentStatus status = 5;
+  uint64 payable_amount = 6;
+  uint64 refunded_amount = 7;
+  string currency_code = 8;
+  google.protobuf.Timestamp order_expire_at = 9;
+  google.protobuf.Timestamp gateway_expire_at = 10;
+  string external_trade_no = 11;
+  google.protobuf.Timestamp paid_at = 12;
+  google.protobuf.Timestamp closed_at = 13;
+  google.protobuf.Timestamp created_at = 14;
+  google.protobuf.Timestamp updated_at = 15;
+  uint64 version = 16;
+}
+
+message CreatePaymentIntentReq {
+  string order_no = 1;
+  uint64 user_id = 2;
+  PayChannel pay_channel = 3;
+  uint64 payable_amount = 4;
+  string currency_code = 5;
+  google.protobuf.Timestamp order_expire_at = 6;
+  string subject = 7;
+  string return_url = 8;
+  string notify_url = 9;
+  string idempotency_key = 99;
+}
+
+message CreatePaymentIntentRes {
+  PaymentIntent intent = 1;
+  string pay_url = 2;
+  string pay_payload_json = 3;
+  bool idempotent_replay = 4;
+}
+
+message QueryPaymentIntentReq {
+  string payment_no = 1;
+  string order_no = 2;
+}
+
+message QueryPaymentIntentRes {
+  PaymentIntent intent = 1;
+}
+
+message HandleGatewayCallbackReq {
+  string callback_event_id = 1;
+  string external_trade_no = 2;
+  string payment_no = 3;
+  string order_no = 4;
+  PayChannel pay_channel = 5;
+  string gateway_status_code = 6;
+  uint64 paid_amount = 7;
+  google.protobuf.Timestamp paid_at = 8;
+  string raw_payload = 9;
+  string signature = 10;
+  string idempotency_key = 99;
+}
+
+message HandleGatewayCallbackRes {
+  PaymentIntent intent = 1;
+  bool callback_idempotent_hit = 2;
+}
+
+message ClosePaymentIntentReq {
+  string payment_no = 1;
+  string order_no = 2;
+  string trigger_source = 3;
+  string reason_code = 4;
+  string idempotency_key = 99;
+}
+
+message ClosePaymentIntentRes {
+  PaymentIntent intent = 1;
+  GatewayCloseStatus close_status = 2;
+  bool callback_replay_required = 3;
+}
+
+message CreateRefundTaskReq {
+  string after_sale_no = 1;
+  string order_no = 2;
+  string payment_no = 3;
+  uint64 refund_amount = 4;
+  string reason_code = 5;
+  string idempotency_key = 99;
+}
+
+message CreateRefundTaskRes {
+  string refund_task_no = 1;
+  RefundTaskStatus status = 2;
+}
+
+message ExecuteRefundTaskReq {
+  string refund_task_no = 1;
+  string idempotency_key = 99;
+}
+
+message ExecuteRefundTaskRes {
+  string refund_task_no = 1;
+  RefundTaskStatus status = 2;
+  uint64 latest_refunded_amount = 3;
+}
+
+message RunDailyReconciliationReq {
+  string recon_date = 1;
+  PayChannel pay_channel = 2;
+  string idempotency_key = 99;
+}
+
+message RunDailyReconciliationRes {
+  string recon_task_no = 1;
+  uint64 total_records = 2;
+  uint64 diff_records = 3;
+}
+
+message ReconciliationDiff {
+  string diff_no = 1;
+  string recon_task_no = 2;
+  ReconciliationDiffType diff_type = 3;
+  string payment_no = 4;
+  string order_no = 5;
+  uint64 local_amount = 6;
+  uint64 gateway_amount = 7;
+  string status = 8;
+  string detail_json = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp resolved_at = 11;
+}
+
+message ListReconciliationDiffsReq {
+  string recon_task_no = 1;
+  int32 page_size = 2;
+  string next_cursor = 3;
+}
+
+message ListReconciliationDiffsRes {
+  repeated ReconciliationDiff list = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+}
+
+message ResolveReconciliationDiffReq {
+  string diff_no = 1;
+  string resolve_code = 2;
+  string remark = 3;
+  string idempotency_key = 99;
+}
+
+message ResolveReconciliationDiffRes {
+  string diff_no = 1;
+  string status = 2;
+}
+
+message GetPaymentSnapshotReq {
+  string payment_no = 1;
+  string order_no = 2;
+}
+
+message GetPaymentSnapshotRes {
+  PaymentIntent intent = 1;
+}

@@ -4,14 +4,20 @@ use (
 	./aftersale-svc
 	./cart-svc
 	./catalog-svc
+	./chat-svc
 	./edge-gateway
 	./fulfillment-svc
 	./iam-svc
 	./inventory-svc
 	./media-svc
+	./notification-svc
 	./order-svc
+	./payment-svc
 	./points-svc
+	./promotion-svc
 	./review-svc
+	./risk-svc
+	./search-svc
 	./seller-shop-svc
 	./user-profile-svc
 )

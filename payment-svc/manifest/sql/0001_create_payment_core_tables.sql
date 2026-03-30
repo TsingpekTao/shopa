@@ -1,0 +1,118 @@
+CREATE DATABASE IF NOT EXISTS shopa_payment_svc CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE shopa_payment_svc;
+
+CREATE TABLE IF NOT EXISTS payment_intent (
+  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  payment_no VARCHAR(64) NOT NULL,
+  order_no VARCHAR(64) NOT NULL,
+  user_id BIGINT UNSIGNED NOT NULL,
+  pay_channel TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  status TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  payable_amount BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  refunded_amount BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  currency_code VARCHAR(16) NOT NULL DEFAULT 'CNY',
+  order_expire_at DATETIME NULL,
+  gateway_expire_at DATETIME NULL,
+  external_trade_no VARCHAR(128) NOT NULL DEFAULT '',
+  paid_at DATETIME NULL,
+  closed_at DATETIME NULL,
+  version BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  deleted_at BIGINT NOT NULL DEFAULT 0,
+  UNIQUE KEY uk_payment_no(payment_no),
+  KEY idx_order_no(order_no),
+  KEY idx_user_id(user_id),
+  KEY idx_status(status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS payment_callback_log (
+  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  callback_event_id VARCHAR(128) NOT NULL,
+  payment_no VARCHAR(64) NOT NULL,
+  order_no VARCHAR(64) NOT NULL,
+  gateway_status_code VARCHAR(64) NOT NULL DEFAULT '',
+  raw_payload MEDIUMTEXT,
+  processed TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_callback_event(callback_event_id),
+  KEY idx_payment_no(payment_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS payment_idempotency (
+  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  idempotency_key VARCHAR(128) NOT NULL,
+  action_code VARCHAR(64) NOT NULL,
+  biz_no VARCHAR(64) NOT NULL DEFAULT '',
+  status TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  response_json MEDIUMTEXT,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_idempotency_action(idempotency_key, action_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS refund_task (
+  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  refund_task_no VARCHAR(64) NOT NULL,
+  after_sale_no VARCHAR(64) NOT NULL,
+  order_no VARCHAR(64) NOT NULL,
+  payment_no VARCHAR(64) NOT NULL,
+  refund_amount BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  status TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  retry_count INT UNSIGNED NOT NULL DEFAULT 0,
+  next_retry_at DATETIME NULL,
+  last_error_code VARCHAR(64) NOT NULL DEFAULT '',
+  last_error_message VARCHAR(255) NOT NULL DEFAULT '',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_refund_task_no(refund_task_no),
+  UNIQUE KEY uk_after_sale_no(after_sale_no),
+  KEY idx_payment_no(payment_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS payment_reconciliation_task (
+  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  recon_task_no VARCHAR(64) NOT NULL,
+  recon_date DATE NOT NULL,
+  pay_channel TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  status TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  total_records BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  diff_records BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_recon_task_no(recon_task_no),
+  KEY idx_recon_date(recon_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS payment_reconciliation_record (
+  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  diff_no VARCHAR(64) NOT NULL,
+  recon_task_no VARCHAR(64) NOT NULL,
+  diff_type TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  payment_no VARCHAR(64) NOT NULL,
+  order_no VARCHAR(64) NOT NULL,
+  local_amount BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  gateway_amount BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  status VARCHAR(32) NOT NULL DEFAULT 'OPEN',
+  detail_json MEDIUMTEXT,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  resolved_at DATETIME NULL,
+  UNIQUE KEY uk_diff_no(diff_no),
+  KEY idx_recon_task_no(recon_task_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS payment_outbox_event (
+  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  event_id VARCHAR(64) NOT NULL,
+  aggregate_type VARCHAR(64) NOT NULL,
+  aggregate_id VARCHAR(64) NOT NULL,
+  event_type VARCHAR(128) NOT NULL,
+  payload_json MEDIUMTEXT,
+  status TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  retry_count INT UNSIGNED NOT NULL DEFAULT 0,
+  next_retry_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_event_id(event_id),
+  KEY idx_status_next_retry(status, next_retry_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

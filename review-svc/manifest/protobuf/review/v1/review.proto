@@ -1,0 +1,164 @@
+﻿syntax = "proto3";
+
+package shopa.review.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/review-svc/api/v1;reviewv1";
+
+import "google/protobuf/timestamp.proto";
+
+service BuyerReviewService {
+  rpc CreateReview(CreateReviewReq) returns (CreateReviewRes);
+  rpc AppendReview(AppendReviewReq) returns (AppendReviewRes);
+  rpc ListMyReviews(ListMyReviewsReq) returns (ListMyReviewsRes);
+}
+
+service SellerReviewService {
+  rpc ReplyReview(ReplyReviewReq) returns (ReplyReviewRes);
+}
+
+service PublicReviewService {
+  rpc ListSpuReviews(ListSpuReviewsReq) returns (ListSpuReviewsRes);
+  rpc GetSpuRatingSummary(GetSpuRatingSummaryReq) returns (GetSpuRatingSummaryRes);
+}
+
+service InternalReviewService {
+  rpc ModerateReview(ModerateReviewReq) returns (ModerateReviewRes);
+  rpc RebuildSpuRatingSummary(RebuildSpuRatingSummaryReq) returns (RebuildSpuRatingSummaryRes);
+}
+
+enum ReviewStatus {
+  REVIEW_STATUS_UNSPECIFIED = 0;
+  REVIEW_STATUS_PUBLISHED = 1;
+  REVIEW_STATUS_HIDDEN = 2;
+  REVIEW_STATUS_BLOCKED = 3;
+}
+
+enum ReviewSortCode {
+  REVIEW_SORT_CODE_UNSPECIFIED = 0;
+  REVIEW_SORT_CODE_LATEST = 1;
+  REVIEW_SORT_CODE_SCORE_DESC = 2;
+  REVIEW_SORT_CODE_SCORE_ASC = 3;
+  REVIEW_SORT_CODE_WITH_MEDIA_FIRST = 4;
+}
+
+message ReviewMedia {
+  uint64 asset_id = 1;
+  string media_type = 2;
+  string cover_url = 3;
+}
+
+message Review {
+  string review_no = 1;
+  string order_no = 2;
+  string sub_order_no = 3;
+  string item_no = 4;
+  uint64 user_id = 5;
+  string shop_no = 6;
+  string spu_no = 7;
+  string sku_no = 8;
+  uint32 score = 9;
+  string content = 10;
+  repeated ReviewMedia medias = 11;
+  bool anonymous = 12;
+  string append_content = 13;
+  repeated ReviewMedia append_medias = 14;
+  google.protobuf.Timestamp append_at = 15;
+  string seller_reply = 16;
+  google.protobuf.Timestamp seller_reply_at = 17;
+  ReviewStatus review_status = 18;
+  uint64 like_count = 19;
+  uint64 version = 20;
+  google.protobuf.Timestamp created_at = 21;
+  google.protobuf.Timestamp updated_at = 22;
+}
+
+message SpuRatingSummary {
+  string spu_no = 1;
+  uint64 total_reviews = 2;
+  uint64 score_1_count = 3;
+  uint64 score_2_count = 4;
+  uint64 score_3_count = 5;
+  uint64 score_4_count = 6;
+  uint64 score_5_count = 7;
+  uint64 avg_score_x100 = 8;
+  uint64 positive_rate_x100 = 9;
+  google.protobuf.Timestamp updated_at = 10;
+}
+
+message CreateReviewReq {
+  string order_no = 1;
+  string sub_order_no = 2;
+  string item_no = 3;
+  string shop_no = 4;
+  string spu_no = 5;
+  string sku_no = 6;
+  uint32 score = 7;
+  string content = 8;
+  repeated ReviewMedia medias = 9;
+  bool anonymous = 10;
+  string idempotency_key = 99;
+}
+
+message CreateReviewRes { Review review = 1; }
+
+message AppendReviewReq {
+  string review_no = 1;
+  string append_content = 2;
+  repeated ReviewMedia append_medias = 3;
+  uint64 expected_version = 4;
+  string idempotency_key = 99;
+}
+
+message AppendReviewRes { Review review = 1; }
+
+message ListMyReviewsReq {
+  int32 page_size = 1;
+  string next_cursor = 2;
+  repeated ReviewStatus statuses = 3;
+}
+
+message ListMyReviewsRes {
+  repeated Review list = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+}
+
+message ReplyReviewReq {
+  string review_no = 1;
+  string seller_reply = 2;
+  uint64 expected_version = 3;
+  string idempotency_key = 99;
+}
+
+message ReplyReviewRes { Review review = 1; }
+
+message ListSpuReviewsReq {
+  string spu_no = 1;
+  int32 page_size = 2;
+  string next_cursor = 3;
+  ReviewSortCode sort_code = 4;
+  bool with_media_only = 5;
+}
+
+message ListSpuReviewsRes {
+  repeated Review list = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+}
+
+message GetSpuRatingSummaryReq { string spu_no = 1; }
+message GetSpuRatingSummaryRes { SpuRatingSummary summary = 1; }
+
+message ModerateReviewReq {
+  string review_no = 1;
+  ReviewStatus target_status = 2;
+  string reason_code = 3;
+  string remark = 4;
+  uint64 expected_version = 5;
+  string idempotency_key = 99;
+}
+
+message ModerateReviewRes { Review review = 1; }
+
+message RebuildSpuRatingSummaryReq { string spu_no = 1; }
+message RebuildSpuRatingSummaryRes { SpuRatingSummary summary = 1; }

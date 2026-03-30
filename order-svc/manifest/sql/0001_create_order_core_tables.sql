@@ -1,0 +1,182 @@
+﻿CREATE TABLE IF NOT EXISTS `order_main` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `order_no` VARCHAR(64) NOT NULL,
+  `user_id` BIGINT UNSIGNED NOT NULL,
+  `order_status` TINYINT UNSIGNED NOT NULL,
+  `payment_status` TINYINT UNSIGNED NOT NULL,
+  `reservation_no` VARCHAR(64) NOT NULL DEFAULT '',
+  `goods_amount` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `freight_amount` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `discount_amount` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `payable_amount` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `paid_amount` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `buyer_remark` VARCHAR(512) NOT NULL DEFAULT '',
+  `cancel_reason_code` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  `pay_deadline_at` DATETIME(3) NULL,
+  `paid_at` DATETIME(3) NULL,
+  `closed_at` DATETIME(3) NULL,
+  `version` BIGINT UNSIGNED NOT NULL DEFAULT 1,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  `deleted_at` DATETIME(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_order_no` (`order_no`),
+  KEY `idx_user_created` (`user_id`,`created_at`),
+  KEY `idx_status_created` (`order_status`,`created_at`),
+  KEY `idx_reservation_no` (`reservation_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `order_sub` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `sub_order_no` VARCHAR(64) NOT NULL,
+  `order_no` VARCHAR(64) NOT NULL,
+  `shop_no` VARCHAR(64) NOT NULL,
+  `sub_status` TINYINT UNSIGNED NOT NULL,
+  `goods_amount` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `freight_amount` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `discount_amount` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `payable_amount` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `paid_amount` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `seller_remark` VARCHAR(512) NOT NULL DEFAULT '',
+  `buyer_remark` VARCHAR(512) NOT NULL DEFAULT '',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  `deleted_at` DATETIME(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_sub_order_no` (`sub_order_no`),
+  KEY `idx_order_no` (`order_no`),
+  KEY `idx_shop_status_created` (`shop_no`,`sub_status`,`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `order_item` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `item_no` VARCHAR(64) NOT NULL,
+  `order_no` VARCHAR(64) NOT NULL,
+  `sub_order_no` VARCHAR(64) NOT NULL,
+  `shop_no` VARCHAR(64) NOT NULL,
+  `spu_no` VARCHAR(64) NOT NULL,
+  `sku_no` VARCHAR(64) NOT NULL,
+  `spu_title` VARCHAR(255) NOT NULL DEFAULT '',
+  `sku_name` VARCHAR(255) NOT NULL DEFAULT '',
+  `sku_image_asset_id` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `qty` INT UNSIGNED NOT NULL,
+  `sale_price` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `market_price` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `sale_attrs_json` JSON NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_item_no` (`item_no`),
+  KEY `idx_order_no` (`order_no`),
+  KEY `idx_sub_order_no` (`sub_order_no`),
+  KEY `idx_sku_no` (`sku_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `order_address_snapshot` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `order_no` VARCHAR(64) NOT NULL,
+  `source_address_id` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `source_address_version` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `receiver_name` VARCHAR(128) NOT NULL DEFAULT '',
+  `receiver_phone` VARCHAR(32) NOT NULL DEFAULT '',
+  `country_code` VARCHAR(16) NOT NULL DEFAULT '',
+  `province_code` VARCHAR(32) NOT NULL DEFAULT '',
+  `province_name` VARCHAR(64) NOT NULL DEFAULT '',
+  `city_code` VARCHAR(32) NOT NULL DEFAULT '',
+  `city_name` VARCHAR(64) NOT NULL DEFAULT '',
+  `district_code` VARCHAR(32) NOT NULL DEFAULT '',
+  `district_name` VARCHAR(64) NOT NULL DEFAULT '',
+  `street` VARCHAR(128) NOT NULL DEFAULT '',
+  `detail` VARCHAR(512) NOT NULL DEFAULT '',
+  `postal_code` VARCHAR(32) NOT NULL DEFAULT '',
+  `latitude` DOUBLE NOT NULL DEFAULT 0,
+  `longitude` DOUBLE NOT NULL DEFAULT 0,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_order_no` (`order_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `order_payment` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `order_no` VARCHAR(64) NOT NULL,
+  `pay_no` VARCHAR(64) NOT NULL DEFAULT '',
+  `payment_event_id` VARCHAR(128) NOT NULL DEFAULT '',
+  `pay_channel` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  `pay_status_code` VARCHAR(32) NOT NULL DEFAULT '',
+  `channel_trade_no` VARCHAR(128) NOT NULL DEFAULT '',
+  `paid_amount` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `paid_at` DATETIME(3) NULL,
+  `raw_payload` JSON NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_pay_no` (`pay_no`),
+  UNIQUE KEY `uk_payment_event_id` (`payment_event_id`),
+  KEY `idx_order_no` (`order_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `order_inventory_link` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `order_no` VARCHAR(64) NOT NULL,
+  `reservation_no` VARCHAR(64) NOT NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_order_no` (`order_no`),
+  UNIQUE KEY `uk_reservation_no` (`reservation_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `order_operate_log` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `order_no` VARCHAR(64) NOT NULL,
+  `sub_order_no` VARCHAR(64) NOT NULL DEFAULT '',
+  `operator_user_id` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `operator_type_code` VARCHAR(32) NOT NULL DEFAULT '',
+  `action_code` VARCHAR(64) NOT NULL DEFAULT '',
+  `before_status` VARCHAR(32) NOT NULL DEFAULT '',
+  `after_status` VARCHAR(32) NOT NULL DEFAULT '',
+  `detail_json` JSON NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_order_no_created` (`order_no`,`created_at`),
+  KEY `idx_sub_order_no_created` (`sub_order_no`,`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `order_outbox_event` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `event_id` VARCHAR(128) NOT NULL,
+  `aggregate_type` VARCHAR(64) NOT NULL,
+  `aggregate_no` VARCHAR(64) NOT NULL,
+  `event_type` VARCHAR(64) NOT NULL,
+  `payload_json` JSON NOT NULL,
+  `status` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  `available_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `sent_at` DATETIME(3) NULL,
+  `retry_count` INT UNSIGNED NOT NULL DEFAULT 0,
+  `last_error` VARCHAR(255) NOT NULL DEFAULT '',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_event_id` (`event_id`),
+  KEY `idx_status_available` (`status`,`available_at`),
+  KEY `idx_aggregate` (`aggregate_type`,`aggregate_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `order_idempotency` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id` BIGINT UNSIGNED NOT NULL,
+  `idempotency_key` VARCHAR(128) NOT NULL,
+  `action_code` VARCHAR(64) NOT NULL,
+  `order_no` VARCHAR(64) NOT NULL DEFAULT '',
+  `status` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  `response_json` JSON NULL,
+  `error_code` VARCHAR(64) NOT NULL DEFAULT '',
+  `expire_at` DATETIME(3) NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_user_key_action` (`user_id`,`idempotency_key`,`action_code`),
+  KEY `idx_expire_at` (`expire_at`),
+  KEY `idx_order_no` (`order_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -1,0 +1,126 @@
+syntax = "proto3";
+
+package shopa.promotion.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/promotion-svc/api/v1;promotionv1";
+
+import "google/protobuf/timestamp.proto";
+
+service BuyerPromotionService {
+  rpc ListAvailableCoupons(ListAvailableCouponsReq) returns (ListAvailableCouponsRes);
+  rpc CalculateOrderDiscount(CalculateOrderDiscountReq) returns (CalculateOrderDiscountRes);
+}
+
+service InternalPromotionService {
+  rpc LockCouponForOrder(LockCouponForOrderReq) returns (LockCouponForOrderRes);
+  rpc ConfirmCouponUsage(ConfirmCouponUsageReq) returns (ConfirmCouponUsageRes);
+  rpc ReleaseCouponLock(ReleaseCouponLockReq) returns (ReleaseCouponLockRes);
+}
+
+service AdminPromotionService {
+  rpc CreateCampaign(CreateCampaignReq) returns (CreateCampaignRes);
+}
+
+enum CouponLockStatus {
+  COUPON_LOCK_STATUS_UNSPECIFIED = 0;
+  COUPON_LOCK_STATUS_LOCKED = 1;
+  COUPON_LOCK_STATUS_CONFIRMED = 2;
+  COUPON_LOCK_STATUS_RELEASED = 3;
+  COUPON_LOCK_STATUS_EXPIRED = 4;
+}
+
+message Coupon {
+  string coupon_no = 1;
+  string template_no = 2;
+  uint64 user_id = 3;
+  string status_code = 4;
+  uint64 threshold_amount = 5;
+  uint64 discount_amount = 6;
+  google.protobuf.Timestamp expire_at = 7;
+}
+
+message ListAvailableCouponsReq {
+  uint64 user_id = 1;
+  uint64 order_amount = 2;
+}
+
+message ListAvailableCouponsRes {
+  repeated Coupon list = 1;
+}
+
+message DiscountItem {
+  string spu_no = 1;
+  string category_no = 2;
+  string shop_no = 3;
+  uint64 line_total_amount = 4;
+}
+
+message DiscountLine {
+  string rule_code = 1;
+  uint64 discount_amount = 2;
+}
+
+message CalculateOrderDiscountReq {
+  uint64 user_id = 1;
+  string checkout_token = 2;
+  uint64 goods_amount = 3;
+  repeated string coupon_nos = 4;
+  repeated DiscountItem items = 5;
+  string idempotency_key = 99;
+}
+
+message CalculateOrderDiscountRes {
+  uint64 goods_amount = 1;
+  uint64 total_discount_amount = 2;
+  uint64 payable_amount = 3;
+  repeated DiscountLine discount_lines = 4;
+}
+
+message LockCouponForOrderReq {
+  uint64 user_id = 1;
+  string order_no = 2;
+  repeated string coupon_nos = 3;
+  google.protobuf.Timestamp lock_expire_at = 4;
+  string idempotency_key = 99;
+}
+
+message LockCouponForOrderRes {
+  string lock_no = 1;
+  CouponLockStatus status = 2;
+}
+
+message ConfirmCouponUsageReq {
+  string lock_no = 1;
+  string order_no = 2;
+  string idempotency_key = 99;
+}
+
+message ConfirmCouponUsageRes {
+  string lock_no = 1;
+  CouponLockStatus status = 2;
+}
+
+message ReleaseCouponLockReq {
+  string lock_no = 1;
+  string order_no = 2;
+  string reason_code = 3;
+  string idempotency_key = 99;
+}
+
+message ReleaseCouponLockRes {
+  string lock_no = 1;
+  CouponLockStatus status = 2;
+}
+
+message CreateCampaignReq {
+  string campaign_no = 1;
+  string name = 2;
+  string rule_json = 3;
+  google.protobuf.Timestamp start_at = 4;
+  google.protobuf.Timestamp end_at = 5;
+  string idempotency_key = 99;
+}
+
+message CreateCampaignRes {
+  string campaign_no = 1;
+}

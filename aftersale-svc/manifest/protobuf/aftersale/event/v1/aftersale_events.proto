@@ -1,0 +1,42 @@
+﻿syntax = "proto3";
+
+package shopa.aftersale.event.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/aftersale-svc/api/event/v1;aftersaleeventv1";
+
+import "google/protobuf/timestamp.proto";
+
+message RefundRequestedEvent {
+  string event_id = 1;
+  string refund_task_no = 2;
+  string after_sale_no = 3;
+  string order_no = 4;
+  string sub_order_no = 5;
+  string pay_no = 6;
+  uint64 refund_amount = 7;
+  string reason_code = 8;
+  google.protobuf.Timestamp occurred_at = 9;
+}
+
+message RefundSucceededEvent {
+  string event_id = 1;
+  string refund_task_no = 2;
+  string after_sale_no = 3;
+  string order_no = 4;
+  string sub_order_no = 5;
+  string pay_refund_no = 6;
+  uint64 refund_amount = 7;
+  google.protobuf.Timestamp refunded_at = 8;
+}
+
+message RefundFailedEvent {
+  string event_id = 1;
+  string refund_task_no = 2;
+  string after_sale_no = 3;
+  string order_no = 4;
+  string sub_order_no = 5;
+  string error_code = 6;
+  string error_message = 7;
+  uint32 retry_count = 8;
+  google.protobuf.Timestamp next_retry_at = 9;
+}

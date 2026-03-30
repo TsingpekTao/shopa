@@ -1,0 +1,225 @@
+﻿syntax = "proto3";
+
+package shopa.chat.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/chat-svc/api/v1;chatv1";
+
+import "google/protobuf/timestamp.proto";
+
+// metadata:
+// - x-user-id: required for buyer/seller write RPCs
+// - x-idempotency-key: required for write RPCs
+// - x-service-name: required for internal RPCs
+
+service BuyerChatService {
+  rpc CreateOrGetConversation(CreateOrGetConversationReq) returns (CreateOrGetConversationRes);
+  rpc SendMessage(SendMessageReq) returns (SendMessageRes);
+  rpc ListMyConversations(ListMyConversationsReq) returns (ListMyConversationsRes);
+  rpc ListMessages(ListMessagesReq) returns (ListMessagesRes);
+  rpc MarkConversationRead(MarkConversationReadReq) returns (MarkConversationReadRes);
+  rpc GetUnreadSummary(GetUnreadSummaryReq) returns (GetUnreadSummaryRes);
+}
+
+service SellerChatService {
+  rpc ListShopConversations(ListShopConversationsReq) returns (ListShopConversationsRes);
+  rpc SendMessageAsSeller(SendMessageAsSellerReq) returns (SendMessageAsSellerRes);
+  rpc MarkConversationReadAsSeller(MarkConversationReadAsSellerReq) returns (MarkConversationReadAsSellerRes);
+}
+
+service InternalChatService {
+  rpc PublishSystemNotice(PublishSystemNoticeReq) returns (PublishSystemNoticeRes);
+  rpc GetConversationSnapshot(GetConversationSnapshotReq) returns (GetConversationSnapshotRes);
+}
+
+enum ConversationStatus {
+  CONVERSATION_STATUS_UNSPECIFIED = 0;
+  CONVERSATION_STATUS_ACTIVE = 1;
+  CONVERSATION_STATUS_CLOSED = 2;
+  CONVERSATION_STATUS_BLOCKED = 3;
+}
+
+enum SenderType {
+  SENDER_TYPE_UNSPECIFIED = 0;
+  SENDER_TYPE_BUYER = 1;
+  SENDER_TYPE_SELLER = 2;
+  SENDER_TYPE_SYSTEM = 3;
+}
+
+enum MessageType {
+  MESSAGE_TYPE_UNSPECIFIED = 0;
+  MESSAGE_TYPE_TEXT = 1;
+  MESSAGE_TYPE_IMAGE = 2;
+  MESSAGE_TYPE_PRODUCT_CARD = 3;
+  MESSAGE_TYPE_SYSTEM_NOTICE = 4;
+}
+
+message Conversation {
+  string conversation_no = 1;
+  uint64 buyer_id = 2;
+  string shop_no = 3;
+
+  // PRE_SALE / AFTER_SALE
+  string scene_code = 4;
+  string order_no = 5;
+  string sub_order_no = 6;
+
+  string anchor_spu_no = 7;
+  string anchor_sku_no = 8;
+
+  string last_message_preview = 9;
+  google.protobuf.Timestamp last_message_at = 10;
+  ConversationStatus conversation_status = 11;
+
+  // 会话级未读数，用于消息列表红点展示
+  uint32 unread_count = 12;
+
+  google.protobuf.Timestamp created_at = 13;
+  google.protobuf.Timestamp updated_at = 14;
+}
+
+message ChatMessage {
+  string message_no = 1;
+  string conversation_no = 2;
+  SenderType sender_type = 3;
+  uint64 sender_user_id = 4;
+  MessageType message_type = 5;
+
+  // 前端发送幂等辅助号（客户端本地生成）
+  string client_message_no = 6;
+
+  string content_text = 7;
+  uint64 media_asset_id = 8;
+  string ext_json = 9;
+
+  google.protobuf.Timestamp sent_at = 10;
+}
+
+message CreateOrGetConversationReq {
+  string shop_no = 1;
+  string scene_code = 2;
+  string order_no = 3;
+  string sub_order_no = 4;
+  string anchor_spu_no = 5;
+  string anchor_sku_no = 6;
+  string idempotency_key = 99;
+}
+
+message CreateOrGetConversationRes {
+  Conversation conversation = 1;
+}
+
+message SendMessageReq {
+  string conversation_no = 1;
+  string client_message_no = 2;
+  MessageType message_type = 3;
+  string content_text = 4;
+  uint64 media_asset_id = 5;
+  string ext_json = 6;
+  string idempotency_key = 99;
+}
+
+message SendMessageRes {
+  Conversation conversation = 1;
+  ChatMessage message = 2;
+  bool idempotent_replay = 3;
+}
+
+message ListMyConversationsReq {
+  int32 page_size = 1;
+  string next_cursor = 2;
+}
+
+message ListMyConversationsRes {
+  repeated Conversation list = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+}
+
+message ListMessagesReq {
+  string conversation_no = 1;
+  int32 page_size = 2;
+  string next_cursor = 3;
+}
+
+message ListMessagesRes {
+  repeated ChatMessage list = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+}
+
+message MarkConversationReadReq {
+  string conversation_no = 1;
+  string read_to_message_no = 2;
+  string idempotency_key = 99;
+}
+
+message MarkConversationReadRes {
+  string conversation_no = 1;
+  string read_to_message_no = 2;
+}
+
+message GetUnreadSummaryReq {}
+
+message GetUnreadSummaryRes {
+  uint64 total_unread_conversations = 1;
+  uint64 total_unread_messages = 2;
+}
+
+message ListShopConversationsReq {
+  string shop_no = 1;
+  int32 page_size = 2;
+  string next_cursor = 3;
+}
+
+message ListShopConversationsRes {
+  repeated Conversation list = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+}
+
+message SendMessageAsSellerReq {
+  string conversation_no = 1;
+  string client_message_no = 2;
+  MessageType message_type = 3;
+  string content_text = 4;
+  uint64 media_asset_id = 5;
+  string ext_json = 6;
+  string idempotency_key = 99;
+}
+
+message SendMessageAsSellerRes {
+  Conversation conversation = 1;
+  ChatMessage message = 2;
+  bool idempotent_replay = 3;
+}
+
+message MarkConversationReadAsSellerReq {
+  string conversation_no = 1;
+  string read_to_message_no = 2;
+  string idempotency_key = 99;
+}
+
+message MarkConversationReadAsSellerRes {
+  string conversation_no = 1;
+  string read_to_message_no = 2;
+}
+
+message PublishSystemNoticeReq {
+  string conversation_no = 1;
+  string content_text = 2;
+  string ext_json = 3;
+  string idempotency_key = 99;
+}
+
+message PublishSystemNoticeRes {
+  ChatMessage message = 1;
+}
+
+message GetConversationSnapshotReq {
+  string conversation_no = 1;
+}
+
+message GetConversationSnapshotRes {
+  Conversation conversation = 1;
+  ChatMessage last_message = 2;
+}

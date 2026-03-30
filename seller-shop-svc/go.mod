@@ -5,6 +5,8 @@ go 1.24.0
 toolchain go1.24.3
 
 require (
+	github.com/gogf/gf/contrib/drivers/mysql/v2 v2.10.0
+	github.com/gogf/gf/contrib/nosql/redis/v2 v2.10.0
 	github.com/gogf/gf/contrib/rpc/grpcx/v2 v2.10.0
 	github.com/gogf/gf/v2 v2.10.0
 	google.golang.org/grpc v1.79.3
@@ -23,8 +25,6 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-sql-driver/mysql v1.7.1 // indirect
-	github.com/gogf/gf/contrib/drivers/mysql/v2 v2.10.0 // indirect
-	github.com/gogf/gf/contrib/nosql/redis/v2 v2.10.0 // indirect
 	github.com/gogf/gf/contrib/registry/file/v2 v2.10.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect

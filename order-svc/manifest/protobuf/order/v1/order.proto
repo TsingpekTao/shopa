@@ -1,0 +1,305 @@
+﻿syntax = "proto3";
+
+package shopa.order.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/order-svc/api/v1;orderv1";
+
+import "google/protobuf/timestamp.proto";
+
+// Metadata conventions:
+// - x-idempotency-key: required for create/cancel/request-pay write RPCs
+// - x-request-id: recommended
+// - x-user-id: required for buyer/seller write RPCs
+// - x-service-name: required for internal RPCs
+
+service BuyerOrderService {
+  // IMPORTANT: implementation must check idempotency first, then consume checkout token.
+  rpc CreateOrderFromCart(CreateOrderFromCartReq) returns (CreateOrderFromCartRes);
+  rpc CreateOrderBuyNow(CreateOrderBuyNowReq) returns (CreateOrderBuyNowRes);
+
+  rpc RequestPay(RequestPayReq) returns (RequestPayRes);
+  rpc CancelMyOrder(CancelMyOrderReq) returns (CancelMyOrderRes);
+
+  rpc GetMyOrderDetail(GetMyOrderDetailReq) returns (GetMyOrderDetailRes);
+  rpc ListMyOrders(ListMyOrdersReq) returns (ListMyOrdersRes);
+}
+
+service SellerOrderService {
+  rpc ListShopOrders(ListShopOrdersReq) returns (ListShopOrdersRes);
+  rpc GetShopOrderDetail(GetShopOrderDetailReq) returns (GetShopOrderDetailRes);
+  rpc MarkSubOrderShipped(MarkSubOrderShippedReq) returns (MarkSubOrderShippedRes);
+}
+
+service InternalOrderService {
+  rpc CloseOrderIfUnpaid(CloseOrderIfUnpaidReq) returns (CloseOrderIfUnpaidRes);
+  rpc HandlePayCallback(HandlePayCallbackReq) returns (HandlePayCallbackRes);
+  rpc GetOrderSnapshotByNo(GetOrderSnapshotByNoReq) returns (GetOrderSnapshotByNoRes);
+}
+
+enum OrderStatus {
+  ORDER_STATUS_UNSPECIFIED = 0;
+  ORDER_STATUS_PENDING_PAY = 1;
+  ORDER_STATUS_PAID = 2;
+  ORDER_STATUS_CANCELED = 3;
+  ORDER_STATUS_CLOSED = 4;
+  ORDER_STATUS_FULFILLING = 5;
+  ORDER_STATUS_COMPLETED = 6;
+  ORDER_STATUS_REFUNDING = 7;
+  ORDER_STATUS_REFUNDED = 8;
+}
+
+enum SubOrderStatus {
+  SUB_ORDER_STATUS_UNSPECIFIED = 0;
+  SUB_ORDER_STATUS_PENDING_PAY = 1;
+  SUB_ORDER_STATUS_PAID = 2;
+  SUB_ORDER_STATUS_CANCELED = 3;
+  SUB_ORDER_STATUS_CLOSED = 4;
+  SUB_ORDER_STATUS_WAIT_SHIP = 5;
+  SUB_ORDER_STATUS_SHIPPED = 6;
+  SUB_ORDER_STATUS_COMPLETED = 7;
+  SUB_ORDER_STATUS_REFUNDING = 8;
+  SUB_ORDER_STATUS_REFUNDED = 9;
+}
+
+enum PaymentStatus {
+  PAYMENT_STATUS_UNSPECIFIED = 0;
+  PAYMENT_STATUS_UNPAID = 1;
+  PAYMENT_STATUS_PAYING = 2;
+  PAYMENT_STATUS_PAID = 3;
+  PAYMENT_STATUS_PAY_FAILED = 4;
+  PAYMENT_STATUS_REFUNDED = 5;
+}
+
+enum PayChannel {
+  PAY_CHANNEL_UNSPECIFIED = 0;
+  PAY_CHANNEL_MOCK = 1;
+  PAY_CHANNEL_ALIPAY = 2;
+  PAY_CHANNEL_WECHAT = 3;
+}
+
+enum CancelReasonCode {
+  CANCEL_REASON_CODE_UNSPECIFIED = 0;
+  CANCEL_REASON_CODE_BUYER_CANCEL = 1;
+  CANCEL_REASON_CODE_TIMEOUT_CLOSE = 2;
+  CANCEL_REASON_CODE_RISK_REJECT = 3;
+  CANCEL_REASON_CODE_STOCK_RELEASE_FAILED = 4;
+}
+
+message OrderAmount {
+  uint64 goods_amount = 1;
+  uint64 freight_amount = 2;
+  uint64 discount_amount = 3;
+  uint64 payable_amount = 4;
+  uint64 paid_amount = 5;
+}
+
+message OrderAddressSnapshot {
+  uint64 source_address_id = 1;
+  uint64 source_address_version = 2;
+  string receiver_name = 3;
+  string receiver_phone = 4;
+  string country_code = 5;
+  string province_code = 6;
+  string province_name = 7;
+  string city_code = 8;
+  string city_name = 9;
+  string district_code = 10;
+  string district_name = 11;
+  string street = 12;
+  string detail = 13;
+  string postal_code = 14;
+  double latitude = 15;
+  double longitude = 16;
+}
+
+message OrderItemSnapshot {
+  string item_no = 1;
+  string order_no = 2;
+  string sub_order_no = 3;
+  string shop_no = 4;
+  string spu_no = 5;
+  string sku_no = 6;
+  string spu_title = 7;
+  string sku_name = 8;
+  uint64 sku_image_asset_id = 9;
+  uint32 qty = 10;
+  uint64 sale_price = 11;
+  uint64 market_price = 12;
+  string sale_attrs_json = 13;
+}
+
+message OrderSub {
+  string sub_order_no = 1;
+  string order_no = 2;
+  string shop_no = 3;
+  SubOrderStatus sub_status = 4;
+  OrderAmount amount = 5;
+  string seller_remark = 6;
+  string buyer_remark = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+  repeated OrderItemSnapshot items = 10;
+}
+
+message OrderMain {
+  string order_no = 1;
+  uint64 user_id = 2;
+  OrderStatus order_status = 3;
+  PaymentStatus payment_status = 4;
+  OrderAmount amount = 5;
+  OrderAddressSnapshot address = 6;
+  string reservation_no = 7;
+  google.protobuf.Timestamp pay_deadline_at = 8;
+  google.protobuf.Timestamp paid_at = 9;
+  google.protobuf.Timestamp closed_at = 10;
+  google.protobuf.Timestamp created_at = 11;
+  google.protobuf.Timestamp updated_at = 12;
+  uint64 version = 13;
+  repeated OrderSub sub_orders = 14;
+  string buyer_remark = 15;
+  CancelReasonCode cancel_reason_code = 16;
+}
+
+message CreateOrderFromCartReq {
+  string checkout_token = 1;
+  uint64 address_id = 2;
+  string buyer_remark = 3;
+  string submit_source_code = 4;
+  string expected_snapshot_digest = 5;
+  string idempotency_key = 99;
+}
+
+message CreateOrderFromCartRes {
+  OrderMain order = 1;
+  bool idempotent_replay = 2;
+}
+
+message BuyNowItem {
+  string sku_no = 1;
+  string spu_no = 2;
+  string shop_no = 3;
+  uint32 qty = 4;
+}
+
+message CreateOrderBuyNowReq {
+  repeated BuyNowItem items = 1;
+  uint64 address_id = 2;
+  string buyer_remark = 3;
+  string submit_source_code = 4;
+  string idempotency_key = 99;
+}
+
+message CreateOrderBuyNowRes {
+  OrderMain order = 1;
+  bool idempotent_replay = 2;
+}
+
+message RequestPayReq {
+  string order_no = 1;
+  PayChannel pay_channel = 2;
+  string idempotency_key = 99;
+}
+
+message RequestPayRes {
+  string order_no = 1;
+  string pay_no = 2;
+  PaymentStatus payment_status = 3;
+  string pay_url = 4;
+  string pay_payload_json = 5;
+  google.protobuf.Timestamp expire_at = 6;
+}
+
+message CancelMyOrderReq {
+  string order_no = 1;
+  CancelReasonCode reason_code = 2;
+  string idempotency_key = 99;
+}
+
+message CancelMyOrderRes {
+  string order_no = 1;
+  OrderStatus order_status = 2;
+}
+
+message GetMyOrderDetailReq { string order_no = 1; }
+message GetMyOrderDetailRes { OrderMain order = 1; }
+
+message ListMyOrdersReq {
+  int32 page_size = 1;
+  string next_cursor = 2;
+  repeated OrderStatus statuses = 3;
+  string keyword = 4;
+}
+
+message ListMyOrdersRes {
+  repeated OrderMain orders = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+}
+
+message ListShopOrdersReq {
+  string shop_no = 1;
+  int32 page_size = 2;
+  string next_cursor = 3;
+  repeated SubOrderStatus statuses = 4;
+  string keyword = 5;
+}
+
+message ListShopOrdersRes {
+  repeated OrderSub orders = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+}
+
+message GetShopOrderDetailReq { string sub_order_no = 1; }
+message GetShopOrderDetailRes {
+  OrderMain order = 1;
+  OrderSub sub_order = 2;
+}
+
+message MarkSubOrderShippedReq {
+  string sub_order_no = 1;
+  string logistics_company_code = 2;
+  string logistics_no = 3;
+  string shipped_note = 4;
+}
+
+message MarkSubOrderShippedRes {
+  string sub_order_no = 1;
+  SubOrderStatus sub_status = 2;
+}
+
+message CloseOrderIfUnpaidReq {
+  string order_no = 1;
+  CancelReasonCode reason_code = 2;
+}
+
+message CloseOrderIfUnpaidRes {
+  string order_no = 1;
+  OrderStatus order_status = 2;
+  bool closed = 3;
+}
+
+message HandlePayCallbackReq {
+  string payment_event_id = 1;
+  string pay_no = 2;
+  string order_no = 3;
+  PayChannel pay_channel = 4;
+  string pay_status_code = 5;
+  string channel_trade_no = 6;
+  uint64 paid_amount = 7;
+  google.protobuf.Timestamp paid_at = 8;
+  string raw_payload = 9;
+  string idempotency_key = 99;
+}
+
+message HandlePayCallbackRes {
+  string order_no = 1;
+  PaymentStatus payment_status = 2;
+  OrderStatus order_status = 3;
+  bool callback_idempotent_hit = 4;
+  bool refund_required = 5;
+  string refund_reason_code = 6;
+}
+
+message GetOrderSnapshotByNoReq { string order_no = 1; }
+message GetOrderSnapshotByNoRes { OrderMain order = 1; }

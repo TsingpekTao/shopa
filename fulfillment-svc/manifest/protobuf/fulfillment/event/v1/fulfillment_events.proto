@@ -1,0 +1,38 @@
+﻿syntax = "proto3";
+
+package shopa.fulfillment.event.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/fulfillment-svc/api/event/v1;fulfillmenteventv1";
+
+import "google/protobuf/timestamp.proto";
+
+message LogisticsShippedEvent {
+  string event_id = 1;
+  string shipment_no = 2;
+  string order_no = 3;
+  string sub_order_no = 4;
+  string shop_no = 5;
+  string logistics_company_code = 6;
+  string logistics_no = 7;
+  google.protobuf.Timestamp shipped_at = 8;
+}
+
+message LogisticsDeliveredEvent {
+  string event_id = 1;
+  string shipment_no = 2;
+  string order_no = 3;
+  string sub_order_no = 4;
+  string shop_no = 5;
+  google.protobuf.Timestamp delivered_at = 6;
+}
+
+message LogisticsExceptionEvent {
+  string event_id = 1;
+  string shipment_no = 2;
+  string order_no = 3;
+  string sub_order_no = 4;
+  string shop_no = 5;
+  string exception_code = 6;
+  string exception_message = 7;
+  google.protobuf.Timestamp occurred_at = 8;
+}

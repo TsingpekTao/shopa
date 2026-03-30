@@ -1,0 +1,150 @@
+﻿syntax = "proto3";
+
+package shopa.fulfillment.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/fulfillment-svc/api/v1;fulfillmentv1";
+
+import "google/protobuf/timestamp.proto";
+
+service SellerFulfillmentService {
+  rpc CreateShipment(CreateShipmentReq) returns (CreateShipmentRes);
+  rpc MarkShipmentShipped(MarkShipmentShippedReq) returns (MarkShipmentShippedRes);
+  rpc ListShopShipments(ListShopShipmentsReq) returns (ListShopShipmentsRes);
+  rpc GetShipmentDetail(GetShipmentDetailReq) returns (GetShipmentDetailRes);
+}
+
+service BuyerFulfillmentService {
+  rpc GetMyOrderLogistics(GetMyOrderLogisticsReq) returns (GetMyOrderLogisticsRes);
+}
+
+service InternalFulfillmentService {
+  rpc IngestTrackingCallback(IngestTrackingCallbackReq) returns (IngestTrackingCallbackRes);
+  rpc SyncTrackingByShipment(SyncTrackingByShipmentReq) returns (SyncTrackingByShipmentRes);
+  rpc GetShipmentSnapshot(GetShipmentSnapshotReq) returns (GetShipmentSnapshotRes);
+}
+
+enum ShipmentStatus {
+  SHIPMENT_STATUS_UNSPECIFIED = 0;
+  SHIPMENT_STATUS_WAIT_SHIP = 1;
+  SHIPMENT_STATUS_SHIPPED = 2;
+  SHIPMENT_STATUS_IN_TRANSIT = 3;
+  SHIPMENT_STATUS_DELIVERED = 4;
+  SHIPMENT_STATUS_EXCEPTION = 5;
+  SHIPMENT_STATUS_CLOSED = 6;
+}
+
+message ReceiverAddress {
+  string country_code = 1;
+  string province_code = 2;
+  string province_name = 3;
+  string city_code = 4;
+  string city_name = 5;
+  string district_code = 6;
+  string district_name = 7;
+  string street = 8;
+  string detail = 9;
+  string postal_code = 10;
+}
+
+message TrackingNode {
+  string node_no = 1;
+  string shipment_no = 2;
+  string status_code = 3;
+  string content = 4;
+  string location = 5;
+  google.protobuf.Timestamp event_time = 6;
+  google.protobuf.Timestamp created_at = 7;
+}
+
+message Shipment {
+  string shipment_no = 1;
+  string order_no = 2;
+  string sub_order_no = 3;
+  string shop_no = 4;
+  uint64 user_id = 5;
+  string logistics_company_code = 6;
+  string logistics_company_name = 7;
+  string logistics_no = 8;
+  ShipmentStatus shipment_status = 9;
+  google.protobuf.Timestamp shipped_at = 10;
+  google.protobuf.Timestamp delivered_at = 11;
+  string receiver_name = 12;
+  string receiver_phone = 13;
+  string receiver_address = 14 [deprecated = true];
+  uint64 version = 15;
+  google.protobuf.Timestamp created_at = 16;
+  google.protobuf.Timestamp updated_at = 17;
+  repeated TrackingNode tracking_nodes = 18;
+  ReceiverAddress receiver_address_struct = 19;
+}
+
+message CreateShipmentReq {
+  string order_no = 1;
+  string sub_order_no = 2;
+  string shop_no = 3;
+  string receiver_name = 4;
+  string receiver_phone = 5;
+  string receiver_address = 6 [deprecated = true];
+  ReceiverAddress receiver_address_struct = 7;
+  string idempotency_key = 99;
+}
+
+message CreateShipmentRes { Shipment shipment = 1; }
+
+message MarkShipmentShippedReq {
+  string shipment_no = 1;
+  string logistics_company_code = 2;
+  string logistics_company_name = 3;
+  string logistics_no = 4;
+  google.protobuf.Timestamp shipped_at = 5;
+  uint64 expected_version = 6;
+  string idempotency_key = 99;
+}
+
+message MarkShipmentShippedRes {
+  string shipment_no = 1;
+  ShipmentStatus shipment_status = 2;
+}
+
+message ListShopShipmentsReq {
+  string shop_no = 1;
+  int32 page_size = 2;
+  string next_cursor = 3;
+  repeated ShipmentStatus statuses = 4;
+}
+
+message ListShopShipmentsRes {
+  repeated Shipment list = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+}
+
+message GetShipmentDetailReq { string shipment_no = 1; }
+message GetShipmentDetailRes { Shipment shipment = 1; }
+
+message GetMyOrderLogisticsReq { string order_no = 1; }
+message GetMyOrderLogisticsRes { repeated Shipment shipments = 1; }
+
+message IngestTrackingCallbackReq {
+  string logistics_company_code = 1;
+  string logistics_no = 2;
+  repeated TrackingNode nodes = 3;
+  string raw_payload = 4;
+  string idempotency_key = 99;
+}
+
+message IngestTrackingCallbackRes {
+  string shipment_no = 1;
+  ShipmentStatus shipment_status = 2;
+  bool changed = 3;
+}
+
+message SyncTrackingByShipmentReq { string shipment_no = 1; }
+
+message SyncTrackingByShipmentRes {
+  string shipment_no = 1;
+  ShipmentStatus shipment_status = 2;
+}
+
+message GetShipmentSnapshotReq { string shipment_no = 1; }
+message GetShipmentSnapshotRes { Shipment shipment = 1; }

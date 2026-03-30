@@ -1,0 +1,240 @@
+syntax = "proto3";
+
+package shopa.cart.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/cart-svc/api/v1;cartv1";
+
+import "google/protobuf/timestamp.proto";
+
+// Metadata conventions:
+// - x-idempotency-key: required for critical write RPCs
+// - x-request-id: recommended
+// - x-user-id: required for buyer/internal RPCs
+// - x-service-name: required for internal RPCs
+
+service BuyerCartService {
+  rpc AddItem(AddItemReq) returns (AddItemRes);
+  rpc UpdateItemQty(UpdateItemQtyReq) returns (UpdateItemQtyRes);
+  rpc ToggleItemChecked(ToggleItemCheckedReq) returns (ToggleItemCheckedRes);
+  rpc BatchToggleItems(BatchToggleItemsReq) returns (BatchToggleItemsRes);
+  rpc RemoveItems(RemoveItemsReq) returns (RemoveItemsRes);
+  rpc ClearInvalidItems(ClearInvalidItemsReq) returns (ClearInvalidItemsRes);
+  rpc GetMyCart(GetMyCartReq) returns (GetMyCartRes);
+
+  // Prepare a checkout snapshot token (TTL around 5 minutes).
+  // address_id is required for freight calculation context.
+  rpc PrepareCheckout(PrepareCheckoutReq) returns (PrepareCheckoutRes);
+}
+
+service InternalCartService {
+  // Consume token by Lua atomically (GET+DEL in one script execution),
+  // so the same checkout token cannot be consumed concurrently.
+  rpc ConsumeCheckoutToken(ConsumeCheckoutTokenReq) returns (ConsumeCheckoutTokenRes);
+
+  rpc MarkItemsOrdered(MarkItemsOrderedReq) returns (MarkItemsOrderedRes);
+  rpc BatchUpsertSkuProjection(BatchUpsertSkuProjectionReq) returns (BatchUpsertSkuProjectionRes);
+}
+
+enum CartItemStatus {
+  CART_ITEM_STATUS_UNSPECIFIED = 0;
+  CART_ITEM_STATUS_ACTIVE = 1;
+  CART_ITEM_STATUS_INVALID = 2;
+}
+
+enum CheckoutScope {
+  CHECKOUT_SCOPE_UNSPECIFIED = 0;
+  CHECKOUT_SCOPE_ALL_CHECKED = 1;
+  CHECKOUT_SCOPE_PARTIAL = 2;
+}
+
+enum CheckoutTokenStatus {
+  CHECKOUT_TOKEN_STATUS_UNSPECIFIED = 0;
+  CHECKOUT_TOKEN_STATUS_OK = 1;
+  CHECKOUT_TOKEN_STATUS_NOT_FOUND_OR_EXPIRED = 2;
+  CHECKOUT_TOKEN_STATUS_ALREADY_CONSUMED = 3;
+  CHECKOUT_TOKEN_STATUS_USER_MISMATCH = 4;
+}
+
+message CartItem {
+  uint64 user_id = 1;
+  string sku_no = 2;
+  string spu_no = 3;
+  string shop_no = 4;
+
+  uint32 qty = 5;
+  bool checked = 6;
+  CartItemStatus status = 7;
+  string invalid_reason_code = 8;
+
+  string spu_title = 9;
+  string sku_name = 10;
+  uint64 sku_image_asset_id = 11;
+  uint64 sale_price = 12;
+  uint64 market_price = 13;
+  string sale_attrs_json = 14;
+
+  google.protobuf.Timestamp created_at = 15;
+  google.protobuf.Timestamp updated_at = 16;
+}
+
+message CartSummary {
+  uint32 total_item_count = 1;
+  uint32 checked_item_count = 2;
+  uint64 checked_goods_amount = 3;
+  uint64 checked_payable_amount = 4;
+}
+
+message CheckoutSnapshotItem {
+  string sku_no = 1;
+  string spu_no = 2;
+  string shop_no = 3;
+
+  uint32 qty = 4;
+  uint64 settle_price = 5;
+  uint64 market_price = 6;
+
+  string spu_title = 7;
+  string sku_name = 8;
+  uint64 sku_image_asset_id = 9;
+  string sale_attrs_json = 10;
+}
+
+message CheckoutSnapshot {
+  string checkout_token = 1;
+  uint64 user_id = 2;
+  repeated CheckoutSnapshotItem items = 3;
+
+  uint64 goods_amount = 4;
+  uint64 freight_amount = 5;
+  uint64 payable_amount = 6;
+
+  string snapshot_digest = 7;
+  google.protobuf.Timestamp expire_at = 8;
+  google.protobuf.Timestamp created_at = 9;
+}
+
+message AddItemReq {
+  string sku_no = 1;
+  string spu_no = 2;
+  string shop_no = 3;
+  uint32 qty = 4;
+  bool checked = 5;
+  string idempotency_key = 99;
+}
+
+message AddItemRes {
+  CartItem item = 1;
+  CartSummary summary = 2;
+}
+
+message UpdateItemQtyReq {
+  string sku_no = 1;
+  uint32 qty = 2;
+  string idempotency_key = 99;
+}
+
+message UpdateItemQtyRes {
+  CartItem item = 1;
+  CartSummary summary = 2;
+}
+
+message ToggleItemCheckedReq {
+  string sku_no = 1;
+  bool checked = 2;
+}
+
+message ToggleItemCheckedRes {
+  CartItem item = 1;
+  CartSummary summary = 2;
+}
+
+message BatchToggleItemsReq {
+  repeated string sku_nos = 1;
+  bool checked = 2;
+}
+
+message BatchToggleItemsRes {
+  uint32 affected = 1;
+  CartSummary summary = 2;
+}
+
+message RemoveItemsReq {
+  repeated string sku_nos = 1;
+}
+
+message RemoveItemsRes {
+  uint32 removed = 1;
+  CartSummary summary = 2;
+}
+
+message ClearInvalidItemsReq {}
+
+message ClearInvalidItemsRes {
+  uint32 removed = 1;
+  CartSummary summary = 2;
+}
+
+message GetMyCartReq {
+  bool only_checked = 1;
+}
+
+message GetMyCartRes {
+  repeated CartItem items = 1;
+  CartSummary summary = 2;
+  bool loaded_from_backup = 3;
+}
+
+message PrepareCheckoutReq {
+  CheckoutScope scope = 1;
+  repeated string sku_nos = 2;
+  uint64 address_id = 3;
+}
+
+message PrepareCheckoutRes {
+  CheckoutSnapshot snapshot = 1;
+}
+
+message ConsumeCheckoutTokenReq {
+  string checkout_token = 1;
+  uint64 user_id = 2;
+}
+
+message ConsumeCheckoutTokenRes {
+  CheckoutTokenStatus token_status = 1;
+  CheckoutSnapshot snapshot = 2;
+  string error_code = 3;
+}
+
+message MarkItemsOrderedReq {
+  uint64 user_id = 1;
+  string order_no = 2;
+  repeated string sku_nos = 3;
+}
+
+message MarkItemsOrderedRes {
+  uint32 affected = 1;
+}
+
+message SkuProjectionItem {
+  string sku_no = 1;
+  string spu_no = 2;
+  string shop_no = 3;
+
+  string spu_title = 4;
+  string sku_name = 5;
+  uint64 sku_image_asset_id = 6;
+  uint64 sale_price = 7;
+  uint64 market_price = 8;
+  string sale_attrs_json = 9;
+
+  bool sellable = 10;
+  string invalid_reason_code = 11;
+}
+
+message BatchUpsertSkuProjectionReq {
+  repeated SkuProjectionItem items = 1;
+}
+
+message BatchUpsertSkuProjectionRes {
+  uint64 affected_rows = 1;
+}

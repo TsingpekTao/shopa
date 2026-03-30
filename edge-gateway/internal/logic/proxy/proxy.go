@@ -227,6 +227,28 @@ func (s *sProxy) resolveUpstream(ctx context.Context, upstreamService string) (s
 		key = "upstream.catalogHttp"
 	case "inventory":
 		key = "upstream.inventoryHttp"
+	case "order":
+		key = "upstream.orderHttp"
+	case "cart":
+		key = "upstream.cartHttp"
+	case "payment":
+		key = "upstream.paymentHttp"
+	case "risk":
+		key = "upstream.riskHttp"
+	case "notification":
+		key = "upstream.notificationHttp"
+	case "promotion":
+		key = "upstream.promotionHttp"
+	case "search":
+		key = "upstream.searchHttp"
+	case "aftersale", "after_sale":
+		key = "upstream.aftersaleHttp"
+	case "review":
+		key = "upstream.reviewHttp"
+	case "fulfillment":
+		key = "upstream.fulfillmentHttp"
+	case "chat":
+		key = "upstream.chatHttp"
 	case "media":
 		key = "upstream.mediaHttp"
 	case "iam":
@@ -315,6 +337,65 @@ func builtinProxyRoutes() []entity.EdgeProxyRoute {
 		{RouteCode: "BUILTIN_CATALOG_GET_BUYER_PRODUCT", Method: http.MethodGet, PathPattern: "/v1/catalog/buyer/products/{spu_no}", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/buyer/products/{spu_no}", AuthRequired: 0, InjectUserContext: 0},
 
 		{RouteCode: "BUILTIN_INVENTORY_ADJUST", Method: http.MethodPost, PathPattern: "/v1/inventory/seller/stock:adjust", UpstreamService: "inventory", UpstreamPathTemplate: "/v1/inventory/seller/stock:adjust", AuthRequired: 1, InjectUserContext: 1},
+
+		{RouteCode: "BUILTIN_CART_ADD_ITEM", Method: http.MethodPost, PathPattern: "/v1/cart/items:add", UpstreamService: "cart", UpstreamPathTemplate: "/v1/cart/items:add", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CART_UPDATE_QTY", Method: http.MethodPost, PathPattern: "/v1/cart/items:qty", UpstreamService: "cart", UpstreamPathTemplate: "/v1/cart/items:qty", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CART_TOGGLE_CHECKED", Method: http.MethodPost, PathPattern: "/v1/cart/items:check", UpstreamService: "cart", UpstreamPathTemplate: "/v1/cart/items:check", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CART_BATCH_CHECKED", Method: http.MethodPost, PathPattern: "/v1/cart/items:batch-check", UpstreamService: "cart", UpstreamPathTemplate: "/v1/cart/items:batch-check", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CART_REMOVE_ITEMS", Method: http.MethodPost, PathPattern: "/v1/cart/items:remove", UpstreamService: "cart", UpstreamPathTemplate: "/v1/cart/items:remove", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CART_CLEAR_INVALID", Method: http.MethodPost, PathPattern: "/v1/cart/items:clear-invalid", UpstreamService: "cart", UpstreamPathTemplate: "/v1/cart/items:clear-invalid", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CART_GET_MY_CART", Method: http.MethodGet, PathPattern: "/v1/cart/me", UpstreamService: "cart", UpstreamPathTemplate: "/v1/cart/me", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CART_PREPARE_CHECKOUT", Method: http.MethodPost, PathPattern: "/v1/cart/checkout:prepare", UpstreamService: "cart", UpstreamPathTemplate: "/v1/cart/checkout:prepare", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CART_INTERNAL_CONSUME_CHECKOUT", Method: http.MethodPost, PathPattern: "/v1/cart/internal/checkout:consume", UpstreamService: "cart", UpstreamPathTemplate: "/v1/cart/internal/checkout:consume", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CART_INTERNAL_MARK_ORDERED", Method: http.MethodPost, PathPattern: "/v1/cart/internal/items:ordered", UpstreamService: "cart", UpstreamPathTemplate: "/v1/cart/internal/items:ordered", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CART_INTERNAL_UPSERT_SKU_PROJECTION", Method: http.MethodPost, PathPattern: "/v1/cart/internal/sku-projection:batch-upsert", UpstreamService: "cart", UpstreamPathTemplate: "/v1/cart/internal/sku-projection:batch-upsert", AuthRequired: 1, InjectUserContext: 1},
+
+		{RouteCode: "BUILTIN_ORDER_CREATE_FROM_CART", Method: http.MethodPost, PathPattern: "/v1/order/buyer/orders:create-from-cart", UpstreamService: "order", UpstreamPathTemplate: "/v1/order/buyer/orders:create-from-cart", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_ORDER_CREATE_BUY_NOW", Method: http.MethodPost, PathPattern: "/v1/order/buyer/orders:create-buy-now", UpstreamService: "order", UpstreamPathTemplate: "/v1/order/buyer/orders:create-buy-now", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_ORDER_REQUEST_PAY", Method: http.MethodPost, PathPattern: "/v1/order/buyer/orders:request-pay", UpstreamService: "order", UpstreamPathTemplate: "/v1/order/buyer/orders:request-pay", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_ORDER_CANCEL_MY_ORDER", Method: http.MethodPost, PathPattern: "/v1/order/buyer/orders:cancel", UpstreamService: "order", UpstreamPathTemplate: "/v1/order/buyer/orders:cancel", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_ORDER_GET_MY_ORDER_DETAIL", Method: http.MethodGet, PathPattern: "/v1/order/buyer/orders/{order_no}", UpstreamService: "order", UpstreamPathTemplate: "/v1/order/buyer/orders/{order_no}", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_ORDER_LIST_MY_ORDERS", Method: http.MethodGet, PathPattern: "/v1/order/buyer/orders", UpstreamService: "order", UpstreamPathTemplate: "/v1/order/buyer/orders", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_ORDER_LIST_SHOP_ORDERS", Method: http.MethodGet, PathPattern: "/v1/order/seller/shops/{shop_no}/orders", UpstreamService: "order", UpstreamPathTemplate: "/v1/order/seller/shops/{shop_no}/orders", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_ORDER_GET_SHOP_ORDER_DETAIL", Method: http.MethodGet, PathPattern: "/v1/order/seller/orders/{sub_order_no}", UpstreamService: "order", UpstreamPathTemplate: "/v1/order/seller/orders/{sub_order_no}", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_ORDER_MARK_SUB_ORDER_SHIPPED", Method: http.MethodPost, PathPattern: "/v1/order/seller/orders:ship", UpstreamService: "order", UpstreamPathTemplate: "/v1/order/seller/orders:ship", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_ORDER_INTERNAL_CLOSE_UNPAID", Method: http.MethodPost, PathPattern: "/v1/order/internal/orders:close-if-unpaid", UpstreamService: "order", UpstreamPathTemplate: "/v1/order/internal/orders:close-if-unpaid", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_ORDER_INTERNAL_PAY_CALLBACK", Method: http.MethodPost, PathPattern: "/v1/order/internal/payments:callback", UpstreamService: "order", UpstreamPathTemplate: "/v1/order/internal/payments:callback", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_ORDER_INTERNAL_SNAPSHOT", Method: http.MethodGet, PathPattern: "/v1/order/internal/orders/{order_no}/snapshot", UpstreamService: "order", UpstreamPathTemplate: "/v1/order/internal/orders/{order_no}/snapshot", AuthRequired: 1, InjectUserContext: 1},
+
+		{RouteCode: "BUILTIN_AFTERSALE_BUYER_CREATE", Method: http.MethodPost, PathPattern: "/v1/aftersale/buyer/cases:create", UpstreamService: "aftersale", UpstreamPathTemplate: "/v1/aftersale/buyer/cases:create", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_AFTERSALE_BUYER_CANCEL", Method: http.MethodPost, PathPattern: "/v1/aftersale/buyer/cases:cancel", UpstreamService: "aftersale", UpstreamPathTemplate: "/v1/aftersale/buyer/cases:cancel", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_AFTERSALE_BUYER_DETAIL", Method: http.MethodGet, PathPattern: "/v1/aftersale/buyer/cases/{after_sale_no}", UpstreamService: "aftersale", UpstreamPathTemplate: "/v1/aftersale/buyer/cases/{after_sale_no}", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_AFTERSALE_BUYER_LIST", Method: http.MethodGet, PathPattern: "/v1/aftersale/buyer/cases", UpstreamService: "aftersale", UpstreamPathTemplate: "/v1/aftersale/buyer/cases", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_AFTERSALE_SELLER_LIST", Method: http.MethodGet, PathPattern: "/v1/aftersale/seller/shops/{shop_no}/cases", UpstreamService: "aftersale", UpstreamPathTemplate: "/v1/aftersale/seller/shops/{shop_no}/cases", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_AFTERSALE_SELLER_DETAIL", Method: http.MethodGet, PathPattern: "/v1/aftersale/seller/cases/{after_sale_no}", UpstreamService: "aftersale", UpstreamPathTemplate: "/v1/aftersale/seller/cases/{after_sale_no}", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_AFTERSALE_SELLER_APPROVE", Method: http.MethodPost, PathPattern: "/v1/aftersale/seller/cases:approve", UpstreamService: "aftersale", UpstreamPathTemplate: "/v1/aftersale/seller/cases:approve", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_AFTERSALE_SELLER_REJECT", Method: http.MethodPost, PathPattern: "/v1/aftersale/seller/cases:reject", UpstreamService: "aftersale", UpstreamPathTemplate: "/v1/aftersale/seller/cases:reject", AuthRequired: 1, InjectUserContext: 1},
+
+		{RouteCode: "BUILTIN_REVIEW_BUYER_CREATE", Method: http.MethodPost, PathPattern: "/v1/review/buyer/reviews:create", UpstreamService: "review", UpstreamPathTemplate: "/v1/review/buyer/reviews:create", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_REVIEW_BUYER_APPEND", Method: http.MethodPost, PathPattern: "/v1/review/buyer/reviews:append", UpstreamService: "review", UpstreamPathTemplate: "/v1/review/buyer/reviews:append", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_REVIEW_BUYER_LIST", Method: http.MethodGet, PathPattern: "/v1/review/buyer/reviews", UpstreamService: "review", UpstreamPathTemplate: "/v1/review/buyer/reviews", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_REVIEW_SELLER_REPLY", Method: http.MethodPost, PathPattern: "/v1/review/seller/reviews:reply", UpstreamService: "review", UpstreamPathTemplate: "/v1/review/seller/reviews:reply", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_REVIEW_PUBLIC_LIST", Method: http.MethodGet, PathPattern: "/v1/review/public/spu/{spu_no}/reviews", UpstreamService: "review", UpstreamPathTemplate: "/v1/review/public/spu/{spu_no}/reviews", AuthRequired: 0, InjectUserContext: 0},
+		{RouteCode: "BUILTIN_REVIEW_PUBLIC_SUMMARY", Method: http.MethodGet, PathPattern: "/v1/review/public/spu/{spu_no}/summary", UpstreamService: "review", UpstreamPathTemplate: "/v1/review/public/spu/{spu_no}/summary", AuthRequired: 0, InjectUserContext: 0},
+
+		{RouteCode: "BUILTIN_FULFILLMENT_SELLER_CREATE", Method: http.MethodPost, PathPattern: "/v1/fulfillment/seller/shipments:create", UpstreamService: "fulfillment", UpstreamPathTemplate: "/v1/fulfillment/seller/shipments:create", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_FULFILLMENT_SELLER_SHIP", Method: http.MethodPost, PathPattern: "/v1/fulfillment/seller/shipments:ship", UpstreamService: "fulfillment", UpstreamPathTemplate: "/v1/fulfillment/seller/shipments:ship", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_FULFILLMENT_SELLER_LIST", Method: http.MethodGet, PathPattern: "/v1/fulfillment/seller/shops/{shop_no}/shipments", UpstreamService: "fulfillment", UpstreamPathTemplate: "/v1/fulfillment/seller/shops/{shop_no}/shipments", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_FULFILLMENT_SELLER_DETAIL", Method: http.MethodGet, PathPattern: "/v1/fulfillment/seller/shipments/{shipment_no}", UpstreamService: "fulfillment", UpstreamPathTemplate: "/v1/fulfillment/seller/shipments/{shipment_no}", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_FULFILLMENT_BUYER_LOGISTICS", Method: http.MethodGet, PathPattern: "/v1/fulfillment/buyer/orders/{order_no}/logistics", UpstreamService: "fulfillment", UpstreamPathTemplate: "/v1/fulfillment/buyer/orders/{order_no}/logistics", AuthRequired: 1, InjectUserContext: 1},
+
+		{RouteCode: "BUILTIN_CHAT_BUYER_CREATE_CONVERSATION", Method: http.MethodPost, PathPattern: "/v1/chat/buyer/conversations:get-or-create", UpstreamService: "chat", UpstreamPathTemplate: "/v1/chat/buyer/conversations:get-or-create", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CHAT_BUYER_SEND", Method: http.MethodPost, PathPattern: "/v1/chat/buyer/messages:send", UpstreamService: "chat", UpstreamPathTemplate: "/v1/chat/buyer/messages:send", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CHAT_BUYER_CONVERSATIONS", Method: http.MethodGet, PathPattern: "/v1/chat/buyer/conversations", UpstreamService: "chat", UpstreamPathTemplate: "/v1/chat/buyer/conversations", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CHAT_BUYER_MESSAGES", Method: http.MethodGet, PathPattern: "/v1/chat/buyer/conversations/{conversation_no}/messages", UpstreamService: "chat", UpstreamPathTemplate: "/v1/chat/buyer/conversations/{conversation_no}/messages", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CHAT_BUYER_MARK_READ", Method: http.MethodPost, PathPattern: "/v1/chat/buyer/conversations:mark-read", UpstreamService: "chat", UpstreamPathTemplate: "/v1/chat/buyer/conversations:mark-read", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CHAT_BUYER_UNREAD_SUMMARY", Method: http.MethodGet, PathPattern: "/v1/chat/buyer/unread-summary", UpstreamService: "chat", UpstreamPathTemplate: "/v1/chat/buyer/unread-summary", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CHAT_SELLER_CONVERSATIONS", Method: http.MethodGet, PathPattern: "/v1/chat/seller/shops/{shop_no}/conversations", UpstreamService: "chat", UpstreamPathTemplate: "/v1/chat/seller/shops/{shop_no}/conversations", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CHAT_SELLER_SEND", Method: http.MethodPost, PathPattern: "/v1/chat/seller/messages:send", UpstreamService: "chat", UpstreamPathTemplate: "/v1/chat/seller/messages:send", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CHAT_SELLER_MARK_READ", Method: http.MethodPost, PathPattern: "/v1/chat/seller/conversations:mark-read", UpstreamService: "chat", UpstreamPathTemplate: "/v1/chat/seller/conversations:mark-read", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CHAT_INTERNAL_SYSTEM_NOTICE", Method: http.MethodPost, PathPattern: "/v1/chat/internal/system-notices:publish", UpstreamService: "chat", UpstreamPathTemplate: "/v1/chat/internal/system-notices:publish", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CHAT_INTERNAL_SNAPSHOT", Method: http.MethodGet, PathPattern: "/v1/chat/internal/conversations/{conversation_no}/snapshot", UpstreamService: "chat", UpstreamPathTemplate: "/v1/chat/internal/conversations/{conversation_no}/snapshot", AuthRequired: 1, InjectUserContext: 1},
 
 		{RouteCode: "BUILTIN_MEDIA_UPLOAD_INIT", Method: http.MethodPost, PathPattern: "/v1/media/upload/init", UpstreamService: "media", UpstreamPathTemplate: "/v1/media/upload/init", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_MEDIA_UPLOAD_COMPLETE", Method: http.MethodPost, PathPattern: "/v1/media/upload/complete", UpstreamService: "media", UpstreamPathTemplate: "/v1/media/upload/complete", AuthRequired: 1, InjectUserContext: 1},

@@ -1,0 +1,122 @@
+syntax = "proto3";
+
+package shopa.notification.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/notification-svc/api/v1;notificationv1";
+
+import "google/protobuf/timestamp.proto";
+
+service NotificationService {
+  rpc SendTemplateMessage(SendTemplateMessageReq) returns (SendTemplateMessageRes);
+  rpc BatchSendTemplateMessage(BatchSendTemplateMessageReq) returns (BatchSendTemplateMessageRes);
+  rpc GetDeliveryStatus(GetDeliveryStatusReq) returns (GetDeliveryStatusRes);
+}
+
+service UserPreferenceService {
+  rpc GetMyNotificationPreference(GetMyNotificationPreferenceReq) returns (GetMyNotificationPreferenceRes);
+  rpc UpdateMyNotificationPreference(UpdateMyNotificationPreferenceReq) returns (UpdateMyNotificationPreferenceRes);
+}
+
+service InternalNotificationService {
+  rpc RetryFailedMessage(RetryFailedMessageReq) returns (RetryFailedMessageRes);
+}
+
+enum ChannelType {
+  CHANNEL_TYPE_UNSPECIFIED = 0;
+  CHANNEL_TYPE_SMS = 1;
+  CHANNEL_TYPE_EMAIL = 2;
+  CHANNEL_TYPE_PUSH = 3;
+  CHANNEL_TYPE_IN_APP = 4;
+}
+
+enum NotificationBizType {
+  NOTIFICATION_BIZ_TYPE_UNSPECIFIED = 0;
+  NOTIFICATION_BIZ_TYPE_TRANSACTIONAL = 1;
+  NOTIFICATION_BIZ_TYPE_MARKETING = 2;
+  NOTIFICATION_BIZ_TYPE_SYSTEM = 3;
+}
+
+enum DeliveryStatus {
+  DELIVERY_STATUS_UNSPECIFIED = 0;
+  DELIVERY_STATUS_PENDING = 1;
+  DELIVERY_STATUS_SENT = 2;
+  DELIVERY_STATUS_DELIVERED = 3;
+  DELIVERY_STATUS_FAILED = 4;
+  DELIVERY_STATUS_DROPPED = 5;
+}
+
+message SendTemplateMessageReq {
+  uint64 user_id = 1;
+  string template_code = 2;
+  ChannelType channel = 3;
+  NotificationBizType biz_type = 4;
+  string template_params_json = 5;
+  string dedupe_key = 6;
+  string target_address = 7;
+  string idempotency_key = 99;
+}
+
+message SendTemplateMessageRes {
+  string notification_no = 1;
+  DeliveryStatus status = 2;
+  bool blocked_by_preference = 3;
+  bool blocked_by_frequency = 4;
+}
+
+message BatchSendTemplateMessageReq {
+  repeated SendTemplateMessageReq items = 1;
+}
+
+message BatchSendTemplateMessageRes {
+  repeated SendTemplateMessageRes items = 1;
+}
+
+message GetDeliveryStatusReq {
+  string notification_no = 1;
+}
+
+message GetDeliveryStatusRes {
+  string notification_no = 1;
+  DeliveryStatus status = 2;
+  string provider_message_id = 3;
+  string error_code = 4;
+  string error_message = 5;
+}
+
+message GetMyNotificationPreferenceReq {}
+
+message UserNotificationPreference {
+  uint64 user_id = 1;
+  bool allow_transactional_sms = 2;
+  bool allow_marketing_sms = 3;
+  bool allow_transactional_email = 4;
+  bool allow_marketing_email = 5;
+  bool allow_push = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+message GetMyNotificationPreferenceRes {
+  UserNotificationPreference preference = 1;
+}
+
+message UpdateMyNotificationPreferenceReq {
+  bool allow_marketing_sms = 1;
+  bool allow_marketing_email = 2;
+  bool allow_push = 3;
+  string idempotency_key = 99;
+}
+
+message UpdateMyNotificationPreferenceRes {
+  UserNotificationPreference preference = 1;
+}
+
+message RetryFailedMessageReq {
+  string notification_no = 1;
+  string reason_code = 2;
+  string idempotency_key = 99;
+}
+
+message RetryFailedMessageRes {
+  string notification_no = 1;
+  DeliveryStatus status = 2;
+}

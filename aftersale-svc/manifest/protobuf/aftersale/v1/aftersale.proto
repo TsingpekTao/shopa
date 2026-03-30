@@ -1,0 +1,222 @@
+﻿syntax = "proto3";
+
+package shopa.aftersale.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/aftersale-svc/api/v1;aftersalev1";
+
+import "google/protobuf/timestamp.proto";
+
+service BuyerAfterSaleService {
+  rpc CreateAfterSale(CreateAfterSaleReq) returns (CreateAfterSaleRes);
+  rpc CancelAfterSale(CancelAfterSaleReq) returns (CancelAfterSaleRes);
+  rpc GetMyAfterSaleDetail(GetMyAfterSaleDetailReq) returns (GetMyAfterSaleDetailRes);
+  rpc ListMyAfterSales(ListMyAfterSalesReq) returns (ListMyAfterSalesRes);
+}
+
+service SellerAfterSaleService {
+  rpc ListShopAfterSales(ListShopAfterSalesReq) returns (ListShopAfterSalesRes);
+  rpc GetShopAfterSaleDetail(GetShopAfterSaleDetailReq) returns (GetShopAfterSaleDetailRes);
+  rpc ApproveAfterSale(ApproveAfterSaleReq) returns (ApproveAfterSaleRes);
+  rpc RejectAfterSale(RejectAfterSaleReq) returns (RejectAfterSaleRes);
+}
+
+service InternalAfterSaleService {
+  rpc ExecuteRefundTask(ExecuteRefundTaskReq) returns (ExecuteRefundTaskRes);
+  rpc RetryRefundTask(RetryRefundTaskReq) returns (RetryRefundTaskRes);
+  rpc GetAfterSaleSnapshotByNo(GetAfterSaleSnapshotByNoReq) returns (GetAfterSaleSnapshotByNoRes);
+}
+
+enum AfterSaleType {
+  AFTER_SALE_TYPE_UNSPECIFIED = 0;
+  AFTER_SALE_TYPE_REFUND_ONLY = 1;
+  AFTER_SALE_TYPE_RETURN_AND_REFUND = 2;
+}
+
+enum AfterSaleStatus {
+  AFTER_SALE_STATUS_UNSPECIFIED = 0;
+  AFTER_SALE_STATUS_PENDING_SELLER_REVIEW = 1;
+  AFTER_SALE_STATUS_SELLER_REJECTED = 2;
+  AFTER_SALE_STATUS_WAIT_REFUND_TASK = 3;
+  AFTER_SALE_STATUS_REFUND_PROCESSING = 4;
+  AFTER_SALE_STATUS_REFUNDED = 5;
+  AFTER_SALE_STATUS_CANCELED = 6;
+  AFTER_SALE_STATUS_CLOSED = 7;
+}
+
+enum RefundTaskStatus {
+  REFUND_TASK_STATUS_UNSPECIFIED = 0;
+  REFUND_TASK_STATUS_PENDING = 1;
+  REFUND_TASK_STATUS_PROCESSING = 2;
+  REFUND_TASK_STATUS_SUCCEEDED = 3;
+  REFUND_TASK_STATUS_FAILED = 4;
+  REFUND_TASK_STATUS_DEAD_LETTER = 5;
+}
+
+enum RejectReasonCode {
+  REJECT_REASON_CODE_UNSPECIFIED = 0;
+  REJECT_REASON_CODE_EVIDENCE_INSUFFICIENT = 1;
+  REJECT_REASON_CODE_OUT_OF_WINDOW = 2;
+  REJECT_REASON_CODE_MALICIOUS_REQUEST = 3;
+  REJECT_REASON_CODE_OTHER = 4;
+}
+
+message AfterSaleCase {
+  string after_sale_no = 1;
+  string order_no = 2;
+  string sub_order_no = 3;
+  string item_no = 4;
+  uint64 user_id = 5;
+  string shop_no = 6;
+  string spu_no = 7;
+  string sku_no = 8;
+  uint32 qty = 9;
+  AfterSaleType after_sale_type = 10;
+  AfterSaleStatus after_sale_status = 11;
+  uint64 apply_refund_amount = 12; // 金额单位：分
+  uint64 approved_refund_amount = 13; // 金额单位：分
+  string reason_code = 14;
+  string reason_desc = 15;
+  repeated uint64 evidence_asset_ids = 16;
+  string buyer_remark = 17;
+  string seller_reply = 18;
+  RejectReasonCode reject_reason_code = 19;
+  uint64 version = 20;
+  google.protobuf.Timestamp created_at = 21;
+  google.protobuf.Timestamp updated_at = 22;
+  google.protobuf.Timestamp closed_at = 23;
+  string cancel_reason_code = 24;
+}
+
+message RefundTask {
+  string refund_task_no = 1;
+  string after_sale_no = 2;
+  string order_no = 3;
+  string sub_order_no = 4;
+  string pay_no = 5;
+  uint64 refund_amount = 6; // 金额单位：分
+  RefundTaskStatus status = 7;
+  uint32 retry_count = 8;
+  google.protobuf.Timestamp next_retry_at = 9;
+  string last_error_code = 10;
+  string last_error_message = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+}
+
+message CreateAfterSaleReq {
+  string order_no = 1;
+  string sub_order_no = 2;
+  string item_no = 3;
+  AfterSaleType after_sale_type = 4;
+  uint32 qty = 5;
+  uint64 apply_refund_amount = 6;
+  string reason_code = 7;
+  string reason_desc = 8;
+  repeated uint64 evidence_asset_ids = 9;
+  string buyer_remark = 10;
+  string idempotency_key = 99;
+}
+
+message CreateAfterSaleRes { AfterSaleCase after_sale = 1; }
+
+message CancelAfterSaleReq {
+  string after_sale_no = 1;
+  uint64 expected_version = 2;
+  string reason_code = 3;
+  string idempotency_key = 99;
+}
+
+message CancelAfterSaleRes {
+  string after_sale_no = 1;
+  AfterSaleStatus after_sale_status = 2;
+}
+
+message GetMyAfterSaleDetailReq { string after_sale_no = 1; }
+
+message GetMyAfterSaleDetailRes {
+  AfterSaleCase after_sale = 1;
+  RefundTask refund_task = 2;
+}
+
+message ListMyAfterSalesReq {
+  int32 page_size = 1;
+  string next_cursor = 2;
+  repeated AfterSaleStatus statuses = 3;
+}
+
+message ListMyAfterSalesRes {
+  repeated AfterSaleCase list = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+}
+
+message ListShopAfterSalesReq {
+  string shop_no = 1;
+  int32 page_size = 2;
+  string next_cursor = 3;
+  repeated AfterSaleStatus statuses = 4;
+}
+
+message ListShopAfterSalesRes {
+  repeated AfterSaleCase list = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+}
+
+message GetShopAfterSaleDetailReq { string after_sale_no = 1; }
+
+message GetShopAfterSaleDetailRes {
+  AfterSaleCase after_sale = 1;
+  RefundTask refund_task = 2;
+}
+
+message ApproveAfterSaleReq {
+  string after_sale_no = 1;
+  uint64 approved_refund_amount = 2;
+  string seller_reply = 3;
+  uint64 expected_version = 4;
+  string idempotency_key = 99;
+}
+
+message ApproveAfterSaleRes {
+  AfterSaleCase after_sale = 1;
+  RefundTask refund_task = 2;
+}
+
+message RejectAfterSaleReq {
+  string after_sale_no = 1;
+  RejectReasonCode reject_reason_code = 2;
+  string seller_reply = 3;
+  uint64 expected_version = 4;
+  string idempotency_key = 99;
+}
+
+message RejectAfterSaleRes {
+  string after_sale_no = 1;
+  AfterSaleStatus after_sale_status = 2;
+}
+
+message ExecuteRefundTaskReq {
+  string refund_task_no = 1;
+  string idempotency_key = 99;
+}
+
+message ExecuteRefundTaskRes {
+  RefundTask task = 1;
+  bool refund_succeeded = 2;
+  bool should_retry = 3;
+}
+
+message RetryRefundTaskReq {
+  string refund_task_no = 1;
+  string reason_code = 2;
+}
+
+message RetryRefundTaskRes { RefundTask task = 1; }
+
+message GetAfterSaleSnapshotByNoReq { string after_sale_no = 1; }
+
+message GetAfterSaleSnapshotByNoRes {
+  AfterSaleCase after_sale = 1;
+  RefundTask refund_task = 2;
+}

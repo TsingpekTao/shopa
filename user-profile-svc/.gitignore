@@ -17,5 +17,3 @@ temp/
 temp.yaml
 bin
 **/config/config.yaml
-manifest/config/config.dev.yaml
-manifest/config/config.local.yaml

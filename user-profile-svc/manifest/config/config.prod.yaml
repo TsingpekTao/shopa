@@ -15,7 +15,7 @@ grpc:
   accessLogPattern: "access-{Ymd}.log"
 # HTTP server configuration (OpenAPI/Swagger + optional REST APIs).
 server:
-  address: ":8001"
+  address: ":8003"
   openapiPath: "/api.json"
   swaggerPath: "/swagger"
 
@@ -46,7 +46,7 @@ mq:
 upstream:
   edgeGateway: "edge-gateway:8000"
   iam: "iam-svc:8001"
-  userProfile: "user-profile-svc:8001"
+  userProfile: "user-profile-svc:8003"
 
 # Object storage / media placeholders.
 storage:

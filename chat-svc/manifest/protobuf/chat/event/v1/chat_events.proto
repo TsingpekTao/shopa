@@ -1,0 +1,31 @@
+﻿syntax = "proto3";
+
+package shopa.chat.event.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/chat-svc/api/event/v1;chateventv1";
+
+import "google/protobuf/timestamp.proto";
+
+message ChatMessagePublishedEvent {
+  string event_id = 1;
+  string conversation_no = 2;
+  string message_no = 3;
+  uint64 buyer_id = 4;
+  string shop_no = 5;
+  string scene_code = 6;
+  string order_no = 7;
+  string sub_order_no = 8;
+  string anchor_spu_no = 9;
+  string sender_type = 10;
+  string message_type = 11;
+  google.protobuf.Timestamp occurred_at = 12;
+}
+
+message ConversationReadEvent {
+  string event_id = 1;
+  string conversation_no = 2;
+  string reader_type = 3;
+  uint64 reader_user_id = 4;
+  string read_to_message_no = 5;
+  google.protobuf.Timestamp occurred_at = 6;
+}
