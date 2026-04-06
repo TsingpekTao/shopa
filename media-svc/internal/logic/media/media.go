@@ -3,6 +3,7 @@ package media
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -778,9 +779,29 @@ func (s *sMedia) getScenePolicy(ctx context.Context, sceneCode string) (*entity.
 		Where(cols.SceneCode, sceneCode).
 		Where(cols.Status, consts.ScenePolicyStatusEnabled).
 		Scan(&row); err != nil {
-		return nil, gerror.Wrap(err, "query media_scene_policy failed")
+		if !gerror.HasCode(err, gcode.CodeNotFound) && !strings.Contains(strings.ToLower(err.Error()), sql.ErrNoRows.Error()) {
+			return nil, gerror.Wrap(err, "query media_scene_policy failed")
+		}
+		row = entity.MediaScenePolicy{}
 	}
 	if row.Id == 0 {
+		if strings.EqualFold(strings.TrimSpace(sceneCode), "buyer_avatar") {
+			return &entity.MediaScenePolicy{
+				SceneCode:           "buyer_avatar",
+				AclType:             consts.ACLTypePublicRead,
+				MaxCount:            1,
+				MaxSizeBytes:        5 * 1024 * 1024,
+				AllowMimeJson:       `["image/jpeg","image/png","image/webp"]`,
+				AllowExtJson:        `[".jpg",".jpeg",".png",".webp"]`,
+				RetentionDays:       3650,
+				GcGraceHours:        24,
+				RiskLevel:           1,
+				RiskAsyncEnabled:    1,
+				ProcessAsyncEnabled: 0,
+				Status:              consts.ScenePolicyStatusEnabled,
+				Remark:              "buyer avatar upload fallback policy",
+			}, nil
+		}
 		return nil, gerror.NewCode(gcode.CodeNotFound, "scene policy not found or disabled")
 	}
 	return &row, nil

@@ -184,3 +184,50 @@ export async function batchAdjustSellerStock(
   );
   return (response.results ?? []).map((item) => normalizeAdjustResult(item)).filter((item) => item.skuNo);
 }
+
+export async function adjustInventory(payload: {
+  shopNo?: string;
+  skuNo: string;
+  spuNo?: string;
+  delta: number;
+  bizNo?: string;
+  reasonCode?: string;
+  remark?: string;
+  idempotencyKey?: string;
+}): Promise<{
+  success: boolean;
+  failedItems: Array<{ skuNo: string; reason: string }>;
+  results?: BatchAdjustSellerStockResultItem[];
+}> {
+  try {
+    const results = await batchAdjustSellerStock({
+      shopNo: payload.shopNo ?? "",
+      idempotencyKey: payload.idempotencyKey,
+      items: [
+        {
+          skuNo: payload.skuNo,
+          spuNo: payload.spuNo,
+          deltaTotalQty: payload.delta,
+          bizNo: payload.bizNo,
+          reasonCode: (payload.reasonCode as never) ?? "ADJUST_REASON_CODE_SELLER_CORRECTION",
+          remark: payload.remark
+        }
+      ]
+    });
+    return {
+      success: results.length > 0,
+      failedItems: [],
+      results
+    };
+  } catch (error) {
+    return {
+      success: false,
+      failedItems: [
+        {
+          skuNo: payload.skuNo,
+          reason: error instanceof Error ? error.message : "Unable to reach inventory service"
+        }
+      ]
+    };
+  }
+}

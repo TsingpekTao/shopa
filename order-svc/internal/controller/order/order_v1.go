@@ -51,6 +51,10 @@ func (c *ControllerV1) HandlePayCallback(ctx context.Context, req *httpv1.Handle
 	return c.order.HandlePayCallback(ctx, &req.HandlePayCallbackReq)
 }
 
+func (c *ControllerV1) CompleteOrder(ctx context.Context, req *httpv1.CompleteOrderReq) (*httpv1.CompleteOrderRes, error) {
+	return c.order.CompleteOrder(ctx, &req.CompleteOrderReq)
+}
+
 func (c *ControllerV1) GetOrderSnapshotByNo(ctx context.Context, req *httpv1.GetOrderSnapshotByNoReq) (*httpv1.GetOrderSnapshotByNoRes, error) {
 	return c.order.GetOrderSnapshotByNo(ctx, &pb.GetOrderSnapshotByNoReq{OrderNo: req.OrderNo})
 }

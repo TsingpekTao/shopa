@@ -24,6 +24,26 @@ redis:
     db: 0
     pass: ""
 
+elasticsearch:
+  addresses:
+    - "http://127.0.0.1:9200"
+  username: ""
+  password: ""
+  indexPrefix: "shopa_search"
+  requestTimeout: "5s"
+  enableSniff: false
+
+worker:
+  searchOutbox:
+    enabled: true
+    intervalSeconds: 10
+    batchSize: 50
+  physicalDelete:
+    enabled: true
+    intervalSeconds: 300
+    batchSize: 50
+    retentionHours: 168
+
 logger:
   level: "all"
   stdout: true

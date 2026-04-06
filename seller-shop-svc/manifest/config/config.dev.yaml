@@ -1,7 +1,18 @@
-﻿# seller-shop-svc configuration (dev environment).
+# seller-shop-svc configuration (dev environment).
 # Start command example:
 #   gf run main.go --gf.gcfg.file=config.dev.yaml
 
+# gRPC server configuration.
+grpc:
+  address: ":50051"
+  name: "seller-shop.svc"
+  logPath: ""
+  logStdout: true
+  errorStack: true
+  errorLogEnabled: true
+  errorLogPattern: "error-{Ymd}.log"
+  accessLogEnabled: true
+  accessLogPattern: "access-{Ymd}.log"
 # HTTP server configuration (OpenAPI/Swagger + optional REST APIs).
 server:
   address: ":8003"

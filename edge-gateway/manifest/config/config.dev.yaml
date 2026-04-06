@@ -53,6 +53,7 @@ upstream:
   reviewHttp: "http://review-svc:8011"
   fulfillmentHttp: "http://fulfillment-svc:8012"
   chatHttp: "http://chat-svc:8013"
+  agentHttp: "http://agent-svc:8019"
   iamGrpc: "iam-svc:9001"
   userProfileGrpc: "user-profile-svc:8002"
   sellerShopGrpc: "seller-shop-svc:50051"
@@ -65,11 +66,12 @@ upstream:
   notificationGrpc: "notification-svc:9017"
   promotionGrpc: "promotion-svc:9018"
   searchGrpc: "search-svc:9019"
-  pointsGrpc: "points-svc:8012"
+  pointsGrpc: "points-svc:9012"
   aftersaleGrpc: "aftersale-svc:9010"
   reviewGrpc: "review-svc:9011"
   fulfillmentGrpc: "fulfillment-svc:9014"
   chatGrpc: "chat-svc:9013"
+  agentGrpc: "agent-svc:9020"
 
 gateway:
   cors:
@@ -78,13 +80,19 @@ gateway:
       - "http://localhost:3000"
       - "http://127.0.0.1:3100"
       - "http://localhost:3100"
+      - "http://127.0.0.1:3101"
+      - "http://localhost:3101"
+      - "http://127.0.0.1:3102"
+      - "http://localhost:3102"
       - "http://127.0.0.1:3200"
       - "http://localhost:3200"
       - "http://localhost:3000"
       - "http://localhost:3100"
+      - "http://localhost:3101"
+      - "http://localhost:3102"
       - "http://localhost:3200"
     allowedMethods: "GET,POST,PUT,PATCH,DELETE,OPTIONS"
-    allowedHeaders: "Authorization,Content-Type,X-Request-Id,X-User-Id,X-Account-Status-Code,X-Idempotency-Key"
+    allowedHeaders: "Authorization,Content-Type,X-Request-Id,X-User-Id,X-Account-Status-Code,X-Idempotency-Key,X-Shop-No"
     allowCredentials: true
   proxy:
     defaultTimeoutMs: 15000
@@ -107,3 +115,4 @@ storage:
 logger:
   level: "all"
   stdout: true
+

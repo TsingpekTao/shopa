@@ -41,20 +41,25 @@ const (
 type sOrder struct {
 }
 
+// New 创建订单领域逻辑实例。
 func New() *sOrder { return &sOrder{} }
 
+// init 在包初始化阶段注册订单服务实现。
 func init() {
 	service.RegisterOrder(New())
 }
 
+// CreateOrderFromCart 基于购物车结算快照创建订单。
 func (s *sOrder) CreateOrderFromCart(ctx context.Context, req *v1.CreateOrderFromCartReq) (*v1.CreateOrderFromCartRes, error) {
 	if req == nil || strings.TrimSpace(req.GetCheckoutToken()) == "" || strings.TrimSpace(req.GetIdempotencyKey()) == "" || req.GetAddressId() == 0 {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "checkout_token/address_id/idempotency_key are required")
 	}
+	// 读取用户身份，校验必需的上下文信息。
 	userID, err := userIDFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
+	// 幂等记录：确保相同 key 的下单请求只会执行一次，避免重复扣库存或积分。
 	hit, row, err := s.getOrCreateIdempotency(ctx, userID, req.GetIdempotencyKey(), idempotencyActionCreateFromCart)
 	if err != nil {
 		return nil, err
@@ -72,38 +77,78 @@ func (s *sOrder) CreateOrderFromCart(ctx context.Context, req *v1.CreateOrderFro
 		return nil, err
 	}
 	if snap.UserID != 0 && snap.UserID != userID {
+		// 购物车快照指定了用户但与当前访问用户不一致，直接拒绝。
 		_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionCreateFromCart, "TOKEN_USER_MISMATCH")
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "checkout token user mismatch")
 	}
 	if req.GetExpectedSnapshotDigest() != "" && snap.SnapshotDigest != "" && req.GetExpectedSnapshotDigest() != snap.SnapshotDigest {
+		// 前端传入的快照摘要与 Redis 中的实际快照不一致，防止脏数据提交。
 		_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionCreateFromCart, "SNAPSHOT_DIGEST_MISMATCH")
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "snapshot digest mismatch")
 	}
 	lines := snapshotToOrderLines(snap)
 	if len(lines) == 0 {
+		// 无行项目说明快照已经被消费或为空，直接标记失败。
 		_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionCreateFromCart, "EMPTY_SNAPSHOT")
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "snapshot has no items")
 	}
+	// 组装创建订单所需的关键字段。
 	orderNo := generateBizNo("ORD")
-	reservationNo, err := s.reserveInventory(ctx, orderNo, userID, lines)
-	if err != nil {
-		_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionCreateFromCart, "INVENTORY_RESERVE_FAILED")
-		return nil, err
-	}
-	agg, err := s.createOrderAggregate(ctx, &createOrderInput{
+	createInput := &createOrderInput{
 		OrderNo:        orderNo,
 		UserID:         userID,
 		AddressID:      req.GetAddressId(),
 		BuyerRemark:    req.GetBuyerRemark(),
-		ReservationNo:  reservationNo,
 		GoodsAmount:    snap.GoodsAmount,
 		FreightAmount:  snap.FreightAmount,
 		DiscountAmount: 0,
 		PayableAmount:  snap.PayableAmount,
 		Lines:          lines,
-	})
+	}
+	previewResp, err := s.previewOrderPoints(ctx, createInput, req.GetUsePoints(), req.GetIntentPoints(), req.GetExpectedPointsCashAmount(), req.GetPointsRuleSnapshotDigest(), req.GetSubmitSourceCode())
+	if err != nil {
+		// 预览失败直接回滚幂等状态，避免重复调用锁分接口。
+		_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionCreateFromCart, "POINTS_PREVIEW_FAILED")
+		return nil, err
+	}
+	lockResp, err := s.lockPointsForOrder(ctx, createInput, req.GetUsePoints(), req.GetIntentPoints(), req.GetExpectedPointsCashAmount(), req.GetPointsRuleSnapshotDigest(), req.GetIdempotencyKey(), req.GetSubmitSourceCode())
+	if err != nil {
+		// 锁分失败也记录幂等失败，防止客户端重试导致重复锁定。
+		_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionCreateFromCart, "POINTS_LOCK_FAILED")
+		return nil, err
+	}
+	// 将积分锁定的结果回填到订单创建输入，后续金额计算依赖。
+	createInput.PointsReservationNo = lockResp.ReservationNo
+	createInput.PointsUsed = lockResp.PointsUsed
+	createInput.PointsDiscountAmount = lockResp.PointsDiscountAmount
+	createInput.PointsRuleSnapshotJSON = firstNonEmpty(lockResp.PointsRuleSnapshotJSON, previewResp.PointsRuleSnapshotJSON)
+	createInput.PointsRuleSnapshotDigest = firstNonEmpty(lockResp.PointsRuleSnapshotDigest, previewResp.PointsRuleDigest)
+	createInput.PointsSubAllocations = pointsAllocationsToMap(lockResp.SubAllocations)
+	if createInput.PointsDiscountAmount > createInput.PayableAmount {
+		// 锁定的积分折现金额超过应付金额，属于异常数据，直接拒绝。
+		_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionCreateFromCart, "POINTS_AMOUNT_INVALID")
+		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "points discount amount exceeds payable amount")
+	}
+	createInput.PayableAmount -= createInput.PointsDiscountAmount
+
+	// 预留库存，失败时会释放积分锁并标记幂等失败。
+	reservationNo, err := s.reserveInventory(ctx, orderNo, userID, lines)
+	if err != nil {
+		if isNotImplementedErr(err) {
+			g.Log().Warningf(ctx, "inventory reserve not implemented, skip reservation, order_no=%s", orderNo)
+			reservationNo = ""
+		} else {
+			_ = s.compensateLockedPointsAfterCreateFailure(ctx, userID, orderNo, createInput.PointsReservationNo, err)
+			_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionCreateFromCart, "INVENTORY_RESERVE_FAILED")
+			return nil, err
+		}
+	}
+	createInput.ReservationNo = reservationNo
+	// 真正落库订单主子单。失败时补偿库存与积分。
+	agg, err := s.createOrderAggregate(ctx, createInput)
 	if err != nil {
 		s.cancelInventoryReservationBestEffort(ctx, reservationNo, orderNo, "ORDER_CREATE_FAILED")
+		_ = s.compensateLockedPointsAfterCreateFailure(ctx, userID, orderNo, createInput.PointsReservationNo, err)
 		_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionCreateFromCart, "ORDER_CREATE_FAILED")
 		return nil, err
 	}
@@ -113,14 +158,17 @@ func (s *sOrder) CreateOrderFromCart(ctx context.Context, req *v1.CreateOrderFro
 	return &v1.CreateOrderFromCartRes{Order: agg, IdempotentReplay: false}, nil
 }
 
+// CreateOrderBuyNow 基于立即购买参数直接创建订单。
 func (s *sOrder) CreateOrderBuyNow(ctx context.Context, req *v1.CreateOrderBuyNowReq) (*v1.CreateOrderBuyNowRes, error) {
 	if req == nil || len(req.GetItems()) == 0 || strings.TrimSpace(req.GetIdempotencyKey()) == "" || req.GetAddressId() == 0 {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "items/address_id/idempotency_key are required")
 	}
+	// 从上下文拿用户 ID，确保请求已经鉴权。
 	userID, err := userIDFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
+	// 幂等处理：同一个下单请求的重复调用直接重放历史结果。
 	hit, row, err := s.getOrCreateIdempotency(ctx, userID, req.GetIdempotencyKey(), idempotencyActionCreateBuyNow)
 	if err != nil {
 		return nil, err
@@ -141,14 +189,41 @@ func (s *sOrder) CreateOrderBuyNow(ctx context.Context, req *v1.CreateOrderBuyNo
 		lines = append(lines, orderLine{SkuNo: item.GetSkuNo(), SpuNo: item.GetSpuNo(), ShopNo: item.GetShopNo(), Qty: item.GetQty()})
 	}
 	orderNo := generateBizNo("ORD")
-	reservationNo, err := s.reserveInventory(ctx, orderNo, userID, lines)
+	createInput := &createOrderInput{OrderNo: orderNo, UserID: userID, AddressID: req.GetAddressId(), BuyerRemark: req.GetBuyerRemark(), Lines: lines}
+	previewResp, err := s.previewOrderPoints(ctx, createInput, req.GetUsePoints(), req.GetIntentPoints(), req.GetExpectedPointsCashAmount(), req.GetPointsRuleSnapshotDigest(), req.GetSubmitSourceCode())
 	if err != nil {
-		_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionCreateBuyNow, "INVENTORY_RESERVE_FAILED")
+		_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionCreateBuyNow, "POINTS_PREVIEW_FAILED")
 		return nil, err
 	}
-	agg, err := s.createOrderAggregate(ctx, &createOrderInput{OrderNo: orderNo, UserID: userID, AddressID: req.GetAddressId(), BuyerRemark: req.GetBuyerRemark(), ReservationNo: reservationNo, Lines: lines})
+	lockResp, err := s.lockPointsForOrder(ctx, createInput, req.GetUsePoints(), req.GetIntentPoints(), req.GetExpectedPointsCashAmount(), req.GetPointsRuleSnapshotDigest(), req.GetIdempotencyKey(), req.GetSubmitSourceCode())
+	if err != nil {
+		// 锁分失败直接结束，避免后续库存已扣而积分未锁。
+		_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionCreateBuyNow, "POINTS_LOCK_FAILED")
+		return nil, err
+	}
+	createInput.PointsReservationNo = lockResp.ReservationNo
+	createInput.PointsUsed = lockResp.PointsUsed
+	createInput.PointsDiscountAmount = lockResp.PointsDiscountAmount
+	createInput.PointsRuleSnapshotJSON = firstNonEmpty(lockResp.PointsRuleSnapshotJSON, previewResp.PointsRuleSnapshotJSON)
+	createInput.PointsRuleSnapshotDigest = firstNonEmpty(lockResp.PointsRuleSnapshotDigest, previewResp.PointsRuleDigest)
+	createInput.PointsSubAllocations = pointsAllocationsToMap(lockResp.SubAllocations)
+
+	reservationNo, err := s.reserveInventory(ctx, orderNo, userID, lines)
+	if err != nil {
+		if isNotImplementedErr(err) {
+			g.Log().Warningf(ctx, "inventory reserve not implemented, skip reservation, order_no=%s", orderNo)
+			reservationNo = ""
+		} else {
+			_ = s.compensateLockedPointsAfterCreateFailure(ctx, userID, orderNo, createInput.PointsReservationNo, err)
+			_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionCreateBuyNow, "INVENTORY_RESERVE_FAILED")
+			return nil, err
+		}
+	}
+	createInput.ReservationNo = reservationNo
+	agg, err := s.createOrderAggregate(ctx, createInput)
 	if err != nil {
 		s.cancelInventoryReservationBestEffort(ctx, reservationNo, orderNo, "ORDER_CREATE_FAILED")
+		_ = s.compensateLockedPointsAfterCreateFailure(ctx, userID, orderNo, createInput.PointsReservationNo, err)
 		_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionCreateBuyNow, "ORDER_CREATE_FAILED")
 		return nil, err
 	}
@@ -158,14 +233,17 @@ func (s *sOrder) CreateOrderBuyNow(ctx context.Context, req *v1.CreateOrderBuyNo
 	return &v1.CreateOrderBuyNowRes{Order: agg, IdempotentReplay: false}, nil
 }
 
+// RequestPay 为指定订单发起支付请求。
 func (s *sOrder) RequestPay(ctx context.Context, req *v1.RequestPayReq) (*v1.RequestPayRes, error) {
 	if req == nil || strings.TrimSpace(req.GetOrderNo()) == "" || strings.TrimSpace(req.GetIdempotencyKey()) == "" || req.GetPayChannel() == v1.PayChannel_PAY_CHANNEL_UNSPECIFIED {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "order_no/pay_channel/idempotency_key are required")
 	}
+	// 只有本人才能拉起支付，先解析 userID。
 	userID, err := userIDFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
+	// 幂等处理：重复支付请求直接重放历史结果，避免重复写入 payment 表。
 	hit, row, err := s.getOrCreateIdempotency(ctx, userID, req.GetIdempotencyKey(), idempotencyActionRequestPay)
 	if err != nil {
 		return nil, err
@@ -173,6 +251,7 @@ func (s *sOrder) RequestPay(ctx context.Context, req *v1.RequestPayReq) (*v1.Req
 	if hit {
 		return s.replayRequestPay(ctx, req.GetOrderNo(), row)
 	}
+	// 校验订单归属和状态，只有待支付订单才能创建支付单。
 	mainRow, err := s.getOrderMainByNo(ctx, req.GetOrderNo())
 	if err != nil {
 		_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionRequestPay, "ORDER_NOT_FOUND")
@@ -187,6 +266,7 @@ func (s *sOrder) RequestPay(ctx context.Context, req *v1.RequestPayReq) (*v1.Req
 	if expireAt == nil {
 		expireAt = gtime.NewFromTime(time.Now().Add(15 * time.Minute))
 	}
+	// 事务内同时插入支付记录与更新主单支付状态，保证状态一致。
 	if err = dao.OrderMain.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		_, err = tx.Model(dao.OrderPayment.Table()).Data(do.OrderPayment{OrderNo: req.GetOrderNo(), PayNo: payNo, PaymentEventId: generateBizNo("PEV"), PayChannel: uint(req.GetPayChannel()), PayStatusCode: "PAYING"}).Insert()
 		if err != nil {
@@ -204,14 +284,18 @@ func (s *sOrder) RequestPay(ctx context.Context, req *v1.RequestPayReq) (*v1.Req
 	}
 	return &v1.RequestPayRes{OrderNo: req.GetOrderNo(), PayNo: payNo, PaymentStatus: v1.PaymentStatus_PAYMENT_STATUS_PAYING, PayUrl: fmt.Sprintf("https://mock-pay.shopa.local/pay?pay_no=%s", payNo), PayPayloadJson: "{}", ExpireAt: toProtoTs(expireAt)}, nil
 }
+
+// CancelMyOrder 取消当前买家的订单。
 func (s *sOrder) CancelMyOrder(ctx context.Context, req *v1.CancelMyOrderReq) (*v1.CancelMyOrderRes, error) {
 	if req == nil || strings.TrimSpace(req.GetOrderNo()) == "" || strings.TrimSpace(req.GetIdempotencyKey()) == "" {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "order_no/idempotency_key are required")
 	}
+	// 只有下单用户才能主动取消，先获取 userID。
 	userID, err := userIDFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
+	// 幂等：避免重复取消导致状态抖动。
 	hit, row, err := s.getOrCreateIdempotency(ctx, userID, req.GetIdempotencyKey(), idempotencyActionCancelOrder)
 	if err != nil {
 		return nil, err
@@ -221,12 +305,15 @@ func (s *sOrder) CancelMyOrder(ctx context.Context, req *v1.CancelMyOrderReq) (*
 	}
 	reason := req.GetReasonCode()
 	if reason == v1.CancelReasonCode_CANCEL_REASON_CODE_UNSPECIFIED {
+		// 默认设置为买家主动取消，方便运营统计。
 		reason = v1.CancelReasonCode_CANCEL_REASON_CODE_BUYER_CANCEL
 	}
 	var (
-		status        = v1.OrderStatus_ORDER_STATUS_UNSPECIFIED
-		reservationNo string
+		status              = v1.OrderStatus_ORDER_STATUS_UNSPECIFIED
+		reservationNo       string
+		pointsReservationNo string
 	)
+	// 事务内同时更新主单、子单状态，防止部分更新。
 	err = dao.OrderMain.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		cols := dao.OrderMain.Columns()
 		var mainRow entity.OrderMain
@@ -237,12 +324,14 @@ func (s *sOrder) CancelMyOrder(ctx context.Context, req *v1.CancelMyOrderReq) (*
 			return gerror.NewCode(gcode.CodeNotFound, "order not found")
 		}
 		reservationNo = mainRow.ReservationNo
+		pointsReservationNo = mainRow.PointsReservationNo
 		current := v1.OrderStatus(mainRow.OrderStatus)
 		if current == v1.OrderStatus_ORDER_STATUS_CANCELED || current == v1.OrderStatus_ORDER_STATUS_CLOSED {
 			status = current
 			return nil
 		}
 		if current != v1.OrderStatus_ORDER_STATUS_PENDING_PAY {
+			// 非待支付订单不允许前台取消，防止已付款的资金纠纷。
 			return gerror.NewCode(gcode.CodeInvalidParameter, "only pending-pay order can be canceled")
 		}
 		result, err := tx.Model(dao.OrderMain.Table()).Where(cols.OrderNo, req.GetOrderNo()).Where(cols.UserId, userID).Where(cols.OrderStatus, uint(v1.OrderStatus_ORDER_STATUS_PENDING_PAY)).Data(do.OrderMain{OrderStatus: uint(v1.OrderStatus_ORDER_STATUS_CANCELED), CancelReasonCode: uint(reason), ClosedAt: gtime.Now(), Version: gdb.Raw(cols.Version + " + 1")}).Update()
@@ -268,16 +357,21 @@ func (s *sOrder) CancelMyOrder(ctx context.Context, req *v1.CancelMyOrderReq) (*
 	if reservationNo != "" {
 		s.cancelInventoryReservationBestEffort(ctx, reservationNo, req.GetOrderNo(), reason.String())
 	}
+	if pointsReservationNo != "" {
+		s.compensateLockedPointsAfterOrderClose(ctx, userID, req.GetOrderNo(), pointsReservationNo, reason.String())
+	}
 	if err = s.markIdempotencySuccess(ctx, userID, req.GetIdempotencyKey(), idempotencyActionCancelOrder, req.GetOrderNo(), nil); err != nil {
 		return nil, err
 	}
 	return &v1.CancelMyOrderRes{OrderNo: req.GetOrderNo(), OrderStatus: status}, nil
 }
 
+// GetMyOrderDetail 查询当前买家的订单详情。
 func (s *sOrder) GetMyOrderDetail(ctx context.Context, req *v1.GetMyOrderDetailReq) (*v1.GetMyOrderDetailRes, error) {
 	if req == nil || strings.TrimSpace(req.GetOrderNo()) == "" {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "order_no is required")
 	}
+	// 用户级别查询，必须保证订单属于本人。
 	userID, err := userIDFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -296,7 +390,9 @@ func (s *sOrder) GetMyOrderDetail(ctx context.Context, req *v1.GetMyOrderDetailR
 	return &v1.GetMyOrderDetailRes{Order: agg}, nil
 }
 
+// ListMyOrders 分页查询当前买家的订单列表。
 func (s *sOrder) ListMyOrders(ctx context.Context, req *v1.ListMyOrdersReq) (*v1.ListMyOrdersRes, error) {
+	// 个人订单列表：按照创建时间倒序分页，使用游标避免翻页偏移。
 	userID, err := userIDFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -340,10 +436,12 @@ func (s *sOrder) ListMyOrders(ctx context.Context, req *v1.ListMyOrdersReq) (*v1
 	return &v1.ListMyOrdersRes{Orders: orders, NextCursor: nextCursor, HasMore: hasMore}, nil
 }
 
+// ListShopOrders 分页查询店铺维度的订单列表。
 func (s *sOrder) ListShopOrders(ctx context.Context, req *v1.ListShopOrdersReq) (*v1.ListShopOrdersRes, error) {
 	if req == nil || strings.TrimSpace(req.GetShopNo()) == "" {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "shop_no is required")
 	}
+	// 店铺侧列表：以子单为粒度，便于商家查看本店订单。
 	pageSize := normalizePageSize(req.GetPageSize())
 	cursorID, err := parseCursorID(req.GetNextCursor())
 	if err != nil {
@@ -383,10 +481,12 @@ func (s *sOrder) ListShopOrders(ctx context.Context, req *v1.ListShopOrdersReq) 
 	return &v1.ListShopOrdersRes{Orders: orders, NextCursor: nextCursor, HasMore: hasMore}, nil
 }
 
+// GetShopOrderDetail 查询店铺侧的子单详情。
 func (s *sOrder) GetShopOrderDetail(ctx context.Context, req *v1.GetShopOrderDetailReq) (*v1.GetShopOrderDetailRes, error) {
 	if req == nil || strings.TrimSpace(req.GetSubOrderNo()) == "" {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "sub_order_no is required")
 	}
+	// 先查子单确认存在，随后加载整单聚合数据，保证子单信息与主单保持一致。
 	var sub entity.OrderSub
 	err := dao.OrderSub.Ctx(ctx).Where(dao.OrderSub.Columns().SubOrderNo, req.GetSubOrderNo()).WhereNull(dao.OrderSub.Columns().DeletedAt).Scan(&sub)
 	if err != nil {
@@ -416,11 +516,13 @@ func (s *sOrder) GetShopOrderDetail(ctx context.Context, req *v1.GetShopOrderDet
 	return &v1.GetShopOrderDetailRes{Order: agg, SubOrder: target}, nil
 }
 
+// MarkSubOrderShipped 将子单标记为已发货。
 func (s *sOrder) MarkSubOrderShipped(ctx context.Context, req *v1.MarkSubOrderShippedReq) (*v1.MarkSubOrderShippedRes, error) {
 	if req == nil || strings.TrimSpace(req.GetSubOrderNo()) == "" {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "sub_order_no is required")
 	}
 	status := v1.SubOrderStatus_SUB_ORDER_STATUS_UNSPECIFIED
+	// 事务内校验当前状态并更新为已发货，防止并发写覆盖。
 	err := dao.OrderSub.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		cols := dao.OrderSub.Columns()
 		var sub entity.OrderSub
@@ -436,6 +538,7 @@ func (s *sOrder) MarkSubOrderShipped(ctx context.Context, req *v1.MarkSubOrderSh
 			return nil
 		}
 		if current != v1.SubOrderStatus_SUB_ORDER_STATUS_PAID && current != v1.SubOrderStatus_SUB_ORDER_STATUS_WAIT_SHIP {
+			// 子单必须已付款或等待发货才能标记发货。
 			return gerror.NewCode(gcode.CodeInvalidParameter, "sub order not shippable")
 		}
 		result, err := tx.Model(dao.OrderSub.Table()).Where(cols.SubOrderNo, req.GetSubOrderNo()).WhereIn(cols.SubStatus, []uint{uint(v1.SubOrderStatus_SUB_ORDER_STATUS_PAID), uint(v1.SubOrderStatus_SUB_ORDER_STATUS_WAIT_SHIP)}).Data(do.OrderSub{SubStatus: uint(v1.SubOrderStatus_SUB_ORDER_STATUS_SHIPPED), SellerRemark: req.GetShippedNote()}).Update()
@@ -454,6 +557,8 @@ func (s *sOrder) MarkSubOrderShipped(ctx context.Context, req *v1.MarkSubOrderSh
 	}
 	return &v1.MarkSubOrderShippedRes{SubOrderNo: req.GetSubOrderNo(), SubStatus: status}, nil
 }
+
+// CloseOrderIfUnpaid 关闭超时未支付的订单。
 func (s *sOrder) CloseOrderIfUnpaid(ctx context.Context, req *v1.CloseOrderIfUnpaidReq) (*v1.CloseOrderIfUnpaidRes, error) {
 	if req == nil || strings.TrimSpace(req.GetOrderNo()) == "" {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "order_no is required")
@@ -463,10 +568,13 @@ func (s *sOrder) CloseOrderIfUnpaid(ctx context.Context, req *v1.CloseOrderIfUnp
 		reason = v1.CancelReasonCode_CANCEL_REASON_CODE_TIMEOUT_CLOSE
 	}
 	var (
-		closed        bool
-		status        = v1.OrderStatus_ORDER_STATUS_UNSPECIFIED
-		reservationNo string
+		closed              bool
+		status              = v1.OrderStatus_ORDER_STATUS_UNSPECIFIED
+		reservationNo       string
+		pointsReservationNo string
+		userID              uint64
 	)
+	// 定时任务或支付回调失败时会调用该流程，事务内关闭主单与子单。
 	err := dao.OrderMain.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		cols := dao.OrderMain.Columns()
 		var mainRow entity.OrderMain
@@ -476,12 +584,15 @@ func (s *sOrder) CloseOrderIfUnpaid(ctx context.Context, req *v1.CloseOrderIfUnp
 		if mainRow.Id == 0 {
 			return gerror.NewCode(gcode.CodeNotFound, "order not found")
 		}
+		userID = mainRow.UserId
 		reservationNo = mainRow.ReservationNo
+		pointsReservationNo = mainRow.PointsReservationNo
 		status = v1.OrderStatus(mainRow.OrderStatus)
 		if status != v1.OrderStatus_ORDER_STATUS_PENDING_PAY {
 			closed = false
 			return nil
 		}
+		// 仅当仍在待支付时才更新为已关闭，避免误关已支付订单。
 		result, err := tx.Model(dao.OrderMain.Table()).Where(cols.OrderNo, req.GetOrderNo()).Where(cols.OrderStatus, uint(v1.OrderStatus_ORDER_STATUS_PENDING_PAY)).Data(do.OrderMain{OrderStatus: uint(v1.OrderStatus_ORDER_STATUS_CLOSED), CancelReasonCode: uint(reason), ClosedAt: gtime.Now(), Version: gdb.Raw(cols.Version + " + 1")}).Update()
 		if err != nil {
 			return gerror.Wrap(err, "close order_main failed")
@@ -506,9 +617,13 @@ func (s *sOrder) CloseOrderIfUnpaid(ctx context.Context, req *v1.CloseOrderIfUnp
 	if closed && reservationNo != "" {
 		s.cancelInventoryReservationBestEffort(ctx, reservationNo, req.GetOrderNo(), reason.String())
 	}
+	if closed && pointsReservationNo != "" {
+		s.compensateLockedPointsAfterOrderClose(ctx, userID, req.GetOrderNo(), pointsReservationNo, reason.String())
+	}
 	return &v1.CloseOrderIfUnpaidRes{OrderNo: req.GetOrderNo(), OrderStatus: status, Closed: closed}, nil
 }
 
+// HandlePayCallback 处理支付回调并推进订单状态。
 func (s *sOrder) HandlePayCallback(ctx context.Context, req *v1.HandlePayCallbackReq) (*v1.HandlePayCallbackRes, error) {
 	if req == nil || strings.TrimSpace(req.GetOrderNo()) == "" || strings.TrimSpace(req.GetPayNo()) == "" || strings.TrimSpace(req.GetPaymentEventId()) == "" {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "order_no/pay_no/payment_event_id are required")
@@ -517,6 +632,7 @@ func (s *sOrder) HandlePayCallback(ctx context.Context, req *v1.HandlePayCallbac
 	if idem == "" {
 		idem = req.GetPaymentEventId()
 	}
+	// 支付回调幂等：支付网关可能多次推送相同事件，必须避免重复扣积分或重复变更订单。
 	hit, row, err := s.getOrCreateIdempotency(ctx, 0, idem, idempotencyActionPayCallback)
 	if err != nil {
 		return nil, err
@@ -531,13 +647,16 @@ func (s *sOrder) HandlePayCallback(ctx context.Context, req *v1.HandlePayCallbac
 	payCode := strings.ToUpper(strings.TrimSpace(req.GetPayStatusCode()))
 	isPaySuccess := payCode == "SUCCESS" || payCode == "PAID" || payCode == "TRADE_SUCCESS"
 	var (
-		orderStatus      = v1.OrderStatus_ORDER_STATUS_UNSPECIFIED
-		paymentStatus    = v1.PaymentStatus_PAYMENT_STATUS_UNSPECIFIED
-		callbackHit      bool
-		refundRequired   bool
-		refundReasonCode string
-		reservationNo    string
+		orderStatus         = v1.OrderStatus_ORDER_STATUS_UNSPECIFIED
+		paymentStatus       = v1.PaymentStatus_PAYMENT_STATUS_UNSPECIFIED
+		callbackHit         bool
+		refundRequired      bool
+		refundReasonCode    string
+		reservationNo       string
+		pointsReservationNo string
+		userID              uint64
 	)
+	// 事务确保支付记录和主单状态同步更新。
 	err = dao.OrderMain.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		mainCols := dao.OrderMain.Columns()
 		payCols := dao.OrderPayment.Columns()
@@ -546,6 +665,7 @@ func (s *sOrder) HandlePayCallback(ctx context.Context, req *v1.HandlePayCallbac
 			return gerror.Wrap(err, "query payment by event id failed")
 		}
 		if byEvent.Id > 0 {
+			// 已处理过该事件，直接读取当前状态并返回。
 			callbackHit = true
 			mainRow, loadErr := s.getOrderMainByNoTx(ctx, tx, req.GetOrderNo())
 			if loadErr != nil {
@@ -554,6 +674,8 @@ func (s *sOrder) HandlePayCallback(ctx context.Context, req *v1.HandlePayCallbac
 			orderStatus = v1.OrderStatus(mainRow.OrderStatus)
 			paymentStatus = v1.PaymentStatus(mainRow.PaymentStatus)
 			reservationNo = mainRow.ReservationNo
+			pointsReservationNo = mainRow.PointsReservationNo
+			userID = mainRow.UserId
 			return nil
 		}
 		var byPayNo entity.OrderPayment
@@ -576,7 +698,10 @@ func (s *sOrder) HandlePayCallback(ctx context.Context, req *v1.HandlePayCallbac
 			return loadErr
 		}
 		reservationNo = mainRow.ReservationNo
+		pointsReservationNo = mainRow.PointsReservationNo
+		userID = mainRow.UserId
 		if !isPaySuccess {
+			// 支付失败仅更新支付状态，不动订单状态。
 			orderStatus = v1.OrderStatus(mainRow.OrderStatus)
 			paymentStatus = v1.PaymentStatus_PAYMENT_STATUS_PAY_FAILED
 			_, err := tx.Model(dao.OrderMain.Table()).Where(mainCols.OrderNo, req.GetOrderNo()).Data(do.OrderMain{PaymentStatus: uint(v1.PaymentStatus_PAYMENT_STATUS_PAY_FAILED)}).Update()
@@ -595,6 +720,7 @@ func (s *sOrder) HandlePayCallback(ctx context.Context, req *v1.HandlePayCallbac
 			orderStatus = v1.OrderStatus(latest.OrderStatus)
 			paymentStatus = v1.PaymentStatus(latest.PaymentStatus)
 			if orderStatus == v1.OrderStatus_ORDER_STATUS_CLOSED || orderStatus == v1.OrderStatus_ORDER_STATUS_CANCELED {
+				// 如果订单已关闭但仍收到成功回调，需要标记退款流程。
 				refundRequired = true
 				refundReasonCode = "ORDER_ALREADY_CLOSED"
 			}
@@ -613,9 +739,19 @@ func (s *sOrder) HandlePayCallback(ctx context.Context, req *v1.HandlePayCallbac
 		_ = s.markIdempotencyFailed(ctx, 0, idem, idempotencyActionPayCallback, "PAY_CALLBACK_FAILED")
 		return nil, err
 	}
+	// 支付成功后尝试确认库存与积分，失败会回写幂等错误码。
 	if !refundRequired && orderStatus == v1.OrderStatus_ORDER_STATUS_PAID && reservationNo != "" {
 		if err = s.confirmInventoryReservation(ctx, reservationNo, req.GetOrderNo()); err != nil {
-			_ = s.markIdempotencyFailed(ctx, 0, idem, idempotencyActionPayCallback, "INVENTORY_CONFIRM_FAILED")
+			if !isNotImplementedErr(err) {
+				_ = s.markIdempotencyFailed(ctx, 0, idem, idempotencyActionPayCallback, "INVENTORY_CONFIRM_FAILED")
+				return nil, err
+			}
+			g.Log().Warningf(ctx, "inventory confirm not implemented, skip confirm, order_no=%s reservation_no=%s", req.GetOrderNo(), reservationNo)
+		}
+	}
+	if !refundRequired && orderStatus == v1.OrderStatus_ORDER_STATUS_PAID && pointsReservationNo != "" {
+		if err = s.confirmLockedPoints(ctx, userID, req.GetOrderNo(), pointsReservationNo, idem); err != nil {
+			_ = s.markIdempotencyFailed(ctx, 0, idem, idempotencyActionPayCallback, "POINTS_CONFIRM_FAILED")
 			return nil, err
 		}
 	}
@@ -625,6 +761,7 @@ func (s *sOrder) HandlePayCallback(ctx context.Context, req *v1.HandlePayCallbac
 	return &v1.HandlePayCallbackRes{OrderNo: req.GetOrderNo(), PaymentStatus: paymentStatus, OrderStatus: orderStatus, CallbackIdempotentHit: callbackHit, RefundRequired: refundRequired, RefundReasonCode: refundReasonCode}, nil
 }
 
+// GetOrderSnapshotByNo 按订单号读取订单快照。
 func (s *sOrder) GetOrderSnapshotByNo(ctx context.Context, req *v1.GetOrderSnapshotByNoReq) (*v1.GetOrderSnapshotByNoRes, error) {
 	if req == nil || strings.TrimSpace(req.GetOrderNo()) == "" {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "order_no is required")
@@ -637,16 +774,22 @@ func (s *sOrder) GetOrderSnapshotByNo(ctx context.Context, req *v1.GetOrderSnaps
 }
 
 type createOrderInput struct {
-	OrderNo        string
-	UserID         uint64
-	AddressID      uint64
-	BuyerRemark    string
-	ReservationNo  string
-	GoodsAmount    uint64
-	FreightAmount  uint64
-	DiscountAmount uint64
-	PayableAmount  uint64
-	Lines          []orderLine
+	OrderNo                  string
+	UserID                   uint64
+	AddressID                uint64
+	BuyerRemark              string
+	ReservationNo            string
+	PointsReservationNo      string
+	GoodsAmount              uint64
+	FreightAmount            uint64
+	DiscountAmount           uint64
+	PayableAmount            uint64
+	PointsUsed               uint64
+	PointsDiscountAmount     uint64
+	PointsRuleSnapshotJSON   string
+	PointsRuleSnapshotDigest string
+	PointsSubAllocations     map[string]pointsSubAllocation
+	Lines                    []orderLine
 }
 
 type orderLine struct {
@@ -685,6 +828,7 @@ type checkoutSnapshotItem struct {
 	SaleAttrsJSON   string `json:"sale_attrs_json"`
 }
 
+// snapshotToOrderLines 将结算快照转换为订单行模型。
 func snapshotToOrderLines(snapshot *checkoutSnapshot) []orderLine {
 	if snapshot == nil || len(snapshot.Items) == 0 {
 		return nil
@@ -695,17 +839,22 @@ func snapshotToOrderLines(snapshot *checkoutSnapshot) []orderLine {
 	}
 	return lines
 }
+
+// createOrderAggregate 在事务内落库订单主表、子表与快照。
 func (s *sOrder) createOrderAggregate(ctx context.Context, input *createOrderInput) (*v1.OrderMain, error) {
 	if input == nil || strings.TrimSpace(input.OrderNo) == "" || len(input.Lines) == 0 {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "invalid create order input")
 	}
+	// subBuild 用于按店铺拆单，聚合金额后生成多个子单。
 	type subBuild struct {
-		SubNo         string
-		ShopNo        string
-		Items         []orderLine
-		GoodsAmount   uint64
-		FreightAmount uint64
-		PayableAmount uint64
+		SubNo                string
+		ShopNo               string
+		Items                []orderLine
+		GoodsAmount          uint64
+		FreightAmount        uint64
+		PayableAmount        uint64
+		PointsUsed           uint64
+		PointsDiscountAmount uint64
 	}
 	mainGoods := input.GoodsAmount
 	mainFreight := input.FreightAmount
@@ -716,9 +865,13 @@ func (s *sOrder) createOrderAggregate(ctx context.Context, input *createOrderInp
 			mainGoods += line.SalePrice * uint64(line.Qty)
 		}
 	}
-	if mainPayable == 0 && mainGoods+mainFreight >= mainDiscount {
-		mainPayable = mainGoods + mainFreight - mainDiscount
+	if mainPayable == 0 {
+		totalDiscount := mainDiscount + input.PointsDiscountAmount
+		if mainGoods+mainFreight >= totalDiscount {
+			mainPayable = mainGoods + mainFreight - totalDiscount
+		}
 	}
+	// 根据店铺拆分子单，避免跨店铺物流结算互相污染。
 	subMap := make(map[string]*subBuild)
 	for _, line := range input.Lines {
 		if strings.TrimSpace(line.SkuNo) == "" || strings.TrimSpace(line.SpuNo) == "" || strings.TrimSpace(line.ShopNo) == "" || line.Qty == 0 {
@@ -734,9 +887,20 @@ func (s *sOrder) createOrderAggregate(ctx context.Context, input *createOrderInp
 		bucket.GoodsAmount += lineAmount
 		bucket.PayableAmount += lineAmount
 	}
+	// 将积分抵扣分摊到对应店铺，保证金额一致。
+	for shopNo, allocation := range input.PointsSubAllocations {
+		if bucket, ok := subMap[shopNo]; ok {
+			bucket.PointsUsed = allocation.PointsUsed
+			bucket.PointsDiscountAmount = allocation.PointsDiscountAmount
+			if bucket.PointsDiscountAmount <= bucket.PayableAmount {
+				bucket.PayableAmount -= bucket.PointsDiscountAmount
+			}
+		}
+	}
 	payDeadline := gtime.NewFromTime(time.Now().Add(15 * time.Minute))
+	// 事务写入主单、地址快照、子单、明细、库存关联，任何一步失败都会整体回滚。
 	err := dao.OrderMain.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		_, err := tx.Model(dao.OrderMain.Table()).Data(do.OrderMain{OrderNo: input.OrderNo, UserId: input.UserID, OrderStatus: uint(v1.OrderStatus_ORDER_STATUS_PENDING_PAY), PaymentStatus: uint(v1.PaymentStatus_PAYMENT_STATUS_UNPAID), ReservationNo: input.ReservationNo, GoodsAmount: mainGoods, FreightAmount: mainFreight, DiscountAmount: mainDiscount, PayableAmount: mainPayable, PaidAmount: uint64(0), BuyerRemark: input.BuyerRemark, CancelReasonCode: uint(v1.CancelReasonCode_CANCEL_REASON_CODE_UNSPECIFIED), PayDeadlineAt: payDeadline, Version: uint64(1)}).Insert()
+		_, err := tx.Model(dao.OrderMain.Table()).Data(do.OrderMain{OrderNo: input.OrderNo, UserId: input.UserID, OrderStatus: uint(v1.OrderStatus_ORDER_STATUS_PENDING_PAY), PaymentStatus: uint(v1.PaymentStatus_PAYMENT_STATUS_UNPAID), ReservationNo: input.ReservationNo, PointsReservationNo: input.PointsReservationNo, GoodsAmount: mainGoods, FreightAmount: mainFreight, DiscountAmount: mainDiscount, PayableAmount: mainPayable, PaidAmount: uint64(0), PointsUsed: input.PointsUsed, PointsDiscountAmount: input.PointsDiscountAmount, PointsRuleSnapshotJson: input.PointsRuleSnapshotJSON, PointsRuleSnapshotDigest: input.PointsRuleSnapshotDigest, BuyerRemark: input.BuyerRemark, CancelReasonCode: uint(v1.CancelReasonCode_CANCEL_REASON_CODE_UNSPECIFIED), PayDeadlineAt: payDeadline, Version: uint64(1)}).Insert()
 		if err != nil {
 			return gerror.Wrap(err, "insert order_main failed")
 		}
@@ -745,7 +909,7 @@ func (s *sOrder) createOrderAggregate(ctx context.Context, input *createOrderInp
 			return gerror.Wrap(err, "insert order_address_snapshot failed")
 		}
 		for _, sub := range subMap {
-			_, err = tx.Model(dao.OrderSub.Table()).Data(do.OrderSub{SubOrderNo: sub.SubNo, OrderNo: input.OrderNo, ShopNo: sub.ShopNo, SubStatus: uint(v1.SubOrderStatus_SUB_ORDER_STATUS_PENDING_PAY), GoodsAmount: sub.GoodsAmount, FreightAmount: sub.FreightAmount, DiscountAmount: uint64(0), PayableAmount: sub.PayableAmount, PaidAmount: uint64(0), SellerRemark: "", BuyerRemark: input.BuyerRemark}).Insert()
+			_, err = tx.Model(dao.OrderSub.Table()).Data(do.OrderSub{SubOrderNo: sub.SubNo, OrderNo: input.OrderNo, ShopNo: sub.ShopNo, SubStatus: uint(v1.SubOrderStatus_SUB_ORDER_STATUS_PENDING_PAY), GoodsAmount: sub.GoodsAmount, FreightAmount: sub.FreightAmount, DiscountAmount: uint64(0), PayableAmount: sub.PayableAmount, PaidAmount: uint64(0), PointsUsed: sub.PointsUsed, PointsDiscountAmount: sub.PointsDiscountAmount, SellerRemark: "", BuyerRemark: input.BuyerRemark}).Insert()
 			if err != nil {
 				return gerror.Wrap(err, "insert order_sub failed")
 			}
@@ -762,6 +926,13 @@ func (s *sOrder) createOrderAggregate(ctx context.Context, input *createOrderInp
 				return gerror.Wrap(err, "insert order_inventory_link failed")
 			}
 		}
+		// 写入操作日志，记录创建动作与积分信息。
+		appendOperateLogTx(ctx, tx, input.OrderNo, "", "ORDER_CREATE", "", v1.OrderStatus_ORDER_STATUS_PENDING_PAY.String(), map[string]any{
+			"points_reservation_no":       input.PointsReservationNo,
+			"points_used":                 input.PointsUsed,
+			"points_discount_amount":      input.PointsDiscountAmount,
+			"points_rule_snapshot_digest": input.PointsRuleSnapshotDigest,
+		})
 		return nil
 	})
 	if err != nil {
@@ -770,6 +941,7 @@ func (s *sOrder) createOrderAggregate(ctx context.Context, input *createOrderInp
 	return s.loadOrderAggregate(ctx, input.OrderNo)
 }
 
+// loadOrderAggregate 组装订单聚合视图返回给接口层。
 func (s *sOrder) loadOrderAggregate(ctx context.Context, orderNo string) (*v1.OrderMain, error) {
 	mainRow, err := s.getOrderMainByNo(ctx, orderNo)
 	if err != nil {
@@ -780,6 +952,7 @@ func (s *sOrder) loadOrderAggregate(ctx context.Context, orderNo string) (*v1.Or
 		subs    []*entity.OrderSub
 		items   []*entity.OrderItem
 	)
+	// 逐表加载：地址快照、子单、明细，保持读取顺序简单可控。
 	if err = dao.OrderAddressSnapshot.Ctx(ctx).Where(dao.OrderAddressSnapshot.Columns().OrderNo, orderNo).Scan(&address); err != nil {
 		return nil, gerror.Wrap(err, "query address snapshot failed")
 	}
@@ -801,13 +974,15 @@ func (s *sOrder) loadOrderAggregate(ctx context.Context, orderNo string) (*v1.Or
 	if address.Id > 0 {
 		addr = &v1.OrderAddressSnapshot{SourceAddressId: address.SourceAddressId, SourceAddressVersion: address.SourceAddressVersion, ReceiverName: address.ReceiverName, ReceiverPhone: address.ReceiverPhone, CountryCode: address.CountryCode, ProvinceCode: address.ProvinceCode, ProvinceName: address.ProvinceName, CityCode: address.CityCode, CityName: address.CityName, DistrictCode: address.DistrictCode, DistrictName: address.DistrictName, Street: address.Street, Detail: address.Detail, PostalCode: address.PostalCode, Latitude: address.Latitude, Longitude: address.Longitude}
 	}
-	return &v1.OrderMain{OrderNo: mainRow.OrderNo, UserId: mainRow.UserId, OrderStatus: v1.OrderStatus(mainRow.OrderStatus), PaymentStatus: v1.PaymentStatus(mainRow.PaymentStatus), Amount: buildAmount(mainRow.GoodsAmount, mainRow.FreightAmount, mainRow.DiscountAmount, mainRow.PayableAmount, mainRow.PaidAmount), Address: addr, ReservationNo: mainRow.ReservationNo, PayDeadlineAt: toProtoTs(mainRow.PayDeadlineAt), PaidAt: toProtoTs(mainRow.PaidAt), ClosedAt: toProtoTs(mainRow.ClosedAt), CreatedAt: toProtoTs(mainRow.CreatedAt), UpdatedAt: toProtoTs(mainRow.UpdatedAt), Version: mainRow.Version, SubOrders: outSubs, BuyerRemark: mainRow.BuyerRemark, CancelReasonCode: v1.CancelReasonCode(mainRow.CancelReasonCode)}, nil
+	return &v1.OrderMain{OrderNo: mainRow.OrderNo, UserId: mainRow.UserId, OrderStatus: v1.OrderStatus(mainRow.OrderStatus), PaymentStatus: v1.PaymentStatus(mainRow.PaymentStatus), Amount: buildAmount(mainRow.GoodsAmount, mainRow.FreightAmount, mainRow.DiscountAmount, mainRow.PayableAmount, mainRow.PaidAmount, mainRow.PointsDiscountAmount), Address: addr, ReservationNo: mainRow.ReservationNo, PayDeadlineAt: toProtoTs(mainRow.PayDeadlineAt), PaidAt: toProtoTs(mainRow.PaidAt), ClosedAt: toProtoTs(mainRow.ClosedAt), CreatedAt: toProtoTs(mainRow.CreatedAt), UpdatedAt: toProtoTs(mainRow.UpdatedAt), Version: mainRow.Version, SubOrders: outSubs, BuyerRemark: mainRow.BuyerRemark, CancelReasonCode: v1.CancelReasonCode(mainRow.CancelReasonCode), PointsReservationNo: mainRow.PointsReservationNo, PointsUsed: mainRow.PointsUsed, PointsDiscountAmount: mainRow.PointsDiscountAmount, PointsRuleSnapshotJson: mainRow.PointsRuleSnapshotJson, PointsRuleSnapshotDigest: mainRow.PointsRuleSnapshotDigest}, nil
 }
 
-func buildAmount(goods, freight, discount, payable, paid uint64) *v1.OrderAmount {
-	return &v1.OrderAmount{GoodsAmount: goods, FreightAmount: freight, DiscountAmount: discount, PayableAmount: payable, PaidAmount: paid}
+// buildAmount 组装订单金额快照结构。
+func buildAmount(goods, freight, discount, payable, paid, pointsDiscount uint64) *v1.OrderAmount {
+	return &v1.OrderAmount{GoodsAmount: goods, FreightAmount: freight, DiscountAmount: discount, PayableAmount: payable, PaidAmount: paid, PointsDiscountAmount: pointsDiscount}
 }
 
+// listOrderItemsBySubNo 查询指定子单下的商品明细。
 func (s *sOrder) listOrderItemsBySubNo(ctx context.Context, subOrderNo string) ([]*v1.OrderItemSnapshot, error) {
 	var rows []*entity.OrderItem
 	if err := dao.OrderItem.Ctx(ctx).Where(dao.OrderItem.Columns().SubOrderNo, subOrderNo).OrderAsc(dao.OrderItem.Columns().Id).Scan(&rows); err != nil {
@@ -820,10 +995,12 @@ func (s *sOrder) listOrderItemsBySubNo(ctx context.Context, subOrderNo string) (
 	return out, nil
 }
 
+// toProtoSub 将子单实体转换为 protobuf 结构。
 func toProtoSub(row *entity.OrderSub, items []*v1.OrderItemSnapshot) *v1.OrderSub {
-	return &v1.OrderSub{SubOrderNo: row.SubOrderNo, OrderNo: row.OrderNo, ShopNo: row.ShopNo, SubStatus: v1.SubOrderStatus(row.SubStatus), Amount: buildAmount(row.GoodsAmount, row.FreightAmount, row.DiscountAmount, row.PayableAmount, row.PaidAmount), SellerRemark: row.SellerRemark, BuyerRemark: row.BuyerRemark, CreatedAt: toProtoTs(row.CreatedAt), UpdatedAt: toProtoTs(row.UpdatedAt), Items: items}
+	return &v1.OrderSub{SubOrderNo: row.SubOrderNo, OrderNo: row.OrderNo, ShopNo: row.ShopNo, SubStatus: v1.SubOrderStatus(row.SubStatus), Amount: buildAmount(row.GoodsAmount, row.FreightAmount, row.DiscountAmount, row.PayableAmount, row.PaidAmount, row.PointsDiscountAmount), SellerRemark: row.SellerRemark, BuyerRemark: row.BuyerRemark, CreatedAt: toProtoTs(row.CreatedAt), UpdatedAt: toProtoTs(row.UpdatedAt), Items: items, PointsUsed: row.PointsUsed, PointsDiscountAmount: row.PointsDiscountAmount}
 }
 
+// getOrderMainByNo 按订单号查询订单主记录。
 func (s *sOrder) getOrderMainByNo(ctx context.Context, orderNo string) (*entity.OrderMain, error) {
 	var row entity.OrderMain
 	if err := dao.OrderMain.Ctx(ctx).Where(dao.OrderMain.Columns().OrderNo, orderNo).WhereNull(dao.OrderMain.Columns().DeletedAt).Scan(&row); err != nil {
@@ -835,6 +1012,7 @@ func (s *sOrder) getOrderMainByNo(ctx context.Context, orderNo string) (*entity.
 	return &row, nil
 }
 
+// getOrderMainByNoTx 在事务内按订单号查询订单主记录。
 func (s *sOrder) getOrderMainByNoTx(ctx context.Context, tx gdb.TX, orderNo string) (*entity.OrderMain, error) {
 	var row entity.OrderMain
 	if err := tx.Model(dao.OrderMain.Table()).Where(dao.OrderMain.Columns().OrderNo, orderNo).Scan(&row); err != nil {
@@ -845,12 +1023,15 @@ func (s *sOrder) getOrderMainByNoTx(ctx context.Context, tx gdb.TX, orderNo stri
 	}
 	return &row, nil
 }
+
+// getOrCreateIdempotency 获取或创建幂等记录。
 func (s *sOrder) getOrCreateIdempotency(ctx context.Context, userID uint64, key, action string) (bool, *entity.OrderIdempotency, error) {
 	key = strings.TrimSpace(key)
 	action = strings.TrimSpace(action)
 	if key == "" || action == "" {
 		return false, nil, gerror.NewCode(gcode.CodeInvalidParameter, "idempotency key/action are required")
 	}
+	// 先查是否存在，存在则表示命中幂等；不存在再插入 processing 记录。
 	cols := dao.OrderIdempotency.Columns()
 	var row entity.OrderIdempotency
 	if err := dao.OrderIdempotency.Ctx(ctx).Where(cols.UserId, userID).Where(cols.IdempotencyKey, key).Where(cols.ActionCode, action).Scan(&row); err != nil {
@@ -866,6 +1047,7 @@ func (s *sOrder) getOrCreateIdempotency(ctx context.Context, userID uint64, key,
 			if e := dao.OrderIdempotency.Ctx(ctx).Where(cols.UserId, userID).Where(cols.IdempotencyKey, key).Where(cols.ActionCode, action).Scan(&existed); e != nil {
 				return false, nil, gerror.Wrap(e, "query duplicated idempotency failed")
 			}
+			// 并发插入导致唯一键冲突，返回已存在记录视作命中。
 			return true, &existed, nil
 		}
 		return false, nil, gerror.Wrap(err, "insert idempotency failed")
@@ -873,6 +1055,7 @@ func (s *sOrder) getOrCreateIdempotency(ctx context.Context, userID uint64, key,
 	return false, nil, nil
 }
 
+// markIdempotencySuccess 将幂等记录标记为成功。
 func (s *sOrder) markIdempotencySuccess(ctx context.Context, userID uint64, key, action, orderNo string, response any) error {
 	resp := ""
 	if response != nil {
@@ -886,11 +1069,13 @@ func (s *sOrder) markIdempotencySuccess(ctx context.Context, userID uint64, key,
 	return gerror.Wrap(err, "mark idempotency success failed")
 }
 
+// markIdempotencyFailed 将幂等记录标记为失败。
 func (s *sOrder) markIdempotencyFailed(ctx context.Context, userID uint64, key, action, errorCode string) error {
 	_, err := dao.OrderIdempotency.Ctx(ctx).Where(dao.OrderIdempotency.Columns().UserId, userID).Where(dao.OrderIdempotency.Columns().IdempotencyKey, key).Where(dao.OrderIdempotency.Columns().ActionCode, action).Data(do.OrderIdempotency{Status: idempotencyStatusFailed, ErrorCode: errorCode}).Update()
 	return gerror.Wrap(err, "mark idempotency failed failed")
 }
 
+// replayCreateOrderWithFlag 回放创建订单请求的历史结果。
 func (s *sOrder) replayCreateOrderWithFlag(ctx context.Context, row *entity.OrderIdempotency) (*v1.OrderMain, bool, error) {
 	if row == nil {
 		return nil, false, gerror.NewCode(gcode.CodeInvalidParameter, "idempotency record nil")
@@ -912,6 +1097,7 @@ func (s *sOrder) replayCreateOrderWithFlag(ctx context.Context, row *entity.Orde
 	}
 }
 
+// replayRequestPay 回放请求支付的历史结果。
 func (s *sOrder) replayRequestPay(ctx context.Context, orderNo string, row *entity.OrderIdempotency) (*v1.RequestPayRes, error) {
 	if row == nil {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "idempotency record nil")
@@ -929,6 +1115,7 @@ func (s *sOrder) replayRequestPay(ctx context.Context, orderNo string, row *enti
 	}
 }
 
+// buildRequestPayReplay 构造支付请求的重放响应。
 func (s *sOrder) buildRequestPayReplay(ctx context.Context, orderNo string) (*v1.RequestPayRes, error) {
 	var pay entity.OrderPayment
 	if err := dao.OrderPayment.Ctx(ctx).Where(dao.OrderPayment.Columns().OrderNo, orderNo).OrderDesc(dao.OrderPayment.Columns().Id).Scan(&pay); err != nil {
@@ -944,6 +1131,7 @@ func (s *sOrder) buildRequestPayReplay(ctx context.Context, orderNo string) (*v1
 	return &v1.RequestPayRes{OrderNo: orderNo, PayNo: pay.PayNo, PaymentStatus: paymentStatusFromPayCode(pay.PayStatusCode), PayUrl: fmt.Sprintf("https://mock-pay.shopa.local/pay?pay_no=%s", pay.PayNo), PayPayloadJson: "{}", ExpireAt: toProtoTs(pay.PaidAt)}, nil
 }
 
+// replayCancel 回放取消订单请求的历史结果。
 func (s *sOrder) replayCancel(ctx context.Context, orderNo string, row *entity.OrderIdempotency) (*v1.CancelMyOrderRes, error) {
 	if row == nil {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "idempotency record nil")
@@ -965,6 +1153,7 @@ func (s *sOrder) replayCancel(ctx context.Context, orderNo string, row *entity.O
 	}
 }
 
+// replayPayCallback 回放支付回调处理结果。
 func (s *sOrder) replayPayCallback(ctx context.Context, orderNo string, row *entity.OrderIdempotency) (*v1.HandlePayCallbackRes, error) {
 	if row == nil {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "idempotency record nil")
@@ -985,6 +1174,8 @@ func (s *sOrder) replayPayCallback(ctx context.Context, orderNo string, row *ent
 		return nil, gerror.NewCodef(gcode.CodeInvalidParameter, "previous request failed, error_code=%s", row.ErrorCode)
 	}
 }
+
+// consumeCheckoutSnapshot 消费并校验结算快照。
 func (s *sOrder) consumeCheckoutSnapshot(ctx context.Context, checkoutToken string) (*checkoutSnapshot, error) {
 	checkoutToken = strings.TrimSpace(checkoutToken)
 	if checkoutToken == "" {
@@ -1006,6 +1197,7 @@ func (s *sOrder) consumeCheckoutSnapshot(ctx context.Context, checkoutToken stri
 	return &snap, nil
 }
 
+// reserveInventory 调用库存服务预留库存。
 func (s *sOrder) reserveInventory(ctx context.Context, orderNo string, userID uint64, lines []orderLine) (string, error) {
 	_ = ctx
 	_ = orderNo
@@ -1015,6 +1207,7 @@ func (s *sOrder) reserveInventory(ctx context.Context, orderNo string, userID ui
 	return "", gerror.NewCode(gcode.CodeNotImplemented, "TODO: inventory ReserveStock RPC not integrated yet")
 }
 
+// confirmInventoryReservation 确认库存预留结果。
 func (s *sOrder) confirmInventoryReservation(ctx context.Context, reservationNo, orderNo string) error {
 	if strings.TrimSpace(reservationNo) == "" {
 		return nil
@@ -1025,6 +1218,7 @@ func (s *sOrder) confirmInventoryReservation(ctx context.Context, reservationNo,
 	return gerror.NewCode(gcode.CodeNotImplemented, "TODO: inventory ConfirmReservation RPC not integrated yet")
 }
 
+// cancelInventoryReservationBestEffort 以最大努力方式取消库存预留。
 func (s *sOrder) cancelInventoryReservationBestEffort(ctx context.Context, reservationNo, orderNo, reason string) {
 	if strings.TrimSpace(reservationNo) == "" {
 		return
@@ -1034,6 +1228,7 @@ func (s *sOrder) cancelInventoryReservationBestEffort(ctx context.Context, reser
 	g.Log().Warningf(ctx, "TODO: inventory CancelReservation RPC not integrated yet, reservation_no=%s", reservationNo)
 }
 
+// userIDFromContext 从上下文中提取当前登录用户 ID。
 func userIDFromContext(ctx context.Context) (uint64, error) {
 	if r := g.RequestFromCtx(ctx); r != nil {
 		for _, key := range []string{"x-user-id", "X-User-Id", "user_id", "uid"} {
@@ -1057,6 +1252,7 @@ func userIDFromContext(ctx context.Context) (uint64, error) {
 	return 0, gerror.NewCode(gcode.CodeNotAuthorized, "missing x-user-id")
 }
 
+// normalizePageSize 将分页大小收敛到允许范围内。
 func normalizePageSize(reqSize int32) int {
 	size := int(reqSize)
 	if size <= 0 {
@@ -1068,6 +1264,7 @@ func normalizePageSize(reqSize int32) int {
 	return size
 }
 
+// parseCursorID 解析游标中的主键 ID。
 func parseCursorID(cursor string) (uint64, error) {
 	cursor = strings.TrimSpace(cursor)
 	if cursor == "" {
@@ -1080,6 +1277,7 @@ func parseCursorID(cursor string) (uint64, error) {
 	return id, nil
 }
 
+// orderStatusToUintSlice 将订单状态枚举切片转换为数据库值切片。
 func orderStatusToUintSlice(in []v1.OrderStatus) []uint {
 	out := make([]uint, 0, len(in))
 	for _, item := range in {
@@ -1088,6 +1286,7 @@ func orderStatusToUintSlice(in []v1.OrderStatus) []uint {
 	return out
 }
 
+// subStatusToUintSlice 将子单状态枚举切片转换为数据库值切片。
 func subStatusToUintSlice(in []v1.SubOrderStatus) []uint {
 	out := make([]uint, 0, len(in))
 	for _, item := range in {
@@ -1096,6 +1295,7 @@ func subStatusToUintSlice(in []v1.SubOrderStatus) []uint {
 	return out
 }
 
+// paymentStatusFromPayCode 根据支付编码推导支付状态。
 func paymentStatusFromPayCode(code string) v1.PaymentStatus {
 	code = strings.ToUpper(strings.TrimSpace(code))
 	switch code {
@@ -1112,6 +1312,7 @@ func paymentStatusFromPayCode(code string) v1.PaymentStatus {
 	}
 }
 
+// toProtoTs 将 GoFrame 时间转换为 protobuf 时间戳。
 func toProtoTs(t *gtime.Time) *timestamppb.Timestamp {
 	if t == nil {
 		return nil
@@ -1119,6 +1320,7 @@ func toProtoTs(t *gtime.Time) *timestamppb.Timestamp {
 	return timestamppb.New(t.Time)
 }
 
+// protoTsToGTime 将 protobuf 时间戳转换为 GoFrame 时间。
 func protoTsToGTime(ts *timestamppb.Timestamp) *gtime.Time {
 	if ts == nil {
 		return nil
@@ -1126,7 +1328,23 @@ func protoTsToGTime(ts *timestamppb.Timestamp) *gtime.Time {
 	return gtime.NewFromTime(ts.AsTime())
 }
 
+// generateBizNo 生成业务单号。
 func generateBizNo(prefix string) string {
 	now := time.Now()
 	return fmt.Sprintf("%s%s%06d", prefix, now.Format("20060102150405"), now.UnixNano()%1000000)
+}
+
+// isNotImplementedErr 判断错误是否表示下游接口尚未实现。
+func isNotImplementedErr(err error) bool {
+	return err != nil && gerror.Code(err) == gcode.CodeNotImplemented
+}
+
+// firstNonEmpty 返回首个非空字符串。
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }

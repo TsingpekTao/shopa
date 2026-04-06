@@ -4,11 +4,93 @@ package shopa.points.v1;
 
 option go_package = "github.com/TsingpekTao/shopa/points-svc/api/v1;pointsv1";
 
-service PointsService {
-  // 注册事件消费后初始化积分账户（幂等）。
+service BuyerPointsService {
+  rpc GetPointsAccountSummary(GetPointsAccountSummaryReq) returns (GetPointsAccountSummaryRes);
+  rpc ListMyPointsBills(ListMyPointsBillsReq) returns (ListMyPointsBillsRes);
+  rpc PreviewOrderPointsDeduction(PreviewOrderPointsDeductionReq) returns (PreviewOrderPointsDeductionRes);
+}
+
+service InternalPointsService {
   rpc InitPointsAccountIfAbsent(InitPointsAccountIfAbsentReq) returns (InitPointsAccountIfAbsentRes);
-  // 根据用户 ID 查询积分余额。
+  rpc LockPointsForOrder(LockPointsForOrderReq) returns (LockPointsForOrderRes);
+  rpc ConfirmLockedPoints(ConfirmLockedPointsReq) returns (ConfirmLockedPointsRes);
+  rpc CancelLockedPoints(CancelLockedPointsReq) returns (CancelLockedPointsRes);
+  rpc GrantPointsForCompletedOrder(GrantPointsForCompletedOrderReq) returns (GrantPointsForCompletedOrderRes);
+  rpc ReturnPointsByRefund(ReturnPointsByRefundReq) returns (ReturnPointsByRefundRes);
+  rpc ReverseGrantedPointsByRefund(ReverseGrantedPointsByRefundReq) returns (ReverseGrantedPointsByRefundRes);
+  rpc ExpirePointsBatch(ExpirePointsBatchReq) returns (ExpirePointsBatchRes);
+}
+
+service AdminPointsService {
+  rpc GetPointsAccount(GetPointsAccountReq) returns (GetPointsAccountRes);
+  rpc ListPointsAccounts(ListPointsAccountsReq) returns (ListPointsAccountsRes);
+  rpc ListReservationRecords(ListReservationRecordsReq) returns (ListReservationRecordsRes);
+  rpc AdjustPointsBalance(AdjustPointsBalanceReq) returns (AdjustPointsBalanceRes);
+  rpc FreezePointsAccount(FreezePointsAccountReq) returns (FreezePointsAccountRes);
+  rpc UnfreezePointsAccount(UnfreezePointsAccountReq) returns (UnfreezePointsAccountRes);
+  rpc TriggerExpireSweep(TriggerExpireSweepReq) returns (TriggerExpireSweepRes);
+}
+
+service PointsService {
+  rpc InitPointsAccountIfAbsent(InitPointsAccountIfAbsentReq) returns (InitPointsAccountIfAbsentRes);
   rpc GetPointsByUserId(GetPointsByUserIdReq) returns (GetPointsByUserIdRes);
+}
+
+message PointsAccountSnapshot {
+  uint64 user_id = 1;
+  int64 available_balance = 2;
+  int64 frozen_balance = 3;
+  uint64 debt_points = 4;
+  string status_code = 5;
+  uint64 total_earned_points = 6;
+  uint64 total_used_points = 7;
+  uint64 total_expired_points = 8;
+  int64 total_adjusted_points = 9;
+  uint64 next_expire_points = 10;
+  string next_expire_at = 11;
+  string updated_at = 12;
+}
+
+message PointsBillItem {
+  string ledger_no = 1;
+  string entry_type_code = 2;
+  string biz_type = 3;
+  string biz_no = 4;
+  string reservation_no = 5;
+  string related_bucket_no = 6;
+  int64 points_delta = 7;
+  int64 available_after = 8;
+  int64 frozen_after = 9;
+  uint64 debt_after = 10;
+  int64 cash_amount_cent = 11;
+  string remark = 12;
+  string created_at = 13;
+}
+
+message PointsSubAllocation {
+  string sub_order_no = 1;
+  int64 item_amount_cent = 2;
+  uint64 points = 3;
+  int64 cash_amount_cent = 4;
+}
+
+message ReservationSnapshot {
+  string reservation_no = 1;
+  uint64 user_id = 2;
+  string order_no = 3;
+  string shop_no = 4;
+  string reservation_status_code = 5;
+  uint64 locked_points = 6;
+  int64 locked_cash_amount_cent = 7;
+  string deduction_digest = 8;
+  string rule_snapshot_json = 9;
+  string idempotency_key = 10;
+  string expire_at = 11;
+  string confirmed_at = 12;
+  string canceled_at = 13;
+  string cancel_reason_code = 14;
+  string created_at = 15;
+  string updated_at = 16;
 }
 
 message InitPointsAccountIfAbsentReq {
@@ -18,6 +100,262 @@ message InitPointsAccountIfAbsentReq {
 message InitPointsAccountIfAbsentRes {
   bool created = 1;
   uint64 balance = 2;
+  string status_code = 3;
+}
+
+message GetPointsAccountSummaryReq {
+  uint64 user_id = 1;
+}
+
+message GetPointsAccountSummaryRes {
+  PointsAccountSnapshot account = 1;
+}
+
+message ListMyPointsBillsReq {
+  uint64 user_id = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+message ListMyPointsBillsRes {
+  repeated PointsBillItem list = 1;
+  int64 total = 2;
+  bool has_more = 3;
+}
+
+message PreviewOrderItem {
+  string sub_order_no = 1;
+  int64 item_amount_cent = 2;
+}
+
+message PreviewOrderPointsDeductionReq {
+  uint64 user_id = 1;
+  string order_no = 2;
+  string shop_no = 3;
+  int64 order_amount_cent = 4;
+  uint64 requested_points = 5;
+  repeated PreviewOrderItem items = 6;
+}
+
+message PreviewOrderPointsDeductionRes {
+  bool can_use_points = 1;
+  string reason_code = 2;
+  string rule_code = 3;
+  uint64 available_points = 4;
+  uint64 max_usable_points = 5;
+  uint64 preview_points = 6;
+  int64 cash_discount_amount_cent = 7;
+  string deduction_digest = 8;
+  string rule_snapshot_json = 9;
+  repeated PointsSubAllocation sub_allocations = 10;
+}
+
+message LockPointsForOrderReq {
+  uint64 user_id = 1;
+  string order_no = 2;
+  string shop_no = 3;
+  uint64 requested_points = 4;
+  int64 expected_cash_amount_cent = 5;
+  string deduction_digest = 6;
+  string rule_snapshot_json = 7;
+  repeated PointsSubAllocation sub_allocations = 8;
+  string idempotency_key = 9;
+  string expire_at = 10;
+}
+
+message LockPointsForOrderRes {
+  ReservationSnapshot reservation = 1;
+  int64 account_available_after = 2;
+  int64 account_frozen_after = 3;
+}
+
+message ConfirmLockedPointsReq {
+  string reservation_no = 1;
+  string order_no = 2;
+  string payment_no = 3;
+  string idempotency_key = 4;
+}
+
+message ConfirmLockedPointsRes {
+  ReservationSnapshot reservation = 1;
+  int64 account_available_after = 2;
+  int64 account_frozen_after = 3;
+  uint64 debt_points_after = 4;
+}
+
+message CancelLockedPointsReq {
+  string reservation_no = 1;
+  string order_no = 2;
+  string reason_code = 3;
+  string idempotency_key = 4;
+}
+
+message CancelLockedPointsRes {
+  ReservationSnapshot reservation = 1;
+  int64 account_available_after = 2;
+  int64 account_frozen_after = 3;
+}
+
+message GrantPointsItem {
+  string sub_order_no = 1;
+  int64 item_paid_amount_cent = 2;
+  uint64 granted_points = 3;
+}
+
+message GrantPointsForCompletedOrderReq {
+  uint64 user_id = 1;
+  string order_no = 2;
+  string shop_no = 3;
+  string rule_code = 4;
+  repeated GrantPointsItem items = 5;
+  string idempotency_key = 6;
+}
+
+message GrantPointsForCompletedOrderRes {
+  uint64 granted_points = 1;
+  int64 account_available_after = 2;
+  uint64 debt_points_after = 3;
+  repeated string bucket_nos = 4;
+}
+
+message ReturnPointsItem {
+  string sub_order_no = 1;
+  string order_no = 2;
+  uint64 points_to_return = 3;
+  int64 cash_amount_cent = 4;
+}
+
+message ReturnPointsByRefundReq {
+  uint64 user_id = 1;
+  string refund_no = 2;
+  string order_no = 3;
+  string shop_no = 4;
+  repeated ReturnPointsItem items = 5;
+  string idempotency_key = 6;
+}
+
+message ReturnPointsByRefundRes {
+  uint64 returned_points = 1;
+  int64 account_available_after = 2;
+  uint64 debt_points_after = 3;
+  repeated string bucket_nos = 4;
+  bool grace_bucket_created = 5;
+}
+
+message ReverseGrantedPointsItem {
+  string sub_order_no = 1;
+  uint64 reverse_points = 2;
+}
+
+message ReverseGrantedPointsByRefundReq {
+  uint64 user_id = 1;
+  string refund_no = 2;
+  string order_no = 3;
+  string shop_no = 4;
+  repeated ReverseGrantedPointsItem items = 5;
+  string idempotency_key = 6;
+  int64 approved_refund_amount_cent = 7;
+}
+
+message ReverseGrantedPointsByRefundRes {
+  uint64 reversed_points = 1;
+  uint64 effective_reversed_points = 2;
+  uint64 deficit_points = 3;
+  int64 cash_offset_amount_cent = 4;
+  int64 account_available_after = 5;
+  uint64 account_debt_after = 6;
+}
+
+message ExpirePointsBatchReq {
+  uint32 limit = 1;
+  string sweep_job_no = 2;
+}
+
+message ExpirePointsBatchRes {
+  string sweep_job_no = 1;
+  uint32 processed_count = 2;
+  uint64 expired_points = 3;
+}
+
+message GetPointsAccountReq {
+  uint64 user_id = 1;
+}
+
+message GetPointsAccountRes {
+  PointsAccountSnapshot account = 1;
+}
+
+message ListPointsAccountsReq {
+  int32 page = 1;
+  int32 page_size = 2;
+  string status_code = 3;
+  uint64 user_id = 4;
+}
+
+message ListPointsAccountsRes {
+  repeated PointsAccountSnapshot list = 1;
+  int64 total = 2;
+  bool has_more = 3;
+}
+
+message ListReservationRecordsReq {
+  int32 page = 1;
+  int32 page_size = 2;
+  uint64 user_id = 3;
+  string order_no = 4;
+  string reservation_status_code = 5;
+}
+
+message ListReservationRecordsRes {
+  repeated ReservationSnapshot list = 1;
+  int64 total = 2;
+  bool has_more = 3;
+}
+
+message AdjustPointsBalanceReq {
+  uint64 user_id = 1;
+  int64 adjust_points = 2;
+  string reason_code = 3;
+  string biz_no = 4;
+  string remark = 5;
+  string operator = 6;
+  string idempotency_key = 7;
+}
+
+message AdjustPointsBalanceRes {
+  PointsAccountSnapshot account = 1;
+  string ledger_no = 2;
+}
+
+message FreezePointsAccountReq {
+  uint64 user_id = 1;
+  string reason_code = 2;
+  string operator = 3;
+}
+
+message FreezePointsAccountRes {
+  PointsAccountSnapshot account = 1;
+}
+
+message UnfreezePointsAccountReq {
+  uint64 user_id = 1;
+  string reason_code = 2;
+  string operator = 3;
+}
+
+message UnfreezePointsAccountRes {
+  PointsAccountSnapshot account = 1;
+}
+
+message TriggerExpireSweepReq {
+  uint32 limit = 1;
+  string sweep_job_no = 2;
+}
+
+message TriggerExpireSweepRes {
+  string sweep_job_no = 1;
+  uint32 processed_count = 2;
+  uint64 expired_points = 3;
 }
 
 message GetPointsByUserIdReq {

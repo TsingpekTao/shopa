@@ -9,7 +9,47 @@ import { useI18n } from "./i18n";
 type Props = {
   children: ReactNode;
   mode?: "default" | "mall";
+  shellState?: {
+    cartTypeCount?: number;
+    unreadMessages?: number;
+  };
 };
+
+type MallAuthSnapshot = {
+  loggedIn: boolean;
+  displayName: string;
+  avatarText: string;
+  avatarUrl: string;
+};
+
+type ProfileSummaryResponse = {
+  code?: number;
+  data?: {
+    profile?: {
+      display_name?: string;
+      displayName?: string;
+      avatar?: {
+        url?: string;
+      };
+      ext?: Record<string, string>;
+    };
+  };
+  profile?: {
+    display_name?: string;
+    displayName?: string;
+    avatar?: {
+      url?: string;
+    };
+    ext?: Record<string, string>;
+  };
+};
+
+const AUTH_CHANGED_EVENT = "shopa-mall-auth-changed";
+const ACCESS_TOKEN_KEY = "shopa_mall_access_token";
+const LAST_IDENTIFIER_KEY = "shopa_mall_last_identifier";
+const DISPLAY_NAME_KEY = "shopa_mall_display_name";
+const AVATAR_URL_KEY = "shopa_mall_avatar_url";
+const PERSISTED_AUTH_KEY = "shopa-mall-auth";
 
 function go(path: string) {
   if (typeof window === "undefined") {
@@ -18,17 +58,17 @@ function go(path: string) {
   window.location.href = path;
 }
 
-type MallAuthSnapshot = {
-  loggedIn: boolean;
-  displayName: string;
-  avatarText: string;
-};
-
-const AUTH_CHANGED_EVENT = "shopa-mall-auth-changed";
-const ACCESS_TOKEN_KEY = "shopa_mall_access_token";
-const LAST_IDENTIFIER_KEY = "shopa_mall_last_identifier";
-const DISPLAY_NAME_KEY = "shopa_mall_display_name";
-const PERSISTED_AUTH_KEY = "shopa-mall-auth";
+function resolveMallApiBaseURL(): string {
+  if (typeof window === "undefined") {
+    return "http://127.0.0.1:8000";
+  }
+  const envBaseURL = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+  if (envBaseURL) {
+    return envBaseURL;
+  }
+  const { protocol, hostname } = window.location;
+  return `${protocol}//${hostname}:8000`;
+}
 
 function tryReadPersistedAccessToken(): string {
   if (typeof window === "undefined") {
@@ -48,13 +88,19 @@ function tryReadPersistedAccessToken(): string {
   }
 }
 
+function decodeBase64Url(value: string): string {
+  const normalized = value.replaceAll("-", "+").replaceAll("_", "/");
+  const padding = normalized.length % 4 === 0 ? "" : "=".repeat(4 - (normalized.length % 4));
+  return atob(`${normalized}${padding}`);
+}
+
 function tryDecodeIdentityFromToken(token: string): string {
   const parts = token.split(".");
   if (parts.length < 2) {
     return "";
   }
   try {
-    const payload = JSON.parse(atob(parts[1])) as Record<string, unknown>;
+    const payload = JSON.parse(decodeBase64Url(parts[1])) as Record<string, unknown>;
     const fields = [
       payload.display_name,
       payload.displayName,
@@ -90,62 +136,72 @@ function normalizeDisplayName(raw: string): string {
   return value;
 }
 
-async function fetchMallProfileDisplayName(token: string): Promise<string> {
+async function fetchMallProfileSummary(token: string): Promise<{ displayName: string; avatarUrl: string }> {
   if (!token) {
-    return "";
+    return { displayName: "", avatarUrl: "" };
   }
-  const response = await fetch("/v1/me/profile?include_addresses=false", {
+
+  const response = await fetch(`${resolveMallApiBaseURL()}/v1/me/profile?include_addresses=false`, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`
-    }
+    },
+    cache: "no-store"
   });
   if (!response.ok) {
-    return "";
+    return { displayName: "", avatarUrl: "" };
   }
-  const payload = (await response.json()) as {
-    code?: number;
-    data?: { profile?: { display_name?: string; displayName?: string; ext?: Record<string, string> } };
-    profile?: { display_name?: string; displayName?: string; ext?: Record<string, string> };
-  };
+
+  const payload = (await response.json()) as ProfileSummaryResponse;
   if (typeof payload.code === "number" && payload.code !== 0) {
-    return "";
+    return { displayName: "", avatarUrl: "" };
   }
+
   const profile = payload.data?.profile ?? payload.profile;
   const fromProfile = profile?.display_name ?? profile?.displayName ?? "";
-  if (typeof fromProfile === "string") {
-    const normalized = normalizeDisplayName(fromProfile);
-    if (normalized) {
-      return normalized;
-    }
+  const avatarUrl = profile?.avatar?.url?.trim() ?? "";
+
+  const normalized = normalizeDisplayName(fromProfile);
+  if (normalized) {
+    return { displayName: normalized, avatarUrl };
   }
+
   const fromExt = profile?.ext;
-  if (fromExt) {
-    const fallback = [fromExt.nickname, fromExt.username, fromExt.email, fromExt.phone].find((item) => typeof item === "string");
-    if (typeof fallback === "string") {
-      return normalizeDisplayName(fallback);
-    }
+  if (!fromExt) {
+    return { displayName: "", avatarUrl: "" };
   }
-  return "";
+  const fallback = [fromExt.nickname, fromExt.username, fromExt.email, fromExt.phone].find((item) => typeof item === "string");
+  return {
+    displayName: typeof fallback === "string" ? normalizeDisplayName(fallback) : "",
+    avatarUrl
+  };
 }
 
-function readMallAuthSnapshot(locale: string): MallAuthSnapshot {
+function readMallAuthSnapshot(): MallAuthSnapshot {
   if (typeof window === "undefined") {
-    return { loggedIn: false, displayName: "", avatarText: "S" };
+    return { loggedIn: false, displayName: "", avatarText: "S", avatarUrl: "" };
   }
+
   const token = window.localStorage.getItem(ACCESS_TOKEN_KEY)?.trim() || tryReadPersistedAccessToken();
   const loggedIn = token.length > 0;
-  const candidates = [
+  const displayNameCandidates = [
     window.localStorage.getItem(DISPLAY_NAME_KEY)?.trim() ?? "",
     window.localStorage.getItem(LAST_IDENTIFIER_KEY)?.trim() ?? "",
     tryDecodeIdentityFromToken(token)
   ];
-  const displayName = candidates.map((item) => normalizeDisplayName(item)).find((item) => item.length > 0) ?? "";
+  const displayName = displayNameCandidates.map((item) => normalizeDisplayName(item)).find((item) => item.length > 0) ?? "";
   const avatarText = (displayName || "S").slice(0, 1).toUpperCase();
-  return { loggedIn, displayName, avatarText };
+  const avatarUrl = window.localStorage.getItem(AVATAR_URL_KEY)?.trim() ?? "";
+
+  return {
+    loggedIn,
+    displayName,
+    avatarText,
+    avatarUrl
+  };
 }
 
-export function AppShell({ children, mode = "default" }: Props) {
+export function AppShell({ children, mode = "default", shellState }: Props) {
   const { locale, setLocale, t } = useI18n();
   const isMallMode = mode === "mall";
   const sellerEntryUrl = "http://127.0.0.1:3100/";
@@ -153,7 +209,8 @@ export function AppShell({ children, mode = "default" }: Props) {
   const [mallAuth, setMallAuth] = useState<MallAuthSnapshot>({
     loggedIn: false,
     displayName: "",
-    avatarText: "S"
+    avatarText: "S",
+    avatarUrl: ""
   });
 
   useEffect(() => {
@@ -164,8 +221,8 @@ export function AppShell({ children, mode = "default" }: Props) {
     if (!isMallMode) {
       return;
     }
-    setMallAuth(readMallAuthSnapshot(locale));
-  }, [isMallMode, locale]);
+    setMallAuth(readMallAuthSnapshot());
+  }, [isMallMode]);
 
   useEffect(() => {
     if (!isMallMode || !hasHydrated) {
@@ -183,37 +240,52 @@ export function AppShell({ children, mode = "default" }: Props) {
   }, [hasHydrated, isMallMode, refreshMallAuth]);
 
   useEffect(() => {
-    if (!hasHydrated || !isMallMode || !mallAuth.loggedIn || mallAuth.displayName) {
+    if (!hasHydrated || !isMallMode || !mallAuth.loggedIn || (mallAuth.displayName && mallAuth.avatarUrl)) {
       return;
     }
+
     const token = window.localStorage.getItem(ACCESS_TOKEN_KEY)?.trim() || tryReadPersistedAccessToken();
     if (!token) {
       return;
     }
+
     let mounted = true;
-    fetchMallProfileDisplayName(token)
-      .then((name) => {
-        if (!mounted || !name) {
+    fetchMallProfileSummary(token)
+      .then(({ displayName, avatarUrl }) => {
+        if (!mounted) {
           return;
         }
-        window.localStorage.setItem(DISPLAY_NAME_KEY, name);
-        window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
+        if (displayName) {
+          window.localStorage.setItem(DISPLAY_NAME_KEY, displayName);
+        }
+        if (avatarUrl) {
+          window.localStorage.setItem(AVATAR_URL_KEY, avatarUrl);
+        }
+        if (displayName || avatarUrl) {
+          window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
+        }
       })
       .catch(() => {
-        // ignore profile hydrate errors
+        // Ignore background hydration failures and keep cached summary.
       });
+
     return () => {
       mounted = false;
     };
-  }, [hasHydrated, isMallMode, mallAuth.displayName, mallAuth.loggedIn]);
+  }, [hasHydrated, isMallMode, mallAuth.avatarUrl, mallAuth.displayName, mallAuth.loggedIn]);
 
   const isMallLoggedIn = isMallMode && hasHydrated && mallAuth.loggedIn;
   const mallDisplayName = useMemo(() => {
     if (!isMallLoggedIn) {
       return "";
     }
-    return mallAuth.displayName || (locale === "zh-CN" ? "已登录用户" : "Signed-in user");
-  }, [isMallLoggedIn, mallAuth.displayName, locale]);
+    return mallAuth.displayName || (locale === "zh-CN" ? "\u5df2\u767b\u5f55\u7528\u6237" : "Signed-in user");
+  }, [isMallLoggedIn, locale, mallAuth.displayName]);
+
+  const cartTypeCount = shellState?.cartTypeCount ?? 0;
+  const unreadMessages = shellState?.unreadMessages ?? 0;
+  const cartBadgeText = cartTypeCount > 99 ? "99+" : String(cartTypeCount);
+  const unreadBadgeText = unreadMessages > 99 ? "99+" : String(unreadMessages);
 
   const settingMenu: MenuProps = {
     items: [
@@ -231,9 +303,7 @@ export function AppShell({ children, mode = "default" }: Props) {
       { key: "/me/orders", label: t("profile_orders") },
       ...(isMallLoggedIn ? [] : [{ key: "/login", label: t("profile_switch") }])
     ],
-    onClick: ({ key }) => {
-      go(String(key));
-    }
+    onClick: ({ key }) => go(String(key))
   };
 
   const helpMenu: MenuProps = {
@@ -265,32 +335,49 @@ export function AppShell({ children, mode = "default" }: Props) {
           <div className="tb-topbar-inner">
             <div className="tb-topbar-links">
               {isMallLoggedIn ? (
-                <a href="/me/profile">{locale === "zh-CN" ? `你好，${mallDisplayName}` : `Hi, ${mallDisplayName}`}</a>
+                <a href="/me/profile">{locale === "zh-CN" ? `\u4f60\u597d\uff0c${mallDisplayName}` : `Hi, ${mallDisplayName}`}</a>
               ) : (
                 <a href="/login">{t("topbar_login_tip")}</a>
               )}
-              <a href="/cart">{t("topbar_cart")}</a>
-              <a href="/me/orders">{t("topbar_orders")}</a>
+
+              <a href="/cart" className="tb-topbar-action tb-topbar-action--with-badge" aria-label={t("topbar_cart")}>
+                <span>{t("topbar_cart")}</span>
+                {cartTypeCount > 0 ? <span className="tb-topbar-badge tb-topbar-badge--alert">{cartBadgeText}</span> : null}
+              </a>
+
+              <a href="/me/orders" className="tb-topbar-action">
+                {t("topbar_orders")}
+              </a>
+
+              <a href="/me/messages" className="tb-topbar-action tb-topbar-action--with-badge" aria-label={t("topbar_messages")}>
+                <span>{t("topbar_messages")}</span>
+                {unreadMessages > 0 ? <span className="tb-topbar-badge tb-topbar-badge--alert">{unreadBadgeText}</span> : null}
+              </a>
+
               <Dropdown menu={helpMenu} trigger={["hover", "click"]}>
-                <button type="button" className="tb-topbar-drop" aria-label={t("topbar_help")}>{t("topbar_help")}</button>
+                <button type="button" className="tb-topbar-drop" aria-label={t("topbar_help")}>
+                  {t("topbar_help")}
+                </button>
               </Dropdown>
+
               <a href="/search?tab=favorites">{t("topbar_favorites")}</a>
               <a href={sellerEntryUrl} target="_blank" rel="noreferrer">
                 {t("topbar_open_store")}
               </a>
             </div>
+
             <div className="tb-topbar-links">
               <a href={isMallLoggedIn ? "/me/profile" : "/register"}>
-                {isMallLoggedIn ? (locale === "zh-CN" ? "个人中心" : "Profile Center") : t("topbar_register")}
+                {isMallLoggedIn ? (locale === "zh-CN" ? "\u4e2a\u4eba\u4e2d\u5fc3" : "Profile Center") : t("topbar_register")}
               </a>
               <a href="/contact">{t("topbar_contact")}</a>
               <select
                 className="tb-lang-select"
                 value={locale}
-                onChange={(e) => setLocale(e.target.value === "zh-CN" ? "zh-CN" : "en-US")}
+                onChange={(event) => setLocale(event.target.value === "zh-CN" ? "zh-CN" : "en-US")}
                 aria-label={t("language_switch")}
               >
-                <option value="zh-CN">中文</option>
+                <option value="zh-CN">{"\u4e2d\u6587"}</option>
                 <option value="en-US">English</option>
               </select>
             </div>
@@ -302,6 +389,7 @@ export function AppShell({ children, mode = "default" }: Props) {
             <a href="/" className="tb-logo" aria-label={t("logo_aria")}>
               SHOPA
             </a>
+
             <form className="tb-search" action="/search" method="get">
               <label htmlFor="global-search" className="tb-sr-only">
                 {t("search_label")}
@@ -311,27 +399,30 @@ export function AppShell({ children, mode = "default" }: Props) {
             </form>
 
             <div className="tb-header-actions">
-              {!isMallLoggedIn && (
+              {!isMallLoggedIn ? (
                 <a href="/login" className="tb-login-btn">
                   {t("header_login")}
                 </a>
-              )}
+              ) : null}
+
               <Dropdown menu={settingMenu} trigger={["click"]} placement="bottomRight">
                 <Button className="tb-setting-btn" type="default">
                   {t("header_settings")}
                 </Button>
               </Dropdown>
+
               <Dropdown menu={userMenu} trigger={["click"]} placement="bottomRight">
                 <Space className="tb-user-btn" size={8}>
-                  <Avatar size={28}>{isMallLoggedIn ? mallAuth.avatarText : "T"}</Avatar>
+                  <Avatar size={28} src={isMallLoggedIn ? mallAuth.avatarUrl || undefined : undefined}>
+                    {isMallLoggedIn ? mallAuth.avatarText : "T"}
+                  </Avatar>
                   <span className="tb-user-name">{isMallLoggedIn ? mallDisplayName : t("header_profile")}</span>
                 </Space>
               </Dropdown>
             </div>
           </div>
 
-          <nav className="tb-nav" aria-label={t("mall_nav")}
-          >
+          <nav className="tb-nav" aria-label={t("mall_nav")}>
             <a href="/">{t("nav_home")}</a>
             <a href="/search?q=electronics">{t("nav_electronics")}</a>
             <a href="/search?q=fashion">{t("nav_fashion")}</a>
@@ -352,7 +443,9 @@ export function AppShell({ children, mode = "default" }: Props) {
             <a href="/settings">{t("footer_settings")}</a>
             <a href="/service">{t("footer_service")}</a>
             <a href="/help">{t("footer_help")}</a>
-            <a href={sellerEntryUrl} target="_blank" rel="noreferrer">{t("footer_open_store")}</a>
+            <a href={sellerEntryUrl} target="_blank" rel="noreferrer">
+              {t("footer_open_store")}
+            </a>
           </div>
           <p className="tb-footer-text">{t("footer_copy")}</p>
         </Layout.Footer>
@@ -360,4 +453,3 @@ export function AppShell({ children, mode = "default" }: Props) {
     </ConfigProvider>
   );
 }
-

@@ -18,8 +18,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 )
 
-// SendSmsCode 发送短信验证码并返回重发窗口。
-// 关键路径：参数校验 -> 风控校验 -> 分布式发送锁 -> 生成验证码 -> 缓存存储哈希 -> 审计日志。
+// SendSmsCode 发送短信验证码，并记录风控与审计信息。
 func (s *Service) SendSmsCode(ctx context.Context, req *v1.SendSmsCodeReq) (*v1.SendSmsCodeRes, error) {
 	var (
 		scene = req.GetScene()
@@ -27,17 +26,17 @@ func (s *Service) SendSmsCode(ctx context.Context, req *v1.SendSmsCodeReq) (*v1.
 		meta  = extractRiskMeta(ctx, req.GetRisk())
 	)
 
-	// 场景和手机号是最小输入集，缺失直接返回参数错误。
+	// 场景和手机号是最小必填项，缺失时直接返回参数错误。
 	if scene == v1.SmsScene_SMS_SCENE_UNSPECIFIED || phone == "" {
 		return nil, errs.New(errs.CodeInvalidParam)
 	}
 
-	// 轻量自动化识别命中时要求 captcha，降低机器批量探测风险。
+	// 轻量识别出自动化流量时，要求补充 captcha。
 	if looksLikeAutomation(meta.UserAgent) && meta.CaptchaToken == "" {
 		return nil, errs.New(errs.CodeCaptchaFailed)
 	}
 
-	// 注册场景附加 IP 频控，抑制同源批量注册。
+	// 注册场景额外叠加 IP 频控，抑制同源批量注册。
 	if scene == v1.SmsScene_SMS_SCENE_REGISTER && meta.ClientIP != "" {
 		count, err := s.cache.IncRegisterIpLimit(ctx, meta.ClientIP, time.Now())
 		if err != nil {
@@ -48,7 +47,7 @@ func (s *Service) SendSmsCode(ctx context.Context, req *v1.SendSmsCodeReq) (*v1.
 		}
 	}
 
-	// 分布式发送锁：同手机号+场景短时间内只允许一个发送请求成功。
+	// 同手机号+场景短时间内只允许一个发送请求成功。
 	ok, err := s.cache.AcquireSmsSendLock(ctx, sceneKey(scene), phone)
 	if err != nil {
 		return nil, errs.Wrap(errs.CodeInternalError, err)
@@ -57,19 +56,19 @@ func (s *Service) SendSmsCode(ctx context.Context, req *v1.SendSmsCodeReq) (*v1.
 		return nil, errs.New(errs.CodeSmsTooFrequent)
 	}
 
-	// 生成纯数字验证码（当前长度由常量统一控制）。
+	// 生成纯数字验证码。
 	code, err := randomDigits(smsCodeLength)
 	if err != nil {
 		return nil, errs.Wrap(errs.CodeInternalError, err)
 	}
 
-	// 缓存中仅保存验证码哈希，不保存明文。
+	// 先将验证码摘要写入缓存，供后续校验使用。
 	if err = s.cache.SaveSmsCode(ctx, sceneKey(scene), phone, s.hashSmsCode(scene, phone, code)); err != nil {
 		s.insertSmsLog(ctx, scene, phone, consts.SmsProviderMock, "", false, errs.CodeInternalError.Code(), meta)
 		return nil, errs.Wrap(errs.CodeInternalError, err)
 	}
 
-	// 通过 provider 发送验证码。若发送失败，回滚缓存验证码，避免产生“用户收不到但服务端可校验”的幽灵验证码。
+	// 调用短信 provider 发送验证码；若发送失败则回滚缓存，避免产生幽灵验证码。
 	sendRes, err := s.sms.SendCode(ctx, &sms.SendCodeRequest{
 		Scene:     sceneKey(scene),
 		Phone:     phone,
@@ -98,14 +97,13 @@ func (s *Service) SendSmsCode(ctx context.Context, req *v1.SendSmsCodeReq) (*v1.
 		}
 		bizID = strings.TrimSpace(sendRes.BizID)
 	}
-	// 审计日志写入失败不阻断主流程（insertSmsLog 内部已忽略写库错误）。
+	// 审计日志写入失败不阻断主链路，insertSmsLog 内部已忽略写库错误。
 	s.insertSmsLog(ctx, scene, phone, provider, bizID, true, errs.CodeOK.Code(), meta)
 
 	return &v1.SendSmsCodeRes{ResendAfterSeconds: 60}, nil
 }
 
-// RegisterByPassword 使用“手机号 + 短信码 + 密码”完成注册。
-// 关键事务：用户主表、默认角色、默认会员、refresh_session、outbox 事件同事务提交。
+// RegisterByPassword 使用短信验证码和密码完成注册。
 func (s *Service) RegisterByPassword(ctx context.Context, req *v1.RegisterByPasswordReq) (*v1.RegisterByPasswordRes, error) {
 	var (
 		phone    = normalizePhone(req.GetPhone())
@@ -120,7 +118,6 @@ func (s *Service) RegisterByPassword(ctx context.Context, req *v1.RegisterByPass
 	if err := validateNewPassword(password); err != nil {
 		return nil, errs.New(errs.CodeInvalidParam, err.Error())
 	}
-
 	if looksLikeAutomation(meta.UserAgent) && meta.CaptchaToken == "" {
 		return nil, errs.New(errs.CodeCaptchaFailed)
 	}
@@ -159,11 +156,10 @@ func (s *Service) RegisterByPassword(ctx context.Context, req *v1.RegisterByPass
 	}
 
 	var (
-		userID = s.nextUserID()
-		// tokenVersion 作为令牌批次号，后续改密/封禁可通过递增实现全量失效。
+		userID       = s.nextUserID()
 		tokenVersion = uint(1)
 	)
-	// sid 代表一次登录会话，access/refresh 共用同一个 sid。
+	// tokenVersion 作为令牌批次号，后续改密或封禁时可整体失效旧 token。
 	sid, sidErr := s.newSID()
 	if sidErr != nil {
 		return nil, errs.Wrap(errs.CodeInternalError, sidErr)
@@ -195,7 +191,7 @@ func (s *Service) RegisterByPassword(ctx context.Context, req *v1.RegisterByPass
 			return err
 		}
 
-		// 事务步骤 2：分配默认角色。
+		// 事务步骤 2：授予默认买家角色。
 		if _, err = tx.Model(dao.IamUserRole.Table()).Data(do.IamUserRole{
 			UserId:    userID,
 			RoleCode:  consts.RoleCodeCustomer,
@@ -229,7 +225,7 @@ func (s *Service) RegisterByPassword(ctx context.Context, req *v1.RegisterByPass
 			return err
 		}
 
-		// 事务步骤 5：写 outbox，保证“注册成功”与“事件可投递”原子一致。
+		// 事务步骤 5：写入 outbox，保证“注册成功”和“事件可投递”原子一致。
 		return s.insertOutboxUserRegistered(ctx, tx, userID, initName)
 	})
 	if err != nil {
@@ -257,8 +253,7 @@ func (s *Service) RegisterByPassword(ctx context.Context, req *v1.RegisterByPass
 	}, nil
 }
 
-// LoginByPassword 使用账号密码登录。
-// 关键分支：锁定校验 -> 账号状态校验 -> 密码校验 -> 可选 MFA -> 登录收尾。
+// LoginByPassword 使用账号密码登录，必要时触发 MFA。
 func (s *Service) LoginByPassword(ctx context.Context, req *v1.LoginByPasswordReq) (*v1.LoginByPasswordRes, error) {
 	var (
 		identifier = normalizeIdentifier(req.GetIdentifier())
@@ -269,7 +264,7 @@ func (s *Service) LoginByPassword(ctx context.Context, req *v1.LoginByPasswordRe
 		return nil, errs.New(errs.CodeInvalidParam)
 	}
 
-	// 先查 Redis 级锁定（短路返回，避免打数据库）。
+	// 先查 Redis 级锁定，避免无意义访问数据库。
 	if locked, err := s.cache.IsLoginLocked(ctx, identifier); err != nil {
 		return nil, errs.Wrap(errs.CodeInternalError, err)
 	} else if locked {
@@ -303,7 +298,7 @@ func (s *Service) LoginByPassword(ctx context.Context, req *v1.LoginByPasswordRe
 		return nil, s.onLoginFailed(ctx, auth, identifier, v1.LoginChannel_LOGIN_CHANNEL_PASSWORD, meta, "invalid_password")
 	}
 
-	// 策略命中：IP 变化触发 MFA 二次验证，不直接签发 token。
+	// 命中策略时，IP 变化会触发 MFA，而不是直接签发 token。
 	if s.security.MfaOnIPChange && shouldRequireMFA(auth, meta.ClientIP) {
 		_, challenge, err := s.buildMFAChallenge(ctx, auth, identifier)
 		if err != nil {
@@ -328,7 +323,7 @@ func (s *Service) LoginByPassword(ctx context.Context, req *v1.LoginByPasswordRe
 	}, nil
 }
 
-// LoginBySms 使用手机号 + 短信验证码登录。
+// LoginBySms 使用短信验证码登录。
 func (s *Service) LoginBySms(ctx context.Context, req *v1.LoginBySmsReq) (*v1.LoginBySmsRes, error) {
 	var (
 		phone   = normalizePhone(req.GetPhone())
@@ -384,7 +379,7 @@ func (s *Service) LoginBySms(ctx context.Context, req *v1.LoginBySmsReq) (*v1.Lo
 	}, nil
 }
 
-// VerifyMfaChallenge 校验 challenge + 短信码，成功后补发 token。
+// VerifyMfaChallenge 校验 MFA challenge 与短信验证码，并补发正式 token。
 func (s *Service) VerifyMfaChallenge(ctx context.Context, req *v1.VerifyMfaChallengeReq) (*v1.VerifyMfaChallengeRes, error) {
 	var (
 		challengeID = strings.TrimSpace(req.GetChallengeId())
@@ -424,7 +419,7 @@ func (s *Service) VerifyMfaChallenge(ctx context.Context, req *v1.VerifyMfaChall
 	if err != nil {
 		return nil, err
 	}
-	// challenge 一次性消费，防止重复使用。
+	// challenge 为一次性票据，消费成功后立即删除。
 	_ = s.cache.DeleteMFAChallenge(ctx, challengeID)
 
 	return &v1.VerifyMfaChallengeRes{
@@ -433,8 +428,7 @@ func (s *Service) VerifyMfaChallenge(ctx context.Context, req *v1.VerifyMfaChall
 	}, nil
 }
 
-// verifySmsCode 校验短信码，并处理错误次数上限。
-// 达到阈值后主动删除验证码，阻断无限试错。
+// verifySmsCode 校验缓存中的短信验证码摘要。
 func (s *Service) verifySmsCode(ctx context.Context, scene v1.SmsScene, phone, code string) error {
 	sceneName := sceneKey(scene)
 	hash, exists, err := s.cache.GetSmsCodeHash(ctx, sceneName, phone)
@@ -455,11 +449,7 @@ func (s *Service) verifySmsCode(ctx context.Context, scene v1.SmsScene, phone, c
 	return nil
 }
 
-// onLoginFailed 统一处理登录失败分支。
-// 执行动作：
-// 1) 增加失败计数并施加延迟。
-// 2) 按阈值锁定账号（数据库状态 + Redis 快速锁）。
-// 3) 写审计日志。
+// onLoginFailed 统一处理登录失败计数、锁定和审计日志。
 func (s *Service) onLoginFailed(ctx context.Context, auth *entity.IamUserAuth, identifier string, channel v1.LoginChannel, meta riskMeta, reason string) error {
 	// count 表示连续失败次数，用于锁定判断与退避延迟计算。
 	count, err := s.cache.IncrLoginFail(ctx, identifier)
@@ -496,6 +486,7 @@ func (s *Service) onLoginFailed(ctx context.Context, auth *entity.IamUserAuth, i
 	return errs.New(errs.CodeInvalidCredential)
 }
 
+// accountLockedMessage 生成账号锁定提示文案。
 func accountLockedMessage(remainingSeconds int64) string {
 	if remainingSeconds <= 0 {
 		remainingSeconds = int64(consts.DefaultLockDuration / time.Second)
@@ -503,8 +494,7 @@ func accountLockedMessage(remainingSeconds int64) string {
 	return fmt.Sprintf("Account locked, retry after %d seconds", remainingSeconds)
 }
 
-// buildMFAChallenge 生成 MFA challenge 并写入 Redis。
-// VerifyMfaChallenge 会基于该 challenge 做二次校验并发放 token。
+// buildMFAChallenge 创建 MFA challenge 并写入缓存。
 func (s *Service) buildMFAChallenge(ctx context.Context, auth *entity.IamUserAuth, identifier string) (string, *v1.AuthResult, error) {
 	id, err := randomToken(10)
 	if err != nil {
@@ -524,7 +514,7 @@ func (s *Service) buildMFAChallenge(ctx context.Context, auth *entity.IamUserAut
 	return id, s.buildMFAAuthResult(id, exp), nil
 }
 
-// shouldRequireMFA 判断是否触发异地登录 MFA（当前按 IP 变化判定）。
+// shouldRequireMFA 判断是否因登录 IP 变化而触发 MFA。
 func shouldRequireMFA(auth *entity.IamUserAuth, currentIP string) bool {
 	if strings.TrimSpace(currentIP) == "" {
 		return false
@@ -535,12 +525,7 @@ func shouldRequireMFA(auth *entity.IamUserAuth, currentIP string) bool {
 	return strings.TrimSpace(auth.LastLoginIp) != strings.TrimSpace(currentIP)
 }
 
-// finishLogin 处理登录成功收尾。
-// 关键顺序：
-// 1) 重置失败计数。
-// 2) 签发 token 并落 refresh_session。
-// 3) 更新最近登录信息。
-// 4) 查询并返回会话摘要。
+// finishLogin 负责收尾登录成功后的 token、session 与审计更新。
 func (s *Service) finishLogin(ctx context.Context, auth *entity.IamUserAuth, identifier string, channel v1.LoginChannel, meta riskMeta) (*v1.TokenPair, *v1.SessionSummary, error) {
 	_ = s.cache.ResetLoginFail(ctx, identifier)
 

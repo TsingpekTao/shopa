@@ -11,6 +11,7 @@ import (
 
 	"github.com/TsingpekTao/shopa/risk-svc/internal/controller/api"
 	"github.com/TsingpekTao/shopa/risk-svc/internal/controller/hello"
+	"github.com/TsingpekTao/shopa/risk-svc/internal/controller/risk"
 )
 
 var (
@@ -43,7 +44,10 @@ var (
 				// 启用统一响应封装中间件。
 				group.Middleware(ghttp.MiddlewareHandlerResponse)
 				// 绑定 hello 路由。
-				group.Bind(hello.NewV1())
+				group.Bind(
+					hello.NewV1(),
+					risk.NewV1(),
+				)
 			})
 			// 启动 HTTP 服务。
 			s.Run()

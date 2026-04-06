@@ -1,7 +1,7 @@
 ﻿import "./globals.css";
 import { ReactNode } from "react";
-import { AppShell } from "@shopa/ui";
 import { Providers } from "./providers";
+import { ShellAwareAppShell } from "@/features/shell/ShellAwareAppShell";
 
 export const metadata = {
   title: "Shopa Mall",
@@ -13,7 +13,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="zh-CN">
       <body>
         <Providers>
-          <AppShell mode="mall">{children}</AppShell>
+          <ShellAwareAppShell>{children}</ShellAwareAppShell>
         </Providers>
       </body>
     </html>

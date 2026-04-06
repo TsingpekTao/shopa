@@ -12,7 +12,6 @@ export const apiClient = createApiClient({
     getToken: () => localStorage.getItem(ACCESS_TOKEN_KEY),
     onUnauthorized: () => {
       localStorage.removeItem(ACCESS_TOKEN_KEY);
-      localStorage.removeItem(REFRESH_TOKEN_KEY);
       localStorage.removeItem(AUTH_STORE_KEY);
       window.location.href = "/login";
     }

@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package shopa.agent.event.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/agent-svc/api/event/v1;agenteventv1";
+
+import "google/protobuf/timestamp.proto";
+
+message EventMeta {
+  string event_id = 1;
+  string request_id = 2;
+  string producer = 3;
+  google.protobuf.Timestamp occurred_at = 4;
+}
+
+message AgentRunCompleted {
+  EventMeta meta = 1;
+  uint64 user_id = 2;
+  string shop_no = 3;
+
+  string run_no = 4;
+  string conversation_no = 5;
+  uint64 turn_no = 6;
+
+  string run_status_code = 7;
+  string risk_decision_code = 8;
+
+  bool prompt_injection_flag = 9;
+  bool reply_interrupted = 10;
+  string interrupt_reason_code = 11;
+
+  uint32 tool_iteration_count = 12;
+  uint32 tool_call_count = 13;
+  uint32 prompt_token_estimate = 14;
+  uint32 completion_token_estimate = 15;
+
+  string error_code = 16;
+  string error_message = 17;
+}
+
+message AgentRunEscalated {
+  EventMeta meta = 1;
+  uint64 user_id = 2;
+  string shop_no = 3;
+
+  string ticket_no = 4;
+  string conversation_no = 5;
+  string run_no = 6;
+
+  string escalation_reason_code = 7;
+  string handoff_summary_status_code = 8;
+}
+
+message KnowledgeDocPublished {
+  EventMeta meta = 1;
+
+  string knowledge_doc_no = 2;
+  string knowledge_scope_code = 3;
+  string source_type_code = 4;
+  string source_id = 5;
+  uint64 source_version = 6;
+
+  string shop_no = 7;
+}
+
+message KnowledgeSourceInvalidated {
+  EventMeta meta = 1;
+
+  string source_type_code = 2;
+  string source_id = 3;
+  uint64 source_version = 4;
+  string reason_code = 5;
+  string shop_no = 6;
+}
+
+message AgentFeedbackSubmitted {
+  EventMeta meta = 1;
+  uint64 user_id = 2;
+  string shop_no = 3;
+
+  string conversation_no = 4;
+  string run_no = 5;
+  string feedback_code = 6;
+  bool resolved = 7;
+}

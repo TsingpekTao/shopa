@@ -12,6 +12,7 @@ import (
 	"github.com/TsingpekTao/shopa/order-svc/internal/controller/api"
 	"github.com/TsingpekTao/shopa/order-svc/internal/controller/hello"
 	"github.com/TsingpekTao/shopa/order-svc/internal/controller/order"
+	"github.com/TsingpekTao/shopa/order-svc/internal/worker"
 )
 
 var (
@@ -20,6 +21,8 @@ var (
 		Usage: "main",
 		Brief: "start order gRPC and HTTP servers",
 		Func: func(ctx context.Context, parser *gcmd.Parser) (err error) {
+			worker.StartPointsCompensationWorker(ctx)
+
 			go func() {
 				c := grpcx.Server.NewConfig()
 				c.Options = append(c.Options, []grpc.ServerOption{

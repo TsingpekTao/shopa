@@ -12,7 +12,7 @@ func CORS(r *ghttp.Request) {
 
 	allowedOrigins := g.Cfg().MustGet(r.Context(), "gateway.cors.allowedOrigins", "http://127.0.0.1:3000,http://127.0.0.1:3100,http://127.0.0.1:3200").Strings()
 	allowedMethods := g.Cfg().MustGet(r.Context(), "gateway.cors.allowedMethods", "GET,POST,PUT,PATCH,DELETE,OPTIONS").String()
-	allowedHeaders := g.Cfg().MustGet(r.Context(), "gateway.cors.allowedHeaders", "Authorization,Content-Type,X-Request-Id,X-User-Id,X-Account-Status-Code").String()
+	allowedHeaders := g.Cfg().MustGet(r.Context(), "gateway.cors.allowedHeaders", "Authorization,Content-Type,X-Request-Id,X-User-Id,X-Account-Status-Code,X-Idempotency-Key,X-Shop-No").String()
 	allowCredentials := g.Cfg().MustGet(r.Context(), "gateway.cors.allowCredentials", true).Bool()
 
 	isAllowed := isOriginAllowed(origin, allowedOrigins)

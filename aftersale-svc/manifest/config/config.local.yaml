@@ -36,6 +36,14 @@ upstream:
   edgeGateway: "edge-gateway:8000"
   iam: "iam-svc:8001"
   userProfile: "user-profile-svc:8001"
+  timeoutMs: 3000
+  order:
+    baseUrl: "http://127.0.0.1:8008"
+  points:
+    baseUrl: "http://127.0.0.1:8021"
+    timeoutMs: 3000
+    returnPath: "/v1/points/internal/refund/return"
+    reversePath: "/v1/points/internal/refund/reverse"
 
 # Object storage / media placeholders.
 storage:

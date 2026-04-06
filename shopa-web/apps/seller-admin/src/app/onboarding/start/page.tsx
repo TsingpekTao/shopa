@@ -11,6 +11,7 @@ import {
   createApplicationDraft,
   listMyApplications,
   getMyApplication,
+  resubmitApplication,
   submitApplication,
   updateApplicationDraft
 } from "@/features/seller-shop/api";
@@ -366,9 +367,18 @@ export default function OnboardingStartPage() {
       }
 
       await syncBindingsIfPossible(draftNo);
-      const submitted = await submitApplication(draftNo, { expectedVersion: version });
+      const isRejectedFlow = ["REJECTED", "SYSTEM_REJECTED"].includes((state.statusCode || "").toUpperCase());
+      const submitted = isRejectedFlow
+        ? await resubmitApplication(draftNo, {
+            expectedVersion: version,
+            ...buildPayload(state),
+            updateMask: draftUpdateMask
+          })
+        : await submitApplication(draftNo, { expectedVersion: version });
       state.applyServerDraft(submitted);
-      notification.success({ message: isZh ? "申请已提交" : "Application submitted" });
+      notification.success({
+        message: isZh ? (isRejectedFlow ? "申请已重新提交" : "申请已提交") : isRejectedFlow ? "Application resubmitted" : "Application submitted"
+      });
       window.location.href = `/onboarding/reviewing?applicationNo=${submitted.applicationNo}`;
     } catch (err) {
       const apiErr = err as ApiErrorLike;

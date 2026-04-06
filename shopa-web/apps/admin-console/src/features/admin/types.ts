@@ -94,12 +94,61 @@ export interface MerchantApplicationListResponse {
 }
 
 export interface ProductReviewTask {
+  taskNo?: string;
   spuNo: string;
+  shopNo?: string;
   title?: string;
+  spuStatus?: number;
+  submittedAt?: string;
+}
+
+export interface ProductReviewDetailSpu {
+  spuNo: string;
+  shopNo?: string;
+  title?: string;
+  subTitle?: string;
+  categoryId?: number;
+  brandNo?: string;
+  mainImageAssetIds: string[];
+  detailImageAssetIds: string[];
+  attributeValues?: Record<string, string>;
+  spuStatus?: number;
+  spuStockStatus?: number;
+  minSalePrice?: number;
+  maxSalePrice?: number;
+  version?: number;
+}
+
+export interface ProductReviewDetailSku {
+  skuNo: string;
+  spuNo?: string;
+  skuName?: string;
+  skuImageAssetId?: string;
+  salePrice?: number;
+  marketPrice?: number;
+  saleAttrs?: Record<string, string>;
+  stockStatus?: number;
+}
+
+export interface ProductInventorySnapshot {
+  skuNo: string;
+  totalQty?: number;
+  availableQty?: number;
+  stockStatus?: number;
+}
+
+export interface ProductReviewDetail {
+  product: {
+    spu: ProductReviewDetailSpu | null;
+    skus: ProductReviewDetailSku[];
+  };
   review?: {
     reviewStatus?: number;
+    rejectReasonCode?: string;
+    rejectComment?: string;
+    reviewerId?: string;
+    reviewedAt?: string;
   };
-  updatedAt?: string;
 }
 
 export interface ProductReviewTaskListResponse {

@@ -21,50 +21,60 @@ type OrderMainDao struct {
 
 // OrderMainColumns defines and stores column names for the table order_main.
 type OrderMainColumns struct {
-	Id               string //
-	OrderNo          string //
-	UserId           string //
-	OrderStatus      string //
-	PaymentStatus    string //
-	ReservationNo    string //
-	GoodsAmount      string //
-	FreightAmount    string //
-	DiscountAmount   string //
-	PayableAmount    string //
-	PaidAmount       string //
-	BuyerRemark      string //
-	CancelReasonCode string //
-	PayDeadlineAt    string //
-	PaidAt           string //
-	ClosedAt         string //
-	Version          string //
-	CreatedAt        string //
-	UpdatedAt        string //
-	DeletedAt        string //
+	Id                       string //
+	OrderNo                  string //
+	UserId                   string //
+	OrderStatus              string //
+	PaymentStatus            string //
+	ReservationNo            string //
+	PointsReservationNo      string //
+	GoodsAmount              string //
+	FreightAmount            string //
+	DiscountAmount           string //
+	PayableAmount            string //
+	PaidAmount               string //
+	PointsUsed               string //
+	PointsDiscountAmount     string //
+	PointsRuleSnapshotJson   string //
+	PointsRuleSnapshotDigest string //
+	BuyerRemark              string //
+	CancelReasonCode         string //
+	PayDeadlineAt            string //
+	PaidAt                   string //
+	ClosedAt                 string //
+	Version                  string //
+	CreatedAt                string //
+	UpdatedAt                string //
+	DeletedAt                string //
 }
 
 // orderMainColumns holds the columns for the table order_main.
 var orderMainColumns = OrderMainColumns{
-	Id:               "id",
-	OrderNo:          "order_no",
-	UserId:           "user_id",
-	OrderStatus:      "order_status",
-	PaymentStatus:    "payment_status",
-	ReservationNo:    "reservation_no",
-	GoodsAmount:      "goods_amount",
-	FreightAmount:    "freight_amount",
-	DiscountAmount:   "discount_amount",
-	PayableAmount:    "payable_amount",
-	PaidAmount:       "paid_amount",
-	BuyerRemark:      "buyer_remark",
-	CancelReasonCode: "cancel_reason_code",
-	PayDeadlineAt:    "pay_deadline_at",
-	PaidAt:           "paid_at",
-	ClosedAt:         "closed_at",
-	Version:          "version",
-	CreatedAt:        "created_at",
-	UpdatedAt:        "updated_at",
-	DeletedAt:        "deleted_at",
+	Id:                       "id",
+	OrderNo:                  "order_no",
+	UserId:                   "user_id",
+	OrderStatus:              "order_status",
+	PaymentStatus:            "payment_status",
+	ReservationNo:            "reservation_no",
+	PointsReservationNo:      "points_reservation_no",
+	GoodsAmount:              "goods_amount",
+	FreightAmount:            "freight_amount",
+	DiscountAmount:           "discount_amount",
+	PayableAmount:            "payable_amount",
+	PaidAmount:               "paid_amount",
+	PointsUsed:               "points_used",
+	PointsDiscountAmount:     "points_discount_amount",
+	PointsRuleSnapshotJson:   "points_rule_snapshot_json",
+	PointsRuleSnapshotDigest: "points_rule_snapshot_digest",
+	BuyerRemark:              "buyer_remark",
+	CancelReasonCode:         "cancel_reason_code",
+	PayDeadlineAt:            "pay_deadline_at",
+	PaidAt:                   "paid_at",
+	ClosedAt:                 "closed_at",
+	Version:                  "version",
+	CreatedAt:                "created_at",
+	UpdatedAt:                "updated_at",
+	DeletedAt:                "deleted_at",
 }
 
 // NewOrderMainDao creates and returns a new DAO object for table data access.

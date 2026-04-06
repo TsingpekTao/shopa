@@ -27,7 +27,9 @@ export type AdjustReasonCode =
   | "RECONCILE";
 
 export interface InventoryAdjustPayload {
+  shopNo?: string;
   skuNo: string;
+  spuNo?: string;
   delta: number;
   reason?: string;
   reasonCode?: AdjustReasonCode;

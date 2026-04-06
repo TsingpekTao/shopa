@@ -60,8 +60,10 @@ INSERT INTO `edge_proxy_route`
 (`route_code`, `method`, `path_pattern`, `upstream_service`, `upstream_path_template`, `auth_required`, `inject_user_context`, `body_mode`, `timeout_ms`, `rate_limit_rps`, `status`, `remark`, `required_permission_key`, `action`, `resource_id_path_key`)
 VALUES
 ('EGW_CATALOG_CREATE_DRAFT', 'POST', '/v1/catalog/seller/products/draft', 'catalog', '/v1/catalog/seller/products/draft', 1, 1, 'NORMAL', 15000, 1000, 1, '商家创建商品草稿', '', '', ''),
+('EGW_CATALOG_DELETE_DRAFT', 'POST', '/v1/catalog/seller/products/draft:delete', 'catalog', '/v1/catalog/seller/products/draft:delete', 1, 1, 'NORMAL', 15000, 1000, 1, '商家删除商品草稿', '', '', ''),
 ('EGW_CATALOG_UPSERT_SKU', 'POST', '/v1/catalog/seller/products/skus:upsert', 'catalog', '/v1/catalog/seller/products/skus:upsert', 1, 1, 'NORMAL', 15000, 1000, 1, '商家批量更新SKU草稿', '', '', ''),
 ('EGW_MEDIA_UPLOAD', 'POST', '/v1/media/upload', 'media', '/v1/media/upload', 1, 1, 'STREAM', 600000, 200, 1, '媒体上传流式透传', '', '', ''),
+('EGW_MEDIA_BATCH_UNBIND', 'POST', '/v1/media/bindings/batch-unbind', 'media', '/v1/media/bindings/batch-unbind', 1, 1, 'NORMAL', 15000, 1000, 1, '素材库批量解绑素材', '', '', ''),
 ('EGW_IAM_RESET_PASSWORD_SMS', 'POST', '/v1/auth/password/reset/sms', 'iam', '/v1/auth/password/reset/sms', 0, 0, 'NORMAL', 15000, 1000, 1, '未登录短信重置密码', '', '', ''),
 ('EGW_ADMIN_SELLER_APPLICATION_LIST', 'GET', '/v1/admin/seller/applications', 'seller_shop', '/v1/admin/seller/applications', 1, 1, 'NORMAL', 15000, 1000, 1, '管理端商家入驻审核列表', 'merchant:review:view', 'merchant.review.list', ''),
 ('EGW_ADMIN_SELLER_APPLICATION_DETAIL', 'GET', '/v1/admin/seller/applications/{applicationNo}', 'seller_shop', '/v1/admin/seller/applications/{applicationNo}', 1, 1, 'NORMAL', 15000, 1000, 1, '管理端商家入驻审核详情', 'merchant:review:view', 'merchant.review.detail', 'applicationNo'),

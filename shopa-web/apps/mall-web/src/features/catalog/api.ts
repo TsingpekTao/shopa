@@ -190,6 +190,39 @@ export async function listBuyerProductImages(spuNos: string[]): Promise<Record<s
   }, {});
 }
 
+export async function listBuyerAssetReadUrls(assetIds: string[], ttlSeconds = 900): Promise<Record<string, string>> {
+  const normalized = Array.from(new Set(assetIds.map((item) => item.trim()).filter((item) => item.length > 0))).slice(0, 50);
+  if (normalized.length === 0) {
+    return {};
+  }
+
+  const params = new URLSearchParams({
+    assetIds: normalized.join(","),
+    ttlSeconds: String(ttlSeconds)
+  });
+  const response = await fetch(`/api/media/read-urls?${params.toString()}`, {
+    method: "GET",
+    cache: "no-store"
+  });
+  if (!response.ok) {
+    return {};
+  }
+
+  const payload = (await response.json()) as {
+    items?: Array<{ assetId?: string; asset_id?: string; url?: string }>;
+  };
+
+  return (payload.items ?? []).reduce<Record<string, string>>((acc, item) => {
+    const assetId = toString(item.assetId ?? item.asset_id);
+    const url = toString(item.url);
+    if (!assetId || !url || acc[assetId]) {
+      return acc;
+    }
+    acc[assetId] = url;
+    return acc;
+  }, {});
+}
+
 export async function getBuyerProductDetail(spuNo: string): Promise<BuyerProductDetail> {
   const normalizedSpuNo = spuNo.trim();
   if (!normalizedSpuNo) {

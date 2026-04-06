@@ -50,6 +50,12 @@ type (
 		BatchGetAuthUsers(ctx context.Context, req *v1.BatchGetAuthUsersReq) (*v1.BatchGetAuthUsersRes, error)
 		// VerifyAccessToken 内部接口：校验 access token 并返回鉴权上下文。
 		VerifyAccessToken(ctx context.Context, req *v1.VerifyAccessTokenReq) (*v1.VerifyAccessTokenRes, error)
+		// HasShopRole 内部接口：判断用户是否已具备指定店铺的卖家角色。
+		HasShopRole(ctx context.Context, req *v1.HasShopRoleReq) (*v1.HasShopRoleRes, error)
+		// AssignShopSellerRole 内部接口：为用户授予指定店铺的卖家角色。
+		AssignShopSellerRole(ctx context.Context, req *v1.AssignShopSellerRoleReq) (*v1.AssignShopSellerRoleRes, error)
+		// RevokeShopSellerRoleAndBumpToken 内部接口：回收店铺卖家角色并提升 token_version 使旧令牌失效。
+		RevokeShopSellerRoleAndBumpToken(ctx context.Context, req *v1.RevokeShopSellerRoleAndBumpTokenReq) (*v1.RevokeShopSellerRoleAndBumpTokenRes, error)
 	}
 )
 

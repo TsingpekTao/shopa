@@ -1,5 +1,5 @@
 import { apiClient } from "@/lib/api-client";
-import { AdminOverviewResponse, LoginRequest, LoginResponse } from "./types";
+import { AdminOverviewResponse, LoginRequest, LoginResponse, RefreshTokenResponse, TokenPair } from "./types";
 
 export async function login(payload: LoginRequest): Promise<LoginResponse> {
   const body = new URLSearchParams();
@@ -14,6 +14,16 @@ export async function login(payload: LoginRequest): Promise<LoginResponse> {
 
 export async function fetchAdminOverview(): Promise<AdminOverviewResponse> {
   return apiClient.get<AdminOverviewResponse>("/v1/admin/me/overview");
+}
+
+export async function refreshToken(refreshToken: string): Promise<TokenPair> {
+  const response = await apiClient.post<RefreshTokenResponse>("/v1/auth/token/refresh", {
+    refreshToken
+  });
+  if (!response?.tokenPair) {
+    throw new Error("refresh token response missing tokenPair");
+  }
+  return response.tokenPair;
 }
 
 export async function logout(refreshToken: string, allDevices = false): Promise<void> {

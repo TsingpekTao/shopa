@@ -10,17 +10,17 @@ import (
 
 // OrderOutboxEvent is the golang structure for table order_outbox_event.
 type OrderOutboxEvent struct {
-	Id            uint64      `json:"id"            orm:"id"             description:""` //
-	EventId       string      `json:"eventId"       orm:"event_id"       description:""` //
-	AggregateType string      `json:"aggregateType" orm:"aggregate_type" description:""` //
-	AggregateNo   string      `json:"aggregateNo"   orm:"aggregate_no"   description:""` //
-	EventType     string      `json:"eventType"     orm:"event_type"     description:""` //
-	PayloadJson   string      `json:"payloadJson"   orm:"payload_json"   description:""` //
-	Status        uint        `json:"status"        orm:"status"         description:""` //
-	AvailableAt   *gtime.Time `json:"availableAt"   orm:"available_at"   description:""` //
-	SentAt        *gtime.Time `json:"sentAt"        orm:"sent_at"        description:""` //
-	RetryCount    uint        `json:"retryCount"    orm:"retry_count"    description:""` //
-	LastError     string      `json:"lastError"     orm:"last_error"     description:""` //
-	CreatedAt     *gtime.Time `json:"createdAt"     orm:"created_at"     description:""` //
-	UpdatedAt     *gtime.Time `json:"updatedAt"     orm:"updated_at"     description:""` //
+	Id            uint64      `json:"id"            orm:"id"             ` //
+	EventId       string      `json:"eventId"       orm:"event_id"       ` //
+	AggregateType string      `json:"aggregateType" orm:"aggregate_type" ` //
+	AggregateNo   string      `json:"aggregateNo"   orm:"aggregate_no"   ` //
+	EventType     string      `json:"eventType"     orm:"event_type"     ` //
+	PayloadJson   string      `json:"payloadJson"   orm:"payload_json"   ` //
+	Status        uint        `json:"status"        orm:"status"         ` //
+	AvailableAt   *gtime.Time `json:"availableAt"   orm:"available_at"   ` //
+	SentAt        *gtime.Time `json:"sentAt"        orm:"sent_at"        ` //
+	RetryCount    uint        `json:"retryCount"    orm:"retry_count"    ` //
+	LastError     string      `json:"lastError"     orm:"last_error"     ` //
+	CreatedAt     *gtime.Time `json:"createdAt"     orm:"created_at"     ` //
+	UpdatedAt     *gtime.Time `json:"updatedAt"     orm:"updated_at"     ` //
 }

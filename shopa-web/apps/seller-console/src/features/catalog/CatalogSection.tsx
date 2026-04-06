@@ -17,6 +17,9 @@ const defaultDraft: CatalogDraftPayload = {
   draft: {
     title: "",
     summary: "",
+    categoryId: 0,
+    brandNo: "",
+    detailImageAssetIds: [],
     attributeValues: {
       brand: "",
       color: ""

@@ -1,13 +1,19 @@
 ﻿import { apiClient } from "@/lib/api-client";
 import {
+  CreateSellerStoreCategoryPayload,
   CreateApplicationDraftPayload,
   ListMyApplicationsPayload,
   ListMyApplicationsResponse,
+  ResubmitApplicationPayload,
   SellerApplicationListItem,
   SellerApplicationDetail,
+  SellerProductStoreCategoryBinding,
+  SellerStoreCategory,
+  SellerStoreCategorySortItem,
   SellerWorkbenchResponse,
   ShopDashboardResponse,
   SubmitApplicationPayload,
+  UpdateSellerStoreCategoryPayload,
   UpdateApplicationDraftPayload
 } from "./types";
 
@@ -172,6 +178,35 @@ function normalizeTimestamp(raw: any): string | undefined {
   return new Date(seconds * 1000).toISOString();
 }
 
+function normalizeStoreCategory(raw: any): SellerStoreCategory {
+  return {
+    id: Number(raw?.id ?? 0),
+    shopNo: String(raw?.shopNo ?? raw?.shop_no ?? ""),
+    parentId: Number(raw?.parentId ?? raw?.parent_id ?? 0),
+    name: pickString(raw?.name),
+    level: Number(raw?.level ?? 0),
+    sortOrder: Number(raw?.sortOrder ?? raw?.sort_order ?? 0),
+    isVisible: Boolean(raw?.isVisible ?? raw?.is_visible),
+    isDeleted: Boolean(raw?.isDeleted ?? raw?.is_deleted),
+    productCount: Number(raw?.productCount ?? raw?.product_count ?? 0),
+    children: Array.isArray(raw?.children) ? raw.children.map((item: any) => normalizeStoreCategory(item)) : []
+  };
+}
+
+function normalizeStoreCategoryBinding(raw: any): SellerProductStoreCategoryBinding {
+  const path = raw?.storeCategoryPath ?? raw?.store_category_path;
+  return {
+    shopNo: String(raw?.shopNo ?? raw?.shop_no ?? ""),
+    spuNo: String(raw?.spuNo ?? raw?.spu_no ?? ""),
+    storeCategoryId: Number(raw?.storeCategoryId ?? raw?.store_category_id ?? 0),
+    storeCategoryL1: Number(raw?.storeCategoryL1 ?? raw?.store_category_l1 ?? 0),
+    storeCategoryL2: Number(raw?.storeCategoryL2 ?? raw?.store_category_l2 ?? 0),
+    storeCategoryPath: Array.isArray(path) ? path.map((item: unknown) => Number(item)).filter((item) => Number.isFinite(item) && item > 0) : [],
+    storeCategoryName: String(raw?.storeCategoryName ?? raw?.store_category_name ?? ""),
+    updatedAt: normalizeTimestamp(raw?.updatedAt ?? raw?.updated_at)
+  };
+}
+
 function normalizeApplicationItem(raw: any): SellerApplicationListItem {
   return {
     applicationNo: String(raw?.applicationNo ?? raw?.application_no ?? ""),
@@ -229,6 +264,14 @@ export async function submitApplication(
   return normalizeApplication(res.application ?? {});
 }
 
+export async function resubmitApplication(
+  applicationNo: string,
+  payload: ResubmitApplicationPayload
+): Promise<SellerApplicationDetail> {
+  const res = await apiClient.post<{ application?: any }>(`/v1/seller/applications/${applicationNo}/resubmit`, payload);
+  return normalizeApplication(res.application ?? {});
+}
+
 export async function getMyApplication(applicationNo: string): Promise<SellerApplicationDetail> {
   const res = await apiClient.get<{ application?: any }>(`/v1/seller/applications/${applicationNo}`);
   return normalizeApplication(res.application ?? {});
@@ -257,4 +300,92 @@ export async function listMyApplications(payload?: ListMyApplicationsPayload): P
     pageSize: Number(res.pageSize ?? res.page_size ?? pageSize),
     total: Number(res.total ?? 0)
   };
+}
+
+export async function listSellerStoreCategories(shopNo: string): Promise<SellerStoreCategory[]> {
+  const normalizedShopNo = shopNo.trim();
+  if (!normalizedShopNo) {
+    return [];
+  }
+
+  const res = await apiClient.get<{ categories?: any[] }>(`/v1/seller/shops/${encodeURIComponent(normalizedShopNo)}/store-categories`);
+  return (res.categories ?? []).map((item) => normalizeStoreCategory(item));
+}
+
+export async function createSellerStoreCategory(
+  shopNo: string,
+  payload: CreateSellerStoreCategoryPayload
+): Promise<SellerStoreCategory> {
+  const res = await apiClient.post<{ category?: any }>(`/v1/seller/shops/${encodeURIComponent(shopNo)}/store-categories`, {
+    parentId: payload.parentId ?? 0,
+    name: payload.name,
+    sortOrder: payload.sortOrder ?? 0,
+    isVisible: payload.isVisible ?? true
+  });
+  return normalizeStoreCategory(res.category ?? {});
+}
+
+export async function updateSellerStoreCategory(
+  shopNo: string,
+  categoryId: number,
+  payload: UpdateSellerStoreCategoryPayload
+): Promise<SellerStoreCategory> {
+  const res = await apiClient.patch<{ category?: any }>(
+    `/v1/seller/shops/${encodeURIComponent(shopNo)}/store-categories/${categoryId}`,
+    payload
+  );
+  return normalizeStoreCategory(res.category ?? {});
+}
+
+export async function sortSellerStoreCategories(
+  shopNo: string,
+  items: SellerStoreCategorySortItem[]
+): Promise<SellerStoreCategory[]> {
+  const res = await apiClient.post<{ categories?: any[] }>(
+    `/v1/seller/shops/${encodeURIComponent(shopNo)}/store-categories:sort`,
+    { items }
+  );
+  return (res.categories ?? []).map((item) => normalizeStoreCategory(item));
+}
+
+export async function deleteSellerStoreCategory(shopNo: string, categoryId: number): Promise<void> {
+  await apiClient.delete(`/v1/seller/shops/${encodeURIComponent(shopNo)}/store-categories/${categoryId}`);
+}
+
+export async function getSellerProductStoreCategoryBinding(
+  shopNo: string,
+  spuNo: string
+): Promise<SellerProductStoreCategoryBinding | null> {
+  const res = await apiClient.get<{ binding?: any }>(
+    `/v1/seller/shops/${encodeURIComponent(shopNo)}/products/${encodeURIComponent(spuNo)}/store-category`
+  );
+  return res.binding ? normalizeStoreCategoryBinding(res.binding) : null;
+}
+
+export async function batchGetSellerProductStoreCategoryBindings(
+  shopNo: string,
+  spuNos: string[]
+): Promise<SellerProductStoreCategoryBinding[]> {
+  const normalizedSpuNos = spuNos.map((item) => item.trim()).filter(Boolean);
+  if (!shopNo.trim() || normalizedSpuNos.length === 0) {
+    return [];
+  }
+
+  const res = await apiClient.post<{ items?: any[] }>(
+    `/v1/seller/shops/${encodeURIComponent(shopNo)}/products/store-categories:batch-get`,
+    { spuNos: normalizedSpuNos }
+  );
+  return (res.items ?? []).map((item) => normalizeStoreCategoryBinding(item));
+}
+
+export async function updateSellerProductStoreCategoryBinding(
+  shopNo: string,
+  spuNo: string,
+  storeCategoryId: number
+): Promise<SellerProductStoreCategoryBinding | null> {
+  const res = await apiClient.put<{ binding?: any }>(
+    `/v1/seller/shops/${encodeURIComponent(shopNo)}/products/${encodeURIComponent(spuNo)}/store-category`,
+    { storeCategoryId }
+  );
+  return res.binding ? normalizeStoreCategoryBinding(res.binding) : null;
 }

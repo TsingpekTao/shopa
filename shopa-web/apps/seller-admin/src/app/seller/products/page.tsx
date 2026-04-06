@@ -1,13 +1,15 @@
-﻿"use client";
+"use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  Alert,
   Button,
   Card,
   Drawer,
   Empty,
   Input,
+  Modal,
   Select,
   Skeleton,
   Space,
@@ -18,14 +20,26 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import type { TablePaginationConfig } from "antd/es/table";
-import { DownloadOutlined, EyeOutlined, ReloadOutlined } from "@ant-design/icons";
+import { DeleteOutlined, DownloadOutlined, EyeOutlined, ReloadOutlined, TagsOutlined } from "@ant-design/icons";
 import { useI18n } from "@shopa/ui";
-import { getSellerProductDetail, listSellerProducts } from "@/features/catalog/api";
+import { deleteProductDraft, getSellerProductDetail, listSellerProducts } from "@/features/catalog/api";
 import { SellerProductSku, SellerProductSpu, SpuStatusCode, StockStatusCode } from "@/features/catalog/types";
+import {
+  batchGetSellerProductStoreCategoryBindings,
+  fetchSellerWorkbench,
+  listSellerStoreCategories,
+  updateSellerProductStoreCategoryBinding
+} from "@/features/seller-shop/api";
+import {
+  SellerProductStoreCategoryBinding,
+  SellerStoreCategory,
+  SellerWorkbenchResponse
+} from "@/features/seller-shop/types";
 
 const { Title, Text } = Typography;
 
 type StatusFilter = "ALL" | SpuStatusCode;
+type StoreCategoryFilterValue = "ALL" | "UNCLASSIFIED" | `l1:${number}` | `leaf:${number}`;
 
 const statusOptions: Array<{ value: StatusFilter; zh: string; en: string }> = [
   { value: "ALL", zh: "全部状态", en: "All status" },
@@ -112,14 +126,154 @@ function toPriceRange(minSalePrice: number, maxSalePrice: number): string {
   return `¥${minSalePrice} ~ ¥${maxSalePrice}`;
 }
 
+function canDeleteProduct(status: SpuStatusCode): boolean {
+  return status === "SPU_STATUS_DRAFT" || status === "SPU_STATUS_REJECTED" || status === "SPU_STATUS_OFF_SHELF";
+}
+
+function flattenLeafCategoryOptions(categories: SellerStoreCategory[]) {
+  const options: Array<{ value: number; label: string }> = [];
+  categories.forEach((category) => {
+    if (category.children.length === 0) {
+      options.push({ value: category.id, label: category.name });
+      return;
+    }
+    category.children.forEach((child) => {
+      options.push({ value: child.id, label: `${category.name} / ${child.name}` });
+    });
+  });
+  return options;
+}
+
+function buildCategoryFilterOptions(categories: SellerStoreCategory[], isZh: boolean) {
+  const options: Array<{ label: string; value: StoreCategoryFilterValue }> = [
+    { label: isZh ? "全部店内分类" : "All store categories", value: "ALL" },
+    { label: isZh ? "未分类" : "Unclassified", value: "UNCLASSIFIED" }
+  ];
+
+  categories.forEach((category) => {
+    options.push({
+      label: `${isZh ? "一级" : "L1"} · ${category.name}`,
+      value: `l1:${category.id}`
+    });
+
+    if (category.children.length === 0) {
+      options.push({
+        label: category.name,
+        value: `leaf:${category.id}`
+      });
+      return;
+    }
+
+    category.children.forEach((child) => {
+      options.push({
+        label: `${category.name} / ${child.name}`,
+        value: `leaf:${child.id}`
+      });
+    });
+  });
+
+  return options;
+}
+
+function resolveBindingLabel(
+  binding: SellerProductStoreCategoryBinding | undefined,
+  categories: SellerStoreCategory[],
+  isZh: boolean
+) {
+  if (!binding?.storeCategoryId) {
+    return isZh ? "未分类" : "Unclassified";
+  }
+  if (binding.storeCategoryName) {
+    if (binding.storeCategoryPath.length >= 2) {
+      const primary = categories.find((item) => item.id === binding.storeCategoryPath[0]);
+      if (primary) {
+        return `${primary.name} / ${binding.storeCategoryName}`;
+      }
+    }
+    return binding.storeCategoryName;
+  }
+  return isZh ? "未分类" : "Unclassified";
+}
+
+function matchesCategoryFilter(
+  row: SellerProductSpu,
+  filterValue: StoreCategoryFilterValue,
+  bindingMap: Map<string, SellerProductStoreCategoryBinding>
+) {
+  if (filterValue === "ALL") {
+    return true;
+  }
+  const binding = bindingMap.get(row.spuNo);
+  if (filterValue === "UNCLASSIFIED") {
+    return !binding?.storeCategoryId;
+  }
+  if (filterValue.startsWith("l1:")) {
+    const target = Number(filterValue.slice(3));
+    return binding?.storeCategoryPath.includes(target) ?? false;
+  }
+  if (filterValue.startsWith("leaf:")) {
+    const target = Number(filterValue.slice(5));
+    return binding?.storeCategoryId === target;
+  }
+  return true;
+}
+
+async function listProductsAcrossPages(params: {
+  keyword: string;
+  statusFilter: StatusFilter;
+}): Promise<SellerProductSpu[]> {
+  const pageSize = 100;
+  const items: SellerProductSpu[] = [];
+  let page = 1;
+  let total = 0;
+
+  while (page <= 20) {
+    const response = await listSellerProducts({
+      page,
+      pageSize,
+      keyword: params.keyword,
+      statuses: params.statusFilter === "ALL" ? undefined : [params.statusFilter]
+    });
+    items.push(...response.products);
+    total = response.total;
+    if (items.length >= total || response.products.length < pageSize) {
+      break;
+    }
+    page += 1;
+  }
+
+  return items;
+}
+
 export default function ProductsPage() {
   const { locale } = useI18n();
   const isZh = locale === "zh-CN";
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+  const [storeCategoryFilter, setStoreCategoryFilter] = useState<StoreCategoryFilterValue>("ALL");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [detailSpuNo, setDetailSpuNo] = useState<string | null>(null);
+  const [selectedSpuNos, setSelectedSpuNos] = useState<string[]>([]);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [batchCategoryId, setBatchCategoryId] = useState<number | null>(null);
+  const [isUpdatingBatchCategory, setIsUpdatingBatchCategory] = useState(false);
+
+  const filterActive = storeCategoryFilter !== "ALL";
+
+  const workbenchQuery = useQuery<SellerWorkbenchResponse>({
+    queryKey: ["seller-workbench", "products-v2"],
+    queryFn: fetchSellerWorkbench,
+    staleTime: 30_000
+  });
+  const shop = workbenchQuery.data?.shops?.[0];
+
+  const categoriesQuery = useQuery({
+    queryKey: ["seller-store-categories", shop?.shopNo, "products"],
+    queryFn: () => listSellerStoreCategories(shop?.shopNo ?? ""),
+    enabled: Boolean(shop?.shopNo),
+    staleTime: 30_000
+  });
 
   const productsQuery = useQuery({
     queryKey: ["seller-products", page, pageSize, keyword, statusFilter],
@@ -129,7 +283,14 @@ export default function ProductsPage() {
         pageSize,
         keyword,
         statuses: statusFilter === "ALL" ? undefined : [statusFilter]
-      })
+      }),
+    enabled: !filterActive
+  });
+
+  const filteredUniverseQuery = useQuery({
+    queryKey: ["seller-products-universe", keyword, statusFilter, storeCategoryFilter],
+    queryFn: () => listProductsAcrossPages({ keyword, statusFilter }),
+    enabled: filterActive
   });
 
   const detailQuery = useQuery({
@@ -143,19 +304,75 @@ export default function ProductsPage() {
     enabled: Boolean(detailSpuNo)
   });
 
-  const rows = productsQuery.data?.products ?? [];
-  const total = productsQuery.data?.total ?? 0;
+  const bindingSourceRows = filterActive ? filteredUniverseQuery.data ?? [] : productsQuery.data?.products ?? [];
+  const bindingSourceSpuNos = useMemo(
+    () => Array.from(new Set(bindingSourceRows.map((item) => item.spuNo).filter(Boolean))),
+    [bindingSourceRows]
+  );
+
+  const bindingsQuery = useQuery({
+    queryKey: ["seller-product-store-category-bindings", shop?.shopNo, bindingSourceSpuNos.join("|")],
+    queryFn: () => batchGetSellerProductStoreCategoryBindings(shop?.shopNo ?? "", bindingSourceSpuNos),
+    enabled: Boolean(shop?.shopNo) && bindingSourceSpuNos.length > 0,
+    staleTime: 10_000
+  });
+
+  const categories = categoriesQuery.data ?? [];
+  const bindingMap = useMemo(() => {
+    const map = new Map<string, SellerProductStoreCategoryBinding>();
+    for (const item of bindingsQuery.data ?? []) {
+      map.set(item.spuNo, item);
+    }
+    return map;
+  }, [bindingsQuery.data]);
+
+  const filteredRows = useMemo(() => {
+    if (!filterActive) {
+      return [];
+    }
+    return (filteredUniverseQuery.data ?? []).filter((row) => matchesCategoryFilter(row, storeCategoryFilter, bindingMap));
+  }, [bindingMap, filterActive, filteredUniverseQuery.data, storeCategoryFilter]);
+
+  const allRowsForSelection = filterActive ? filteredRows : productsQuery.data?.products ?? [];
+  const rows = useMemo(() => {
+    if (!filterActive) {
+      return productsQuery.data?.products ?? [];
+    }
+    const start = (page - 1) * pageSize;
+    return filteredRows.slice(start, start + pageSize);
+  }, [filterActive, filteredRows, page, pageSize, productsQuery.data?.products]);
+  const total = filterActive ? filteredRows.length : productsQuery.data?.total ?? 0;
+
+  const selectedProducts = useMemo(
+    () => allRowsForSelection.filter((item) => selectedSpuNos.includes(item.spuNo)),
+    [allRowsForSelection, selectedSpuNos]
+  );
+  const deletableSelectedProducts = useMemo(
+    () => selectedProducts.filter((item) => canDeleteProduct(item.spuStatus)),
+    [selectedProducts]
+  );
+  const leafCategoryOptions = useMemo(() => flattenLeafCategoryOptions(categories), [categories]);
+  const categoryFilterOptions = useMemo(() => buildCategoryFilterOptions(categories, isZh), [categories, isZh]);
+
+  useEffect(() => {
+    setSelectedSpuNos((prev) => prev.filter((key) => allRowsForSelection.some((row) => row.spuNo === key)));
+  }, [allRowsForSelection]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [keyword, statusFilter, storeCategoryFilter]);
 
   const exportCurrentPage = () => {
     if (!rows.length) {
       notification.info({ message: isZh ? "当前页没有可导出的数据" : "No data to export on this page" });
       return;
     }
-    const head = ["spu_no", "title", "status", "stock_status", "price_range", "updated_at"];
+    const head = ["spu_no", "title", "store_category", "status", "stock_status", "price_range", "updated_at"];
     const body = rows.map((item) =>
       [
         item.spuNo,
         item.title,
+        resolveBindingLabel(bindingMap.get(item.spuNo), categories, false),
         statusText(item.spuStatus, false),
         stockStatusText(item.spuStockStatus, false),
         toPriceRange(item.minSalePrice, item.maxSalePrice),
@@ -174,15 +391,145 @@ export default function ProductsPage() {
     URL.revokeObjectURL(url);
   };
 
+  const refreshAll = async () => {
+    if (filterActive) {
+      await filteredUniverseQuery.refetch();
+    } else {
+      await productsQuery.refetch();
+    }
+    await bindingsQuery.refetch();
+    await categoriesQuery.refetch();
+  };
+
   const onTableChange = (pagination: TablePaginationConfig) => {
     setPage(pagination.current ?? 1);
     setPageSize(pagination.pageSize ?? 10);
+  };
+
+  const handleDeleteProducts = async (targets: SellerProductSpu[]) => {
+    if (!targets.length) {
+      notification.warning({ message: isZh ? "请选择可删除的商品" : "Please select deletable products" });
+      return;
+    }
+    setIsDeleting(true);
+    try {
+      const failed: Array<{ spuNo: string; reason: string }> = [];
+      for (const target of targets) {
+        try {
+          await deleteProductDraft({
+            shopNo: target.shopNo,
+            spuNo: target.spuNo,
+            expectedVersion: target.version,
+            reasonCode: "SELLER_MANUAL_DELETE"
+          });
+        } catch (error) {
+          failed.push({
+            spuNo: target.spuNo,
+            reason: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+      if (failed.length) {
+        notification.error({
+          message: isZh ? "部分商品删除失败" : "Some products failed to delete",
+          description: failed.map((item) => `${item.spuNo}: ${item.reason}`).join("；")
+        });
+      } else {
+        notification.success({ message: isZh ? "删除成功" : "Delete success" });
+      }
+      setSelectedSpuNos((prev) => prev.filter((spuNo) => !targets.some((item) => item.spuNo === spuNo)));
+      await refreshAll();
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const confirmDeleteTargets = (targets: SellerProductSpu[]) => {
+    if (!targets.length) {
+      return;
+    }
+    Modal.confirm({
+      title: isZh ? "确认删除草稿" : "Confirm delete draft",
+      content: isZh
+        ? `将删除 ${targets.length} 个商品。仅草稿、驳回、下架状态允许删除。`
+        : `This will delete ${targets.length} products. Only draft, rejected, or off-shelf items can be deleted.`,
+      onOk: () => handleDeleteProducts(targets)
+    });
+  };
+
+  const handleBatchDelete = () => {
+    confirmDeleteTargets(deletableSelectedProducts);
+  };
+
+  const handleBatchUpdateStoreCategory = async () => {
+    if (!shop?.shopNo) {
+      notification.warning({ message: isZh ? "当前账号没有可操作店铺" : "No available shop for this account" });
+      return;
+    }
+    if (!selectedProducts.length) {
+      notification.warning({ message: isZh ? "请先选择商品" : "Select products first" });
+      return;
+    }
+
+    setIsUpdatingBatchCategory(true);
+    try {
+      const failed: string[] = [];
+      for (const product of selectedProducts) {
+        try {
+          await updateSellerProductStoreCategoryBinding(shop.shopNo, product.spuNo, Number(batchCategoryId ?? 0));
+        } catch (error) {
+          failed.push(`${product.spuNo}: ${error instanceof Error ? error.message : "更新失败"}`);
+        }
+      }
+
+      if (failed.length) {
+        notification.error({
+          message: isZh ? "部分商品分类更新失败" : "Some product categories failed to update",
+          description: failed.join("；")
+        });
+      } else {
+        notification.success({
+          message: isZh ? "店内分类已批量更新" : "Store categories updated",
+          description:
+            batchCategoryId && batchCategoryId > 0
+              ? isZh
+                ? `已将 ${selectedProducts.length} 个商品归入指定店内分类。`
+                : `${selectedProducts.length} products moved into the selected store category.`
+              : isZh
+                ? `已将 ${selectedProducts.length} 个商品改为未分类。`
+                : `${selectedProducts.length} products were marked unclassified.`
+        });
+      }
+
+      await bindingsQuery.refetch();
+      if (filterActive) {
+        await filteredUniverseQuery.refetch();
+      } else {
+        await productsQuery.refetch();
+      }
+    } finally {
+      setIsUpdatingBatchCategory(false);
+    }
   };
 
   const columns = useMemo<ColumnsType<SellerProductSpu>>(
     () => [
       { title: "SPU", dataIndex: "spuNo", key: "spuNo", width: 150 },
       { title: isZh ? "商品名称" : "Product", dataIndex: "title", key: "title" },
+      {
+        title: isZh ? "店内分类" : "Store Category",
+        key: "storeCategory",
+        width: 220,
+        render: (_, row) => {
+          const binding = bindingMap.get(row.spuNo);
+          const label = resolveBindingLabel(binding, categories, isZh);
+          return (
+            <Tag color={binding?.storeCategoryId ? "gold" : "default"} style={{ maxWidth: 190, overflow: "hidden" }}>
+              {label}
+            </Tag>
+          );
+        }
+      },
       {
         title: isZh ? "类目ID" : "Category ID",
         dataIndex: "categoryId",
@@ -220,26 +567,42 @@ export default function ProductsPage() {
       {
         title: isZh ? "操作" : "Action",
         key: "action",
-        width: 120,
+        width: 180,
         render: (_, row) => (
-          <Button size="small" icon={<EyeOutlined />} onClick={() => setDetailSpuNo(row.spuNo)}>
-            {isZh ? "详情" : "Detail"}
-          </Button>
+          <Space size={6}>
+            <Button size="small" icon={<EyeOutlined />} onClick={() => setDetailSpuNo(row.spuNo)}>
+              {isZh ? "详情" : "Detail"}
+            </Button>
+            <Button
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+              disabled={isDeleting || !canDeleteProduct(row.spuStatus)}
+              onClick={() => confirmDeleteTargets([row])}
+            >
+              {isZh ? "删除" : "Delete"}
+            </Button>
+          </Space>
         )
       }
     ],
-    [isZh]
+    [bindingMap, categories, isDeleting, isZh]
   );
+
+  const tableLoading = workbenchQuery.isLoading || categoriesQuery.isLoading || (filterActive ? filteredUniverseQuery.isLoading : productsQuery.isLoading) || bindingsQuery.isLoading;
+  const tableError = workbenchQuery.isError || categoriesQuery.isError || (filterActive ? filteredUniverseQuery.isError : productsQuery.isError) || bindingsQuery.isError;
 
   return (
     <section className="seller-page">
       <header className="seller-page-head">
         <div>
           <Title level={3}>{isZh ? "商品管理" : "Products"}</Title>
-          <Text type="secondary">{isZh ? "查看商品状态、价格与库存，进行批量运营管理。" : "Manage product status, pricing and stock in one place."}</Text>
+          <Text type="secondary">
+            {isZh ? "查看商品状态、价格与库存，并按店内分类做运营管理。" : "Manage product status, pricing, stock, and in-shop category placement."}
+          </Text>
         </div>
         <Space wrap>
-          <Button icon={<ReloadOutlined />} onClick={() => void productsQuery.refetch()}>
+          <Button icon={<ReloadOutlined />} onClick={() => void refreshAll()}>
             {isZh ? "刷新" : "Refresh"}
           </Button>
           <Button icon={<DownloadOutlined />} onClick={exportCurrentPage}>
@@ -248,37 +611,106 @@ export default function ProductsPage() {
           <Button type="primary" href="/seller/publish">
             {isZh ? "新建商品草稿" : "Create Draft"}
           </Button>
+          <Button danger icon={<DeleteOutlined />} disabled={!deletableSelectedProducts.length || isDeleting} onClick={handleBatchDelete}>
+            {isZh
+              ? `删除选中 (${deletableSelectedProducts.length})`
+              : `Delete selected (${deletableSelectedProducts.length})`}
+          </Button>
         </Space>
+        {selectedSpuNos.length ? (
+          <Text type="secondary">
+            {isZh
+              ? `已选择 ${selectedSpuNos.length} 个商品，可批量改店内分类；删除仅支持草稿/驳回/下架商品。`
+              : `${selectedSpuNos.length} item(s) selected. Bulk store-category update is available; delete works only for draft/rejected/off-shelf items.`}
+          </Text>
+        ) : null}
       </header>
 
+      {filterActive ? (
+        <Alert
+          type="info"
+          showIcon
+          message={isZh ? "当前正在按店内分类筛选" : "Store category filter is active"}
+          description={
+            isZh
+              ? "筛选结果会基于当前关键词和状态条件拉取匹配商品全集，再按店内分类分页展示。"
+              : "The page loads all products matching the current keyword/status filters, then paginates them by store category."
+          }
+        />
+      ) : null}
+
       <Card>
-        <div className="seller-toolbar">
+        <div className="seller-toolbar" style={{ display: "grid", gap: 12, gridTemplateColumns: "minmax(220px, 1.6fr) repeat(3, minmax(180px, 1fr))" }}>
           <Input
             allowClear
             value={keyword}
-            onChange={(e) => {
-              setKeyword(e.target.value);
-              setPage(1);
-            }}
+            onChange={(e) => setKeyword(e.target.value)}
             placeholder={isZh ? "搜索商品名 / SPU" : "Search product / SPU"}
           />
           <Select
             value={statusFilter}
-            onChange={(value) => {
-              setStatusFilter(value);
-              setPage(1);
-            }}
+            onChange={(value) => setStatusFilter(value)}
             options={statusOptions.map((item) => ({ label: isZh ? item.zh : item.en, value: item.value }))}
           />
+          <Select
+            value={storeCategoryFilter}
+            onChange={(value) => setStoreCategoryFilter(value)}
+            options={categoryFilterOptions}
+            suffixIcon={<TagsOutlined />}
+          />
+          <Space.Compact style={{ width: "100%" }}>
+            <Select
+              value={batchCategoryId}
+              allowClear
+              placeholder={isZh ? "批量设置店内分类" : "Bulk set store category"}
+              options={[
+                { value: 0, label: isZh ? "改为未分类" : "Set unclassified" },
+                ...leafCategoryOptions
+              ]}
+              onChange={(value) => setBatchCategoryId(typeof value === "number" ? value : null)}
+              style={{ width: "100%" }}
+            />
+            <Button
+              type="primary"
+              loading={isUpdatingBatchCategory}
+              disabled={!selectedSpuNos.length || batchCategoryId === null}
+              onClick={() => void handleBatchUpdateStoreCategory()}
+            >
+              {isZh ? "应用" : "Apply"}
+            </Button>
+          </Space.Compact>
         </div>
+
+        {!shop && !workbenchQuery.isLoading ? (
+          <Empty description={isZh ? "当前账号没有可操作的店铺" : "This account has no available shop"} />
+        ) : null}
+
+        {tableLoading && !rows.length ? <Skeleton active paragraph={{ rows: 8 }} /> : null}
 
         <Table<SellerProductSpu>
           rowKey={(record) => record.spuNo}
-          loading={productsQuery.isLoading}
+          rowSelection={{
+            selectedRowKeys: selectedSpuNos,
+            onChange: (keys) => setSelectedSpuNos(keys as string[]),
+            getCheckboxProps: () => ({
+              disabled: isDeleting || isUpdatingBatchCategory
+            })
+          }}
+          loading={tableLoading}
           columns={columns}
           dataSource={rows}
           onChange={onTableChange}
-          locale={{ emptyText: productsQuery.isError ? (isZh ? "加载失败，请刷新重试" : "Load failed, please retry") : undefined }}
+          locale={{
+            emptyText: tableError
+              ? isZh
+                ? "加载失败，请刷新重试"
+                : "Load failed, please retry"
+              : filterActive && !rows.length
+                ? isZh
+                  ? "当前分类下没有商品"
+                  : "No products in this store category"
+                : undefined
+          }}
           pagination={{
             current: page,
             pageSize,
@@ -306,6 +738,10 @@ export default function ProductsPage() {
                 <Text type="secondary">
                   {isZh ? "状态：" : "Status: "}
                   {statusText(detailQuery.data.spu.spuStatus, isZh)}
+                </Text>
+                <Text type="secondary">
+                  {isZh ? "店内分类：" : "Store category: "}
+                  {resolveBindingLabel(bindingMap.get(detailQuery.data.spu.spuNo), categories, isZh)}
                 </Text>
                 <Text type="secondary">
                   {isZh ? "更新时间：" : "Updated: "}

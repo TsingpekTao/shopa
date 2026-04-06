@@ -18,5 +18,6 @@ type IOrderV1 interface {
 	MarkSubOrderShipped(ctx context.Context, req *v1.MarkSubOrderShippedReq) (res *v1.MarkSubOrderShippedRes, err error)
 	CloseOrderIfUnpaid(ctx context.Context, req *v1.CloseOrderIfUnpaidReq) (res *v1.CloseOrderIfUnpaidRes, err error)
 	HandlePayCallback(ctx context.Context, req *v1.HandlePayCallbackReq) (res *v1.HandlePayCallbackRes, err error)
+	CompleteOrder(ctx context.Context, req *v1.CompleteOrderReq) (res *v1.CompleteOrderRes, err error)
 	GetOrderSnapshotByNo(ctx context.Context, req *v1.GetOrderSnapshotByNoReq) (res *v1.GetOrderSnapshotByNoRes, err error)
 }

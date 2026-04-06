@@ -1,11 +1,24 @@
 "use client";
 
 import { useCallback } from "react";
-import { fetchAdminOverview, login as loginApi, logout as logoutApi } from "./api";
+import { fetchAdminOverview, login as loginApi, logout as logoutApi, refreshToken as refreshTokenApi } from "./api";
 import { useAuthStore } from "./store";
 
 const ACCESS_TOKEN_KEY = "shopa_admin_access_token";
 const REFRESH_TOKEN_KEY = "shopa_admin_refresh_token";
+const AUTH_STORE_KEY = "shopa-admin-auth";
+
+function persistTokenPair(tokenPair: {
+  accessToken: string;
+  refreshToken?: string;
+}) {
+  localStorage.setItem(ACCESS_TOKEN_KEY, tokenPair.accessToken);
+  if (tokenPair.refreshToken) {
+    localStorage.setItem(REFRESH_TOKEN_KEY, tokenPair.refreshToken);
+  } else {
+    localStorage.removeItem(REFRESH_TOKEN_KEY);
+  }
+}
 
 export function useAuth() {
   const tokenPair = useAuthStore((state) => state.tokenPair);
@@ -35,12 +48,7 @@ export function useAuth() {
         throw new Error("missing token pair");
       }
       setTokenPair(response.auth.tokenPair);
-      localStorage.setItem(ACCESS_TOKEN_KEY, response.auth.tokenPair.accessToken);
-      if (response.auth.tokenPair.refreshToken) {
-        localStorage.setItem(REFRESH_TOKEN_KEY, response.auth.tokenPair.refreshToken);
-      } else {
-        localStorage.removeItem(REFRESH_TOKEN_KEY);
-      }
+      persistTokenPair(response.auth.tokenPair);
       await loadOverview();
       return response;
     },
@@ -49,16 +57,35 @@ export function useAuth() {
 
   const bootstrap = useCallback(async () => {
     const token = localStorage.getItem(ACCESS_TOKEN_KEY);
-    if (!token) {
+    const refresh = localStorage.getItem(REFRESH_TOKEN_KEY);
+
+    if (token) {
+      try {
+        await loadOverview();
+        return true;
+      } catch {
+        localStorage.removeItem(ACCESS_TOKEN_KEY);
+      }
+    }
+
+    if (!refresh) {
       return false;
     }
+
     try {
+      const nextTokenPair = await refreshTokenApi(refresh);
+      setTokenPair(nextTokenPair);
+      persistTokenPair(nextTokenPair);
       await loadOverview();
       return true;
     } catch {
+      localStorage.removeItem(ACCESS_TOKEN_KEY);
+      localStorage.removeItem(REFRESH_TOKEN_KEY);
+      localStorage.removeItem(AUTH_STORE_KEY);
+      clear();
       return false;
     }
-  }, [loadOverview]);
+  }, [clear, loadOverview, setTokenPair]);
 
   const logout = useCallback(async () => {
     const refresh = tokenPair?.refreshToken ?? localStorage.getItem(REFRESH_TOKEN_KEY) ?? "";
@@ -69,7 +96,7 @@ export function useAuth() {
     } finally {
       localStorage.removeItem(ACCESS_TOKEN_KEY);
       localStorage.removeItem(REFRESH_TOKEN_KEY);
-      localStorage.removeItem("shopa-admin-auth");
+      localStorage.removeItem(AUTH_STORE_KEY);
       clear();
     }
   }, [clear, tokenPair?.refreshToken]);

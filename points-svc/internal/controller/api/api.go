@@ -4,17 +4,17 @@ import (
 	"context"
 
 	v1 "github.com/TsingpekTao/shopa/points-svc/api/v1"
-	"github.com/TsingpekTao/shopa/points-svc/internal/service/points"
+	"github.com/TsingpekTao/shopa/points-svc/internal/service"
 	"github.com/gogf/gf/contrib/rpc/grpcx/v2"
 )
 
 type Controller struct {
 	v1.UnimplementedPointsServiceServer
-	points *points.Service
+	points service.IPoints
 }
 
 func Register(s *grpcx.GrpcServer) {
-	ctrl := &Controller{points: points.New()}
+	ctrl := &Controller{points: service.Points()}
 	v1.RegisterPointsServiceServer(s.Server, ctrl)
 }
 

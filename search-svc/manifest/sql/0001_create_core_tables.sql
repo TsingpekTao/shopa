@@ -1,62 +1,73 @@
+CREATE DATABASE IF NOT EXISTS shopa_search_svc CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE shopa_search_svc;
+
 CREATE TABLE IF NOT EXISTS search_spu_doc (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   spu_no VARCHAR(64) NOT NULL,
-  shop_no VARCHAR(64) NOT NULL,
-  shop_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
-  category_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
   title VARCHAR(255) NOT NULL,
-  sub_title VARCHAR(255) NOT NULL DEFAULT '',
-  cover_image_asset_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
-  min_sale_price BIGINT UNSIGNED NOT NULL DEFAULT 0,
-  max_sale_price BIGINT UNSIGNED NOT NULL DEFAULT 0,
-  sold_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  shop_no VARCHAR(64) NOT NULL,
+  shop_name VARCHAR(128) NOT NULL DEFAULT '',
+  category_no VARCHAR(64) NOT NULL DEFAULT '',
+  cover_asset_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  cover_url VARCHAR(512) NOT NULL DEFAULT '',
+  min_price BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  max_price BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  stock_total BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  sales_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  avg_score_x100 BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  review_total BIGINT UNSIGNED NOT NULL DEFAULT 0,
   shop_status_code VARCHAR(32) NOT NULL DEFAULT '',
   on_shelf_status_code VARCHAR(32) NOT NULL DEFAULT '',
-  tags_json TEXT,
-  attr_tokens_json MEDIUMTEXT,
-  searchable_text MEDIUMTEXT,
+  attrs_json JSON NULL,
   source_version BIGINT UNSIGNED NOT NULL DEFAULT 0,
-  source_updated_at DATETIME NULL,
+  source_updated_at DATETIME(3) NULL,
   deleted TINYINT UNSIGNED NOT NULL DEFAULT 0,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  deleted_at DATETIME(3) NULL,
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
-  UNIQUE KEY uniq_spu_no (spu_no),
-  KEY idx_keyword (title),
-  KEY idx_shop_shelf (shop_no, on_shelf_status_code),
-  KEY idx_category_price (category_id, min_sale_price)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  UNIQUE KEY uk_spu_no (spu_no),
+  KEY idx_shop_no (shop_no),
+  KEY idx_category_no (category_no),
+  KEY idx_shop_status (shop_status_code, on_shelf_status_code),
+  KEY idx_deleted_at (deleted, deleted_at),
+  FULLTEXT KEY ft_title (title)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS search_keyword_stat (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  keyword VARCHAR(191) NOT NULL,
-  hit_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
-  last_hit_at DATETIME NULL,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  keyword VARCHAR(128) NOT NULL,
+  search_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  last_searched_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
-  UNIQUE KEY uniq_keyword (keyword)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  UNIQUE KEY uk_keyword (keyword),
+  KEY idx_search_count (search_count)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS search_rebuild_job (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   job_no VARCHAR(64) NOT NULL,
-  status_code VARCHAR(32) NOT NULL DEFAULT 'PENDING',
-  trigger_by VARCHAR(64) NOT NULL DEFAULT '',
-  reason_code VARCHAR(64) NOT NULL DEFAULT '',
-  batch_size BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  reason_code VARCHAR(64) NOT NULL,
+  status VARCHAR(32) NOT NULL,
   total_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
-  finished_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  success_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  fail_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  started_at DATETIME(3) NULL,
+  finished_at DATETIME(3) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
-  UNIQUE KEY uniq_job_no (job_no)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  UNIQUE KEY uk_job_no (job_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS search_outbox_event (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  event_no VARCHAR(64) NOT NULL,
-  event_type VARCHAR(64) NOT NULL,
+  event_id VARCHAR(64) NOT NULL,
+  aggregate_type VARCHAR(64) NOT NULL,
+  aggregate_id VARCHAR(64) NOT NULL,
+  event_type VARCHAR(128) NOT NULL,
   payload_json MEDIUMTEXT,
   status TINYINT UNSIGNED NOT NULL DEFAULT 0,
   retry_count INT UNSIGNED NOT NULL DEFAULT 0,
@@ -64,5 +75,6 @@ CREATE TABLE IF NOT EXISTS search_outbox_event (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  UNIQUE KEY uniq_event_no (event_no)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  UNIQUE KEY uk_event_id (event_id),
+  KEY idx_status_next_retry (status, next_retry_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

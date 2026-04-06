@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TsingpekTao/shopa/points-svc/internal/service/points"
+	"github.com/TsingpekTao/shopa/points-svc/internal/service"
 	"github.com/gogf/gf/v2/frame/g"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -74,9 +74,8 @@ func consumeLoop(ctx context.Context, conf registerInitConsumerConf) error {
 		return err
 	}
 
-	svc := points.New()
 	for msg := range deliveries {
-		if handleErr := handleRegisterMessage(ctx, svc, msg.Body); handleErr != nil {
+		if handleErr := handleRegisterMessage(ctx, msg.Body); handleErr != nil {
 			g.Log().Errorf(ctx, "[points-svc] handle register-init message failed: %+v", handleErr)
 			_ = msg.Nack(false, true)
 			continue
@@ -86,14 +85,14 @@ func consumeLoop(ctx context.Context, conf registerInitConsumerConf) error {
 	return nil
 }
 
-func handleRegisterMessage(ctx context.Context, svc *points.Service, body []byte) error {
+func handleRegisterMessage(ctx context.Context, body []byte) error {
 	var payload struct {
 		UserID uint64 `json:"user_id"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return err
 	}
-	return svc.InitAccountFromRegisterEvent(ctx, payload.UserID)
+	return service.Points().InitAccountFromRegisterEvent(ctx, payload.UserID)
 }
 
 func loadRegisterInitConsumerConf(ctx context.Context) registerInitConsumerConf {

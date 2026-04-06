@@ -21,20 +21,30 @@ type PointsAccountDao struct {
 
 // PointsAccountColumns defines and stores column names for the table points_account.
 type PointsAccountColumns struct {
-	UserId    string // User ID
-	Balance   string // Current points balance
-	Status    string // 1 active,2 disabled
-	CreatedAt string //
-	UpdatedAt string //
+	UserId              string // User ID
+	AvailableBalance    string // Current available points balance, may be negative when debt exists
+	FrozenBalance       string // Currently frozen points balance
+	StatusCode          string // ACTIVE/FROZEN/DISABLED
+	TotalEarnedPoints   string // Lifetime granted points
+	TotalUsedPoints     string // Lifetime confirmed spent points
+	TotalExpiredPoints  string // Lifetime expired points
+	TotalAdjustedPoints string // Lifetime manual adjustment points
+	CreatedAt           string //
+	UpdatedAt           string //
 }
 
 // pointsAccountColumns holds the columns for the table points_account.
 var pointsAccountColumns = PointsAccountColumns{
-	UserId:    "user_id",
-	Balance:   "balance",
-	Status:    "status",
-	CreatedAt: "created_at",
-	UpdatedAt: "updated_at",
+	UserId:              "user_id",
+	AvailableBalance:    "available_balance",
+	FrozenBalance:       "frozen_balance",
+	StatusCode:          "status_code",
+	TotalEarnedPoints:   "total_earned_points",
+	TotalUsedPoints:     "total_used_points",
+	TotalExpiredPoints:  "total_expired_points",
+	TotalAdjustedPoints: "total_adjusted_points",
+	CreatedAt:           "created_at",
+	UpdatedAt:           "updated_at",
 }
 
 // NewPointsAccountDao creates and returns a new DAO object for table data access.

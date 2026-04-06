@@ -1,0 +1,39 @@
+# inventory-svc configuration (local environment).
+
+server:
+  address: ":8005"
+  openapiPath: "/api.json"
+  swaggerPath: "/swagger"
+
+grpc:
+  address: ":9005"
+  name: "inventory.svc"
+  logStdout: true
+
+app:
+  env: "local"
+  project: "shopa"
+  service: "inventory-svc"
+
+database:
+  default:
+    link: "mysql:root:123456@tcp(127.0.0.1:3307)/shopa_inventory_svc?charset=utf8mb4&parseTime=true&loc=Local"
+
+redis:
+  default:
+    address: "127.0.0.1:6379"
+    db: 0
+    pass: ""
+
+mq:
+  rabbitmq:
+    enabled: false
+    url: "amqp://guest:guest@127.0.0.1:5672/"
+    exchange: "shopa.events"
+
+upstream:
+  catalogHttp: "http://127.0.0.1:8004"
+
+logger:
+  level: "all"
+  stdout: true

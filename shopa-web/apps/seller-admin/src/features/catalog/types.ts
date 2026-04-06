@@ -23,6 +23,7 @@ export interface SellerProductSpu {
   brandNo: string;
   mainImageAssetIds: string[];
   detailImageAssetIds: string[];
+  attributeValues?: Record<string, string>;
   spuStatus: SpuStatusCode;
   spuStockStatus: StockStatusCode;
   minSalePrice: number;
@@ -41,6 +42,7 @@ export interface SellerProductSku {
   skuImageAssetId?: string;
   salePrice: number;
   marketPrice: number;
+  saleAttrs?: Record<string, string>;
   stockStatus: StockStatusCode;
   stockVersion: number;
   sortOrder: number;
@@ -75,6 +77,13 @@ export interface ListSellerProductsResult {
   total: number;
 }
 
+export interface DeleteProductDraftInput {
+  shopNo: string;
+  spuNo: string;
+  expectedVersion: number;
+  reasonCode?: string;
+}
+
 export interface CreateProductDraftInput {
   shopNo: string;
   title: string;
@@ -88,4 +97,100 @@ export interface CreateProductDraftInput {
 export interface CreateProductDraftResult {
   spuNo: string;
   version: number;
+}
+
+export interface SellerCatalogDraft {
+  title: string;
+  summary: string;
+  categoryId: number;
+  brandNo: string;
+  mainImageAssetId?: string;
+  detailImageAssetIds: string[];
+  submitNote?: string;
+  attributeValues: Record<string, string>;
+}
+
+export interface SellerCatalogSkuDraft {
+  skuNo?: string;
+  name: string;
+  skuImageAssetId?: string;
+  salePrice: number;
+  marketPrice: number;
+  saleSpecs: Record<string, string>;
+  initialStock?: number;
+}
+
+export interface SellerCatalogDraftPayload {
+  draft: SellerCatalogDraft;
+  skus: SellerCatalogSkuDraft[];
+}
+
+export interface SaveSellerProductDraftInput {
+  shopNo: string;
+  draft: SellerCatalogDraft;
+  skus: SellerCatalogSkuDraft[];
+  spuNo?: string;
+  expectedVersion?: number;
+}
+
+export type SpuStatus = "draft" | "reviewing" | "approved" | "onShelf" | "offShelf";
+
+export const spuStatusCodeMap: Record<string, SpuStatus> = {
+  SPU_STATUS_DRAFT: "draft",
+  SPU_STATUS_REVIEWING: "reviewing",
+  SPU_STATUS_REVIEWED: "reviewing",
+  SPU_STATUS_APPROVED: "approved",
+  SPU_STATUS_ON_SHELF: "onShelf",
+  SPU_STATUS_OFF_SHELF: "offShelf",
+  SPU_STATUS_REJECTED: "draft",
+  SPU_STATUS_FROZEN: "offShelf",
+  SPU_STATUS_DELETED: "offShelf"
+};
+
+export type CatalogDraft = SellerCatalogDraft;
+export type CatalogSkuDraft = SellerCatalogSkuDraft;
+export type CatalogDraftPayload = SellerCatalogDraftPayload;
+
+export interface CatalogAggregateSku {
+  skuNo: string;
+  skuName: string;
+  skuImageAssetId?: string;
+  salePrice: number;
+  marketPrice: number;
+  saleAttrs: Record<string, string>;
+  sortOrder: number;
+}
+
+export interface CatalogAggregateSpu {
+  spuNo: string;
+  shopNo: string;
+  title: string;
+  summary: string;
+  categoryId: number;
+  brandNo: string;
+  status: SpuStatus;
+  mainImageAssetIds: string[];
+  detailImageAssetIds: string[];
+  attributeValues: Record<string, string>;
+  version: number;
+}
+
+export interface CatalogProductAggregate {
+  spu: CatalogAggregateSpu;
+  skus: CatalogAggregateSku[];
+}
+
+export interface CatalogReviewInfo {
+  reviewStatus?: string;
+  rejectReasonCode?: string;
+  rejectComment?: string;
+}
+
+export interface SaveDraftResult {
+  product: CatalogProductAggregate;
+}
+
+export interface ProductDetailResult {
+  product: CatalogProductAggregate;
+  review?: CatalogReviewInfo;
 }

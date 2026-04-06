@@ -14,23 +14,23 @@ import (
 )
 
 const (
-	// 短信验证码安全参数。
+	// 短信验证码相关安全参数。
 	smsCodeMaxAttempts = 5
 	smsCodeLength      = 6
 
-	// JWT 过期策略：access 短效、refresh 长效。
+	// JWT 默认有效期策略：access 较短、refresh 较长。
 	defaultAccessTTL  = 15 * time.Minute
 	defaultRefreshTTL = 30 * 24 * time.Hour
 
-	// 登录失败防护参数：阈值 + 延迟窗口。
+	// 登录失败控制参数，用于锁定和退避。
 	defaultLoginFailMax   = 5
 	defaultLoginDelayBase = 200 * time.Millisecond
 	defaultLoginDelayMax  = 2 * time.Second
 
-	// 新用户默认展示名前缀（配置缺失时的兜底值）。
+	// 新注册用户的默认展示名前缀。
 	defaultUsernamePrefix = "用户_"
 
-	// Outbox worker 默认参数（批量、轮询、重试、归档、清理、指标）。
+	// Outbox worker 默认运行参数。
 	defaultOutboxBatchSize        = 100
 	defaultOutboxPollInterval     = 1 * time.Second
 	defaultOutboxMaxFailCount     = 20
@@ -74,8 +74,8 @@ type outboxConf struct {
 	MetricsInterval time.Duration
 }
 
-// Service 是 auth 域核心对象，聚合运行依赖与配置。
-// `workerOnce` 用于保证后台 worker 只启动一次，避免并发重复消费 outbox。
+// Service 是 auth 领域的核心服务，聚合运行依赖和配置。
+// workerOnce 用于保证后台 worker 只启动一次，避免重复消费 outbox。
 type Service struct {
 	cache    *cache.Service
 	mq       mq.Publisher
@@ -96,7 +96,6 @@ var (
 )
 
 // New 返回 IAM 逻辑单例。
-// 使用 sync.Once 保证并发场景下初始化幂等，防止多次建连或配置重复加载。
 func New() *Service {
 	serviceOnce.Do(func() {
 		serviceInst = newService()
@@ -104,8 +103,7 @@ func New() *Service {
 	return serviceInst
 }
 
-// newService 从配置加载运行参数并初始化依赖（cache/mq/snowflake）。
-// 设计原则：即使部分配置异常，也要回退到安全默认值，确保服务可启动。
+// newService 从配置加载运行参数，并初始化 cache、mq、snowflake 等依赖。
 func newService() *Service {
 	var (
 		ctx = context.Background()
@@ -160,7 +158,7 @@ func newService() *Service {
 
 	node, err = snowflake.NewNode(nodeID)
 	if err != nil {
-		// node ID 异常时回退到 1，确保 user_id 仍可生成。
+		// 节点号非法时回退到 1，避免服务因配置问题完全不可用。
 		node, _ = snowflake.NewNode(1)
 	}
 	if jwtCfg.AccessExpireSeconds <= 0 {
@@ -173,7 +171,7 @@ func newService() *Service {
 		secCfg.LoginFailMax = defaultLoginFailMax
 	}
 	if jwtCfg.Secret == "" {
-		// 开发环境兜底密钥；生产环境必须通过配置覆盖。
+		// 本地开发环境允许使用兜底 secret，避免因缺配置导致服务无法启动。
 		jwtCfg.Secret = "shopa-iam-dev-secret"
 	}
 
@@ -216,13 +214,13 @@ func newService() *Service {
 
 	pub, err = mq.NewPublisherFromConfig(ctx)
 	if err != nil {
-		// MQ 不可用时降级为 noop publisher，避免主流程因为外部依赖不可用而启动失败。
+		// MQ 初始化失败时退化为 noop publisher，保证主链路仍可运行。
 		g.Log().Warningf(ctx, "[iam-svc] init mq publisher failed, fallback noop: %+v", err)
 		pub = mq.NewNoopPublisher()
 	}
 	smsSender, err = sms.NewSenderFromConfig(ctx)
 	if err != nil {
-		// 短信通道配置错误时回退到 mock，保证服务可启动并在发送阶段显式可观测。
+		// 短信渠道初始化失败时回退为 mock sender，方便本地联调。
 		g.Log().Warningf(ctx, "[iam-svc] init sms sender failed, fallback mock: %+v", err)
 		smsSender = sms.NewMockSender()
 	}
@@ -249,7 +247,7 @@ func (s *Service) refreshTTL() time.Duration {
 	return time.Duration(s.jwt.RefreshExpireSeconds) * time.Second
 }
 
-// cfgString 按 key 优先级读取字符串配置，读取不到则回落默认值。
+// cfgString 依次读取多个 key，返回第一个非空字符串配置。
 func cfgString(ctx context.Context, def string, keys ...string) string {
 	for _, key := range keys {
 		v := strings.TrimSpace(g.Cfg().MustGet(ctx, key, "").String())
@@ -260,7 +258,7 @@ func cfgString(ctx context.Context, def string, keys ...string) string {
 	return def
 }
 
-// cfgInt64 按 key 优先级读取 int64 配置，读取不到则回落默认值。
+// cfgInt64 依次读取多个 key，返回第一个非零 int64 配置。
 func cfgInt64(ctx context.Context, def int64, keys ...string) int64 {
 	for _, key := range keys {
 		v := g.Cfg().MustGet(ctx, key, int64(0)).Int64()
@@ -271,8 +269,7 @@ func cfgInt64(ctx context.Context, def int64, keys ...string) int64 {
 	return def
 }
 
-// cfgBool 按 key 优先级读取布尔配置，并支持显式 false。
-// 仅当配置项存在且非空字符串时，才视为“已配置”。
+// cfgBool 依次读取多个 key，只要显式配置了布尔值就返回。
 func cfgBool(ctx context.Context, def bool, keys ...string) bool {
 	for _, key := range keys {
 		v := g.Cfg().MustGet(ctx, key, nil)

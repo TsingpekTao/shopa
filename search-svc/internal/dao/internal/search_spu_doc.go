@@ -21,48 +21,64 @@ type SearchSpuDocDao struct {
 
 // SearchSpuDocColumns defines and stores column names for the table search_spu_doc.
 type SearchSpuDocColumns struct {
-	Id                string //
-	SpuNo             string //
-	Title             string //
-	ShopNo            string //
-	ShopName          string //
-	CategoryNo        string //
-	CoverAssetId      string //
-	CoverUrl          string //
-	MinPrice          string //
-	MaxPrice          string //
-	StockTotal        string //
-	SalesCount        string //
-	AvgScoreX100      string //
-	ReviewTotal       string //
-	ShopStatusCode    string //
-	OnShelfStatusCode string //
-	AttrsJson         string //
-	UpdatedAt         string //
-	CreatedAt         string //
+	Id                    string //
+	SpuNo                 string //
+	Title                 string //
+	ShopNo                string //
+	ShopName              string //
+	CategoryNo            string //
+	StoreCategoryId       string //
+	StoreCategoryL1       string //
+	StoreCategoryL2       string //
+	StoreCategoryPathJson string //
+	CoverAssetId          string //
+	CoverUrl              string //
+	MinPrice              string //
+	MaxPrice              string //
+	StockTotal            string //
+	SalesCount            string //
+	AvgScoreX100          string //
+	ReviewTotal           string //
+	ShopStatusCode        string //
+	OnShelfStatusCode     string //
+	AttrsJson             string //
+	SourceVersion         string //
+	SourceUpdatedAt       string //
+	Deleted               string //
+	DeletedAt             string //
+	UpdatedAt             string //
+	CreatedAt             string //
 }
 
 // searchSpuDocColumns holds the columns for the table search_spu_doc.
 var searchSpuDocColumns = SearchSpuDocColumns{
-	Id:                "id",
-	SpuNo:             "spu_no",
-	Title:             "title",
-	ShopNo:            "shop_no",
-	ShopName:          "shop_name",
-	CategoryNo:        "category_no",
-	CoverAssetId:      "cover_asset_id",
-	CoverUrl:          "cover_url",
-	MinPrice:          "min_price",
-	MaxPrice:          "max_price",
-	StockTotal:        "stock_total",
-	SalesCount:        "sales_count",
-	AvgScoreX100:      "avg_score_x100",
-	ReviewTotal:       "review_total",
-	ShopStatusCode:    "shop_status_code",
-	OnShelfStatusCode: "on_shelf_status_code",
-	AttrsJson:         "attrs_json",
-	UpdatedAt:         "updated_at",
-	CreatedAt:         "created_at",
+	Id:                    "id",
+	SpuNo:                 "spu_no",
+	Title:                 "title",
+	ShopNo:                "shop_no",
+	ShopName:              "shop_name",
+	CategoryNo:            "category_no",
+	StoreCategoryId:       "store_category_id",
+	StoreCategoryL1:       "store_category_l1",
+	StoreCategoryL2:       "store_category_l2",
+	StoreCategoryPathJson: "store_category_path_json",
+	CoverAssetId:          "cover_asset_id",
+	CoverUrl:              "cover_url",
+	MinPrice:              "min_price",
+	MaxPrice:              "max_price",
+	StockTotal:            "stock_total",
+	SalesCount:            "sales_count",
+	AvgScoreX100:          "avg_score_x100",
+	ReviewTotal:           "review_total",
+	ShopStatusCode:        "shop_status_code",
+	OnShelfStatusCode:     "on_shelf_status_code",
+	AttrsJson:             "attrs_json",
+	SourceVersion:         "source_version",
+	SourceUpdatedAt:       "source_updated_at",
+	Deleted:               "deleted",
+	DeletedAt:             "deleted_at",
+	UpdatedAt:             "updated_at",
+	CreatedAt:             "created_at",
 }
 
 // NewSearchSpuDocDao creates and returns a new DAO object for table data access.

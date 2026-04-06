@@ -36,6 +36,22 @@ upstream:
   edgeGateway: "edge-gateway:8000"
   iam: "iam-svc:8001"
   userProfile: "user-profile-svc:8001"
+  points:
+    enabled: true
+    baseUrl: "http://127.0.0.1:8021"
+    timeoutMs: 3000
+    previewPath: "/v1/points/internal/order/preview"
+    lockPath: "/v1/points/internal/order/lock"
+    cancelPath: "/v1/points/internal/order/cancel"
+    confirmPath: "/v1/points/internal/order/confirm"
+    grantPath: "/v1/points/internal/order/grant"
+
+worker:
+  pointsCompensation:
+    enabled: true
+    intervalSeconds: 10
+    batchSize: 20
+    maxRetry: 12
 
 # Object storage / media placeholders.
 storage:

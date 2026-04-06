@@ -16,7 +16,12 @@ export interface LoginResponse {
   channel: number;
   auth: {
     tokenPair?: TokenPair;
+    mfaChallenge?: unknown;
   };
+}
+
+export interface RefreshTokenResponse {
+  tokenPair: TokenPair;
 }
 
 export interface AdminOverviewResponse {

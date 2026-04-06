@@ -11,6 +11,7 @@ import (
 
 	"github.com/TsingpekTao/shopa/points-svc/internal/controller/api"
 	"github.com/TsingpekTao/shopa/points-svc/internal/controller/hello"
+	"github.com/TsingpekTao/shopa/points-svc/internal/controller/points"
 	"github.com/TsingpekTao/shopa/points-svc/internal/worker"
 )
 
@@ -39,6 +40,7 @@ var (
 				group.Middleware(ghttp.MiddlewareHandlerResponse)
 				group.Bind(
 					hello.NewV1(),
+					points.NewV1(),
 				)
 			})
 			s.Run()

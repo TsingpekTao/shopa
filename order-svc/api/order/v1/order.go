@@ -82,6 +82,13 @@ type HandlePayCallbackReq struct {
 
 type HandlePayCallbackRes = pb.HandlePayCallbackRes
 
+type CompleteOrderReq struct {
+	g.Meta `path:"/v1/order/internal/complete" method:"post" tags:"Order-Internal" summary:"Complete order and trigger points grant"`
+	pb.CompleteOrderReq
+}
+
+type CompleteOrderRes = pb.CompleteOrderRes
+
 type GetOrderSnapshotByNoReq struct {
 	g.Meta  `path:"/v1/order/internal/{order_no}/snapshot" method:"get" tags:"Order-Internal" summary:"Get order snapshot by order_no"`
 	OrderNo string `json:"order_no" v:"required#order_no is required"`

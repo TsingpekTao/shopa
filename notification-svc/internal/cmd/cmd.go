@@ -11,6 +11,7 @@ import (
 
 	"github.com/TsingpekTao/shopa/notification-svc/internal/controller/api"
 	"github.com/TsingpekTao/shopa/notification-svc/internal/controller/hello"
+	"github.com/TsingpekTao/shopa/notification-svc/internal/controller/notification"
 )
 
 var (
@@ -32,6 +33,7 @@ var (
 				group.Middleware(ghttp.MiddlewareHandlerResponse)
 				group.Bind(
 					hello.NewV1(),
+					notification.NewV1(),
 				)
 			})
 			s.Run()

@@ -140,7 +140,7 @@ func (s *Service) ensureClients(ctx context.Context) error {
 	s.once.Do(func() {
 		iamAddr := strings.TrimSpace(g.Cfg().MustGet(ctx, "upstream.iamGrpc", "127.0.0.1:9001").String())
 		userProfileAddr := strings.TrimSpace(g.Cfg().MustGet(ctx, "upstream.userProfileGrpc", "127.0.0.1:8002").String())
-		pointsAddr := strings.TrimSpace(g.Cfg().MustGet(ctx, "upstream.pointsGrpc", "127.0.0.1:8012").String())
+		pointsAddr := strings.TrimSpace(g.Cfg().MustGet(ctx, "upstream.pointsGrpc", "127.0.0.1:9012").String())
 
 		// 连接初始化统一使用 5 秒超时。
 		timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

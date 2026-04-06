@@ -1,10 +1,11 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Button, Descriptions, Empty, Image, Input, Modal, Select, Space, Spin, Table, Tag, Typography, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useQuery } from "@tanstack/react-query";
-import { AccessControl, useI18n } from "@shopa/ui";
+import { AccessControl } from "@shopa/ui";
 import {
   approveMerchantApplication,
   fetchAssetReadUrl,
@@ -19,6 +20,23 @@ import { AdminPage } from "@/components/admin-page";
 const { Text, Paragraph } = Typography;
 const { TextArea } = Input;
 
+const STATUS_OPTIONS = [
+  { value: 1, label: "草稿" },
+  { value: 2, label: "已提交" },
+  { value: 3, label: "审核中" },
+  { value: 4, label: "已通过" },
+  { value: 5, label: "已驳回" },
+  { value: 6, label: "已取消" },
+  { value: 7, label: "系统驳回" }
+];
+
+const REJECT_REASON_OPTIONS = [
+  { value: "MATERIAL_INVALID", label: "资料无效" },
+  { value: "MATERIAL_INCOMPLETE", label: "资料不完整" },
+  { value: "IDENTITY_MISMATCH", label: "身份信息不匹配" },
+  { value: "RISK_CONTROL", label: "风控拦截" }
+];
+
 type CredentialAsset = {
   key: string;
   label: string;
@@ -30,42 +48,30 @@ type RejectTarget = {
   expectedVersion: number;
 };
 
-const REJECT_REASON_OPTIONS = [
-  { value: "MATERIAL_INVALID", label: "MATERIAL_INVALID" },
-  { value: "MATERIAL_INCOMPLETE", label: "MATERIAL_INCOMPLETE" },
-  { value: "IDENTITY_MISMATCH", label: "IDENTITY_MISMATCH" },
-  { value: "RISK_CONTROL", label: "RISK_CONTROL" }
-];
-
-const STATUS_FILTER_OPTIONS = [
-  { value: 1, label: "DRAFT" },
-  { value: 2, label: "SUBMITTED" },
-  { value: 3, label: "REVIEWING" },
-  { value: 4, label: "APPROVED" },
-  { value: 5, label: "REJECTED" },
-  { value: 6, label: "CANCELLED" },
-  { value: 7, label: "SYSTEM_REJECTED" }
-];
-
-function statusTag(status: number | undefined, isZh: boolean) {
+function statusMeta(status?: number) {
   switch (status) {
     case 1:
-      return <Tag color="default">{isZh ? "草稿" : "DRAFT"}</Tag>;
+      return { color: "default", label: "草稿" };
     case 2:
-      return <Tag color="processing">{isZh ? "已提交" : "SUBMITTED"}</Tag>;
+      return { color: "processing", label: "已提交" };
     case 3:
-      return <Tag color="gold">{isZh ? "审核中" : "REVIEWING"}</Tag>;
+      return { color: "gold", label: "审核中" };
     case 4:
-      return <Tag color="success">{isZh ? "已通过" : "APPROVED"}</Tag>;
+      return { color: "success", label: "已通过" };
     case 5:
-      return <Tag color="error">{isZh ? "已驳回" : "REJECTED"}</Tag>;
+      return { color: "error", label: "已驳回" };
     case 6:
-      return <Tag>{isZh ? "已取消" : "CANCELLED"}</Tag>;
+      return { color: "default", label: "已取消" };
     case 7:
-      return <Tag color="volcano">{isZh ? "系统驳回" : "SYSTEM_REJECTED"}</Tag>;
+      return { color: "volcano", label: "系统驳回" };
     default:
-      return <Tag>{isZh ? "未知" : "UNKNOWN"}</Tag>;
+      return { color: "default", label: "未知" };
   }
+}
+
+function renderStatus(status?: number) {
+  const meta = statusMeta(status);
+  return <Tag color={meta.color}>{meta.label}</Tag>;
 }
 
 function displayValue(value: string | number | undefined | null): string {
@@ -76,7 +82,7 @@ function displayValue(value: string | number | undefined | null): string {
   return text.length > 0 ? text : "-";
 }
 
-function formatDateTime(value: string | undefined, locale: string): string {
+function formatDateTime(value?: string): string {
   if (!value) {
     return "-";
   }
@@ -84,7 +90,7 @@ function formatDateTime(value: string | undefined, locale: string): string {
   if (Number.isNaN(parsed.getTime())) {
     return value;
   }
-  return new Intl.DateTimeFormat(locale, {
+  return new Intl.DateTimeFormat("zh-CN", {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -100,102 +106,24 @@ function toAssetId(value: unknown): string | undefined {
     return undefined;
   }
   const normalized = String(value).trim();
-  if (!/^\d+$/.test(normalized)) {
-    return undefined;
-  }
-  return normalized;
+  return /^\d+$/.test(normalized) ? normalized : undefined;
 }
 
-function docTypeLabel(docTypeCode: string | undefined, isZh: boolean): string {
+function docTypeLabel(docTypeCode?: string) {
   const normalized = (docTypeCode ?? "").toUpperCase();
   if (normalized.includes("ID_CARD_FRONT")) {
-    return isZh ? "身份证人像面" : "ID Card Front";
+    return "身份证人像面";
   }
   if (normalized.includes("ID_CARD_BACK")) {
-    return isZh ? "身份证国徽面" : "ID Card Back";
+    return "身份证国徽面";
   }
   if (normalized.includes("BUSINESS_LICENSE")) {
-    return isZh ? "营业执照" : "Business License";
+    return "营业执照";
   }
-  if (normalized.length > 0) {
-    return normalized;
-  }
-  return isZh ? "资质文件" : "Qualification File";
+  return normalized || "资质文件";
 }
 
-function findExtAssetId(ext: Record<string, string> | undefined, keys: string[]): string | undefined {
-  if (!ext) {
-    return undefined;
-  }
-  for (const key of keys) {
-    const value = toAssetId(ext[key]);
-    if (value) {
-      return value;
-    }
-  }
-  return undefined;
-}
-
-function extractCredentialAssets(entity: MerchantEntityProfile | undefined, isZh: boolean): CredentialAsset[] {
-  if (!entity) {
-    return [];
-  }
-  const items: CredentialAsset[] = [];
-  const ext = entity.ext;
-  const extDefinitions: Array<{ key: string; label: string; keys: string[] }> = [
-    {
-      key: "id_card_front",
-      label: isZh ? "身份证人像面" : "ID Card Front",
-      keys: ["id_card_front_asset_id", "idCardFrontAssetId"]
-    },
-    {
-      key: "id_card_back",
-      label: isZh ? "身份证国徽面" : "ID Card Back",
-      keys: ["id_card_back_asset_id", "idCardBackAssetId"]
-    },
-    {
-      key: "business_license",
-      label: isZh ? "营业执照" : "Business License",
-      keys: ["business_license_asset_id", "businessLicenseAssetId"]
-    }
-  ];
-
-  for (const definition of extDefinitions) {
-    const assetId = findExtAssetId(ext, definition.keys);
-    if (!assetId) {
-      continue;
-    }
-    items.push({
-      key: definition.key,
-      label: definition.label,
-      assetId
-    });
-  }
-
-  const legalDocs: QualificationDoc[] = entity.legalSubject?.docs ?? [];
-  legalDocs.forEach((doc, index) => {
-    const assetId = toAssetId(doc.assetId);
-    if (!assetId) {
-      return;
-    }
-    items.push({
-      key: `doc_${index}`,
-      label: docTypeLabel(doc.docTypeCode, isZh),
-      assetId
-    });
-  });
-
-  const deduped = new Map<string, CredentialAsset>();
-  items.forEach((item) => {
-    const uniqueKey = `${item.label}_${item.assetId}`;
-    if (!deduped.has(uniqueKey)) {
-      deduped.set(uniqueKey, item);
-    }
-  });
-  return Array.from(deduped.values());
-}
-
-function renderExtList(ext: Record<string, string> | undefined) {
+function renderExtList(ext?: Record<string, string>) {
   if (!ext || Object.keys(ext).length === 0) {
     return <Text type="secondary">-</Text>;
   }
@@ -211,9 +139,77 @@ function renderExtList(ext: Record<string, string> | undefined) {
   );
 }
 
+function findExtAssetId(ext: Record<string, string> | undefined, keys: string[]) {
+  if (!ext) {
+    return undefined;
+  }
+  for (const key of keys) {
+    const assetId = toAssetId(ext[key]);
+    if (assetId) {
+      return assetId;
+    }
+  }
+  return undefined;
+}
+
+function extractCredentialAssets(entity?: MerchantEntityProfile): CredentialAsset[] {
+  if (!entity) {
+    return [];
+  }
+  const items: CredentialAsset[] = [];
+  const ext = entity.ext;
+  const extDefinitions = [
+    { key: "id_card_front", label: "身份证人像面", keys: ["id_card_front_asset_id", "idCardFrontAssetId"] },
+    { key: "id_card_back", label: "身份证国徽面", keys: ["id_card_back_asset_id", "idCardBackAssetId"] },
+    { key: "business_license", label: "营业执照", keys: ["business_license_asset_id", "businessLicenseAssetId"] }
+  ];
+
+  extDefinitions.forEach((definition) => {
+    const assetId = findExtAssetId(ext, definition.keys);
+    if (assetId) {
+      items.push({ key: definition.key, label: definition.label, assetId });
+    }
+  });
+
+  const legalDocs: QualificationDoc[] = entity.legalSubject?.docs ?? [];
+  legalDocs.forEach((doc, index) => {
+    const assetId = toAssetId(doc.assetId);
+    if (!assetId) {
+      return;
+    }
+    items.push({
+      key: `doc_${index}`,
+      label: docTypeLabel(doc.docTypeCode),
+      assetId
+    });
+  });
+
+  const deduped = new Map<string, CredentialAsset>();
+  items.forEach((item) => {
+    const uniqueKey = `${item.label}_${item.assetId}`;
+    if (!deduped.has(uniqueKey)) {
+      deduped.set(uniqueKey, item);
+    }
+  });
+  return Array.from(deduped.values());
+}
+
 export default function MerchantReviewPage() {
-  const { locale } = useI18n();
-  const isZh = locale === "zh-CN";
+  const searchParams = useSearchParams();
+  const initialStatuses = useMemo(
+    () =>
+      searchParams
+        .getAll("statuses")
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value) && value > 0),
+    [searchParams]
+  );
+  const initialKeyword = searchParams.get("keyword")?.trim() ?? "";
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [keywordInput, setKeywordInput] = useState(initialKeyword);
+  const [keyword, setKeyword] = useState(initialKeyword);
+  const [statusFilters, setStatusFilters] = useState<number[]>(initialStatuses);
   const [loadingNo, setLoadingNo] = useState("");
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -225,11 +221,6 @@ export default function MerchantReviewPage() {
   const [rejectTarget, setRejectTarget] = useState<RejectTarget | null>(null);
   const [rejectReasonCode, setRejectReasonCode] = useState("MATERIAL_INVALID");
   const [rejectComment, setRejectComment] = useState("");
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
-  const [keywordInput, setKeywordInput] = useState("");
-  const [keyword, setKeyword] = useState("");
-  const [statusFilters, setStatusFilters] = useState<number[]>([]);
 
   const query = useQuery({
     queryKey: ["admin", "merchant-applications", page, pageSize, keyword, statusFilters.join(",")],
@@ -244,7 +235,19 @@ export default function MerchantReviewPage() {
 
   const detailEntity = detailApplication?.entitySubmitted ?? detailApplication?.entityDraft ?? detailApplication?.entity;
   const detailShop = detailApplication?.shopSubmitted ?? detailApplication?.shopDraft ?? detailApplication?.shop;
-  const credentialAssets = useMemo(() => extractCredentialAssets(detailEntity, isZh), [detailEntity, isZh]);
+  const credentialAssets = useMemo(() => extractCredentialAssets(detailEntity), [detailEntity]);
+
+  useEffect(() => {
+    const nextStatuses = searchParams
+      .getAll("statuses")
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    const nextKeyword = searchParams.get("keyword")?.trim() ?? "";
+    setStatusFilters(nextStatuses);
+    setKeywordInput(nextKeyword);
+    setKeyword(nextKeyword);
+    setPage(1);
+  }, [searchParams]);
 
   useEffect(() => {
     if (!detailOpen || credentialAssets.length === 0) {
@@ -287,35 +290,6 @@ export default function MerchantReviewPage() {
     };
   }, [credentialAssets, detailOpen]);
 
-  const submitReject = async () => {
-    if (!rejectTarget?.applicationNo) {
-      message.error(isZh ? "申请单号为空，无法驳回" : "Missing application number");
-      return;
-    }
-    if (!rejectComment.trim()) {
-      message.warning(isZh ? "请填写驳回原因说明" : "Please provide reject comment");
-      return;
-    }
-    try {
-      setRejectSubmitting(true);
-      setLoadingNo(`${rejectTarget.applicationNo}-reject`);
-      await rejectMerchantApplication({
-        applicationNo: rejectTarget.applicationNo,
-        expectedVersion: rejectTarget.expectedVersion,
-        rejectReasonCode,
-        rejectComment: rejectComment.trim()
-      });
-      message.success(isZh ? "驳回成功，已附带驳回原因" : "Rejected with reason");
-      setRejectOpen(false);
-      setRejectTarget(null);
-      setRejectComment("");
-      await query.refetch();
-    } finally {
-      setRejectSubmitting(false);
-      setLoadingNo("");
-    }
-  };
-
   const applyFilters = () => {
     setPage(1);
     setKeyword(keywordInput.trim());
@@ -329,98 +303,144 @@ export default function MerchantReviewPage() {
     setStatusFilters([]);
   };
 
-  const columns: ColumnsType<MerchantApplication> = useMemo(
-    () => [
-      { title: "Application No", dataIndex: "applicationNo", key: "applicationNo", width: 220 },
-      { title: isZh ? "主体名称" : "Entity", dataIndex: ["entity", "entityName"], key: "entityName", width: 180 },
-      { title: isZh ? "联系人" : "Contact", dataIndex: ["entity", "contactName"], key: "contactName", width: 120 },
-      { title: isZh ? "联系电话" : "Phone", dataIndex: ["entity", "contactPhone"], key: "contactPhone", width: 150 },
-      {
-        title: isZh ? "状态" : "Status",
-        key: "status",
-        width: 140,
-        render: (_, row) => statusTag(row.status, isZh)
-      },
-      {
-        title: isZh ? "操作" : "Actions",
-        key: "actions",
-        width: 400,
-        render: (_, row) => (
-          <Space>
+  const submitReject = async () => {
+    if (!rejectTarget?.applicationNo) {
+      message.error("申请单号为空，无法驳回");
+      return;
+    }
+    if (!rejectComment.trim()) {
+      message.warning("请填写驳回说明");
+      return;
+    }
+    try {
+      setRejectSubmitting(true);
+      setLoadingNo(`${rejectTarget.applicationNo}-reject`);
+      await rejectMerchantApplication({
+        applicationNo: rejectTarget.applicationNo,
+        expectedVersion: rejectTarget.expectedVersion,
+        rejectReasonCode,
+        rejectComment: rejectComment.trim()
+      });
+      message.success("已完成驳回");
+      setRejectOpen(false);
+      setRejectTarget(null);
+      setRejectComment("");
+      await query.refetch();
+    } finally {
+      setRejectSubmitting(false);
+      setLoadingNo("");
+    }
+  };
+
+  const columns: ColumnsType<MerchantApplication> = [
+    {
+      title: "申请单号",
+      dataIndex: "applicationNo",
+      key: "applicationNo",
+      width: 230
+    },
+    {
+      title: "主体名称",
+      dataIndex: ["entity", "entityName"],
+      key: "entityName",
+      width: 180
+    },
+    {
+      title: "联系人",
+      dataIndex: ["entity", "contactName"],
+      key: "contactName",
+      width: 140
+    },
+    {
+      title: "联系电话",
+      dataIndex: ["entity", "contactPhone"],
+      key: "contactPhone",
+      width: 160
+    },
+    {
+      title: "状态",
+      key: "status",
+      width: 120,
+      render: (_, row) => renderStatus(row.status)
+    },
+    {
+      title: "操作",
+      key: "actions",
+      width: 360,
+      render: (_, row) => (
+        <Space>
+          <Button
+            size="small"
+            onClick={async () => {
+              if (!row.applicationNo) {
+                message.error("申请单号为空，无法查看详情");
+                return;
+              }
+              setDetailOpen(true);
+              setDetailLoading(true);
+              setDetailApplication(null);
+              setAssetUrlMap({});
+              try {
+                const detail = await fetchMerchantApplicationDetail(row.applicationNo);
+                setDetailApplication(detail.application);
+              } catch (err: any) {
+                message.error(`获取详情失败：${err?.message || "未知错误"}`);
+              } finally {
+                setDetailLoading(false);
+              }
+            }}
+          >
+            查看详情
+          </Button>
+
+          <AccessControl require={Permissions.MerchantReviewApprove}>
             <Button
+              type="primary"
               size="small"
+              loading={loadingNo === `${row.applicationNo}-approve`}
               onClick={async () => {
-                if (!row.applicationNo) {
-                  message.error(isZh ? "申请单号为空，无法查看详情" : "Missing application number");
-                  return;
-                }
-                setDetailOpen(true);
-                setDetailLoading(true);
-                setDetailApplication(null);
-                setAssetUrlMap({});
                 try {
-                  const detail = await fetchMerchantApplicationDetail(row.applicationNo);
-                  setDetailApplication(detail.application);
-                } catch (err: any) {
-                  message.error(isZh ? `获取详情失败：${err?.message || "unknown"}` : `Failed to load detail: ${err?.message || "unknown"}`);
-                } finally {
-                  setDetailLoading(false);
-                }
-              }}
-            >
-              {isZh ? "查看详情" : "Detail"}
-            </Button>
-
-            <AccessControl require={Permissions.MerchantReviewApprove}>
-              <Button
-                type="primary"
-                size="small"
-                loading={loadingNo === `${row.applicationNo}-approve`}
-                onClick={async () => {
-                  try {
-                    setLoadingNo(`${row.applicationNo}-approve`);
-                    await approveMerchantApplication({ applicationNo: row.applicationNo, expectedVersion: row.version ?? 1 });
-                    message.success(isZh ? "已提交通过操作" : "Approve submitted");
-                    await query.refetch();
-                  } finally {
-                    setLoadingNo("");
-                  }
-                }}
-              >
-                {isZh ? "通过" : "Approve"}
-              </Button>
-            </AccessControl>
-
-            <AccessControl require={Permissions.MerchantReviewReject}>
-              <Button
-                danger
-                size="small"
-                loading={loadingNo === `${row.applicationNo}-reject`}
-                onClick={() => {
-                  setRejectTarget({
+                  setLoadingNo(`${row.applicationNo}-approve`);
+                  await approveMerchantApplication({
                     applicationNo: row.applicationNo,
                     expectedVersion: row.version ?? 1
                   });
-                  setRejectReasonCode("MATERIAL_INVALID");
-                  setRejectComment("");
-                  setRejectOpen(true);
-                }}
-              >
-                {isZh ? "驳回" : "Reject"}
-              </Button>
-            </AccessControl>
-          </Space>
-        )
-      }
-    ],
-    [isZh, loadingNo, query]
-  );
+                  message.success("已提交通过操作");
+                  await query.refetch();
+                } finally {
+                  setLoadingNo("");
+                }
+              }}
+            >
+              通过
+            </Button>
+          </AccessControl>
+
+          <AccessControl require={Permissions.MerchantReviewReject}>
+            <Button
+              danger
+              size="small"
+              loading={loadingNo === `${row.applicationNo}-reject`}
+              onClick={() => {
+                setRejectTarget({
+                  applicationNo: row.applicationNo,
+                  expectedVersion: row.version ?? 1
+                });
+                setRejectReasonCode("MATERIAL_INVALID");
+                setRejectComment("");
+                setRejectOpen(true);
+              }}
+            >
+              驳回
+            </Button>
+          </AccessControl>
+        </Space>
+      )
+    }
+  ];
 
   return (
-    <AdminPage
-      title={isZh ? "商家入驻审核" : "Merchant Onboarding Review"}
-      subtitle={isZh ? "审核商家资质材料，执行通过或驳回操作。" : "Review merchant qualification materials and process decisions."}
-    >
+    <AdminPage title="商家入驻审核" subtitle="审核商家资质材料，执行通过或驳回操作。">
       <Space wrap size={12} style={{ marginBottom: 12 }}>
         <Input
           allowClear
@@ -428,7 +448,7 @@ export default function MerchantReviewPage() {
           onChange={(event) => setKeywordInput(event.target.value)}
           onPressEnter={applyFilters}
           style={{ width: 320 }}
-          placeholder={isZh ? "搜索主体名称/店铺名称" : "Search entity/shop name"}
+          placeholder="搜索主体名称或店铺名称"
         />
         <Select
           mode="multiple"
@@ -436,17 +456,17 @@ export default function MerchantReviewPage() {
           maxTagCount="responsive"
           style={{ width: 320 }}
           value={statusFilters}
-          options={STATUS_FILTER_OPTIONS}
+          options={STATUS_OPTIONS}
           onChange={(values) => {
             setPage(1);
             setStatusFilters(values);
           }}
-          placeholder={isZh ? "状态筛选" : "Filter by status"}
+          placeholder="按状态筛选"
         />
         <Button type="primary" onClick={applyFilters}>
-          {isZh ? "搜索" : "Search"}
+          搜索
         </Button>
-        <Button onClick={resetFilters}>{isZh ? "重置" : "Reset"}</Button>
+        <Button onClick={resetFilters}>重置</Button>
       </Space>
 
       <div className="admin-table">
@@ -472,7 +492,7 @@ export default function MerchantReviewPage() {
 
       <Modal
         open={rejectOpen}
-        title={isZh ? "填写驳回原因" : "Reject Application"}
+        title="填写驳回原因"
         onCancel={() => {
           if (rejectSubmitting) {
             return;
@@ -487,11 +507,11 @@ export default function MerchantReviewPage() {
       >
         <Space direction="vertical" size={12} style={{ width: "100%" }}>
           <div>
-            <Text type="secondary">{isZh ? "申请单号" : "Application No"}</Text>
+            <Text type="secondary">申请单号</Text>
             <div>{rejectTarget?.applicationNo ?? "-"}</div>
           </div>
           <div>
-            <Text type="secondary">{isZh ? "驳回原因码" : "Reject Reason Code"}</Text>
+            <Text type="secondary">驳回原因</Text>
             <Select
               value={rejectReasonCode}
               style={{ width: "100%", marginTop: 6 }}
@@ -500,7 +520,7 @@ export default function MerchantReviewPage() {
             />
           </div>
           <div>
-            <Text type="secondary">{isZh ? "驳回说明（必填）" : "Reject Comment (Required)"}</Text>
+            <Text type="secondary">驳回说明</Text>
             <TextArea
               value={rejectComment}
               onChange={(event) => setRejectComment(event.target.value)}
@@ -508,7 +528,7 @@ export default function MerchantReviewPage() {
               maxLength={300}
               rows={5}
               style={{ marginTop: 6 }}
-              placeholder={isZh ? "请输入驳回原因，商家可看到该说明" : "Explain the rejection reason for merchant."}
+              placeholder="请填写驳回原因，商家会看到这段说明"
             />
           </div>
         </Space>
@@ -520,7 +540,7 @@ export default function MerchantReviewPage() {
           setDetailOpen(false);
           setDetailApplication(null);
         }}
-        title={isZh ? "商家申请详情" : "Merchant Application Detail"}
+        title="商家申请详情"
         width={1040}
         footer={
           <Button
@@ -529,7 +549,7 @@ export default function MerchantReviewPage() {
               setDetailApplication(null);
             }}
           >
-            {isZh ? "关闭" : "Close"}
+            关闭
           </Button>
         }
         destroyOnClose
@@ -539,67 +559,65 @@ export default function MerchantReviewPage() {
             <Spin />
           </div>
         ) : !detailApplication ? (
-          <Empty description={isZh ? "暂无详情" : "No detail data"} />
+          <Empty description="暂无详情数据" />
         ) : (
           <div className="admin-merchant-detail">
             <section className="admin-detail-block">
-              <h4 className="admin-detail-title">{isZh ? "申请信息" : "Application Info"}</h4>
+              <h4 className="admin-detail-title">申请信息</h4>
               <Descriptions bordered size="small" column={2}>
-                <Descriptions.Item label={isZh ? "申请单号" : "Application No"}>{displayValue(detailApplication.applicationNo)}</Descriptions.Item>
-                <Descriptions.Item label={isZh ? "状态" : "Status"}>{statusTag(detailApplication.status, isZh)}</Descriptions.Item>
-                <Descriptions.Item label={isZh ? "版本" : "Version"}>{displayValue(detailApplication.version)}</Descriptions.Item>
-                <Descriptions.Item label={isZh ? "申请人用户ID" : "Owner User ID"}>{displayValue(detailApplication.ownerUserId)}</Descriptions.Item>
-                <Descriptions.Item label={isZh ? "审核人用户ID" : "Reviewer User ID"}>{displayValue(detailApplication.reviewerId)}</Descriptions.Item>
-                <Descriptions.Item label={isZh ? "创建时间" : "Created At"}>{formatDateTime(detailApplication.createdAt, locale)}</Descriptions.Item>
-                <Descriptions.Item label={isZh ? "提交时间" : "Submitted At"}>{formatDateTime(detailApplication.submittedAt, locale)}</Descriptions.Item>
-                <Descriptions.Item label={isZh ? "开始审核时间" : "Review Started At"}>
-                  {formatDateTime(detailApplication.reviewStartedAt, locale)}
-                </Descriptions.Item>
-                <Descriptions.Item label={isZh ? "审核完成时间" : "Reviewed At"}>{formatDateTime(detailApplication.reviewedAt, locale)}</Descriptions.Item>
-                <Descriptions.Item label={isZh ? "更新时间" : "Updated At"}>{formatDateTime(detailApplication.updatedAt, locale)}</Descriptions.Item>
+                <Descriptions.Item label="申请单号">{displayValue(detailApplication.applicationNo)}</Descriptions.Item>
+                <Descriptions.Item label="状态">{renderStatus(detailApplication.status)}</Descriptions.Item>
+                <Descriptions.Item label="版本号">{displayValue(detailApplication.version)}</Descriptions.Item>
+                <Descriptions.Item label="申请人用户 ID">{displayValue(detailApplication.ownerUserId)}</Descriptions.Item>
+                <Descriptions.Item label="审核人用户 ID">{displayValue(detailApplication.reviewerId)}</Descriptions.Item>
+                <Descriptions.Item label="创建时间">{formatDateTime(detailApplication.createdAt)}</Descriptions.Item>
+                <Descriptions.Item label="提交时间">{formatDateTime(detailApplication.submittedAt)}</Descriptions.Item>
+                <Descriptions.Item label="开始审核时间">{formatDateTime(detailApplication.reviewStartedAt)}</Descriptions.Item>
+                <Descriptions.Item label="审核完成时间">{formatDateTime(detailApplication.reviewedAt)}</Descriptions.Item>
+                <Descriptions.Item label="更新时间">{formatDateTime(detailApplication.updatedAt)}</Descriptions.Item>
               </Descriptions>
             </section>
 
             <section className="admin-detail-block">
-              <h4 className="admin-detail-title">{isZh ? "主体信息" : "Entity Info"}</h4>
+              <h4 className="admin-detail-title">主体信息</h4>
               <Descriptions bordered size="small" column={2}>
-                <Descriptions.Item label={isZh ? "主体编号" : "Entity No"}>{displayValue(detailEntity?.entityNo)}</Descriptions.Item>
-                <Descriptions.Item label={isZh ? "商户类型" : "Merchant Type"}>{displayValue(detailEntity?.merchantTypeCode)}</Descriptions.Item>
-                <Descriptions.Item label={isZh ? "主体名称" : "Entity Name"}>{displayValue(detailEntity?.entityName)}</Descriptions.Item>
-                <Descriptions.Item label={isZh ? "联系人" : "Contact Name"}>{displayValue(detailEntity?.contactName)}</Descriptions.Item>
-                <Descriptions.Item label={isZh ? "联系电话" : "Contact Phone"}>{displayValue(detailEntity?.contactPhone)}</Descriptions.Item>
-                <Descriptions.Item label={isZh ? "联系邮箱" : "Contact Email"}>{displayValue(detailEntity?.contactEmail)}</Descriptions.Item>
-                <Descriptions.Item label={isZh ? "主体扩展信息" : "Entity Ext"} span={2}>
+                <Descriptions.Item label="主体编号">{displayValue(detailEntity?.entityNo)}</Descriptions.Item>
+                <Descriptions.Item label="商户类型">{displayValue(detailEntity?.merchantTypeCode)}</Descriptions.Item>
+                <Descriptions.Item label="主体名称">{displayValue(detailEntity?.entityName)}</Descriptions.Item>
+                <Descriptions.Item label="联系人">{displayValue(detailEntity?.contactName)}</Descriptions.Item>
+                <Descriptions.Item label="联系电话">{displayValue(detailEntity?.contactPhone)}</Descriptions.Item>
+                <Descriptions.Item label="联系邮箱">{displayValue(detailEntity?.contactEmail)}</Descriptions.Item>
+                <Descriptions.Item label="主体扩展信息" span={2}>
                   {renderExtList(detailEntity?.ext)}
                 </Descriptions.Item>
               </Descriptions>
             </section>
 
             <section className="admin-detail-block">
-              <h4 className="admin-detail-title">{isZh ? "店铺信息" : "Shop Info"}</h4>
+              <h4 className="admin-detail-title">店铺信息</h4>
               <Descriptions bordered size="small" column={2}>
-                <Descriptions.Item label={isZh ? "店铺编号" : "Shop No"}>{displayValue(detailShop?.shopNo)}</Descriptions.Item>
-                <Descriptions.Item label={isZh ? "店铺类型" : "Shop Type"}>{displayValue(detailShop?.shopTypeCode)}</Descriptions.Item>
-                <Descriptions.Item label={isZh ? "店铺名称" : "Shop Name"}>{displayValue(detailShop?.shopName)}</Descriptions.Item>
-                <Descriptions.Item label={isZh ? "展示名称" : "Display Name"}>{displayValue(detailShop?.shopDisplayName)}</Descriptions.Item>
-                <Descriptions.Item label={isZh ? "客服电话" : "Service Phone"}>{displayValue(detailShop?.servicePhone)}</Descriptions.Item>
-                <Descriptions.Item label={isZh ? "客服邮箱" : "Service Email"}>{displayValue(detailShop?.serviceEmail)}</Descriptions.Item>
-                <Descriptions.Item label={isZh ? "主营类目ID" : "Main Category IDs"} span={2}>
+                <Descriptions.Item label="店铺编号">{displayValue(detailShop?.shopNo)}</Descriptions.Item>
+                <Descriptions.Item label="店铺类型">{displayValue(detailShop?.shopTypeCode)}</Descriptions.Item>
+                <Descriptions.Item label="店铺名称">{displayValue(detailShop?.shopName)}</Descriptions.Item>
+                <Descriptions.Item label="展示名称">{displayValue(detailShop?.shopDisplayName)}</Descriptions.Item>
+                <Descriptions.Item label="客服电话">{displayValue(detailShop?.servicePhone)}</Descriptions.Item>
+                <Descriptions.Item label="客服邮箱">{displayValue(detailShop?.serviceEmail)}</Descriptions.Item>
+                <Descriptions.Item label="主营类目 ID" span={2}>
                   {displayValue(detailShop?.mainCategoryIds?.join(", "))}
                 </Descriptions.Item>
-                <Descriptions.Item label={isZh ? "店铺描述" : "Description"} span={2}>
+                <Descriptions.Item label="店铺描述" span={2}>
                   <Paragraph className="admin-detail-paragraph">{displayValue(detailShop?.description)}</Paragraph>
                 </Descriptions.Item>
-                <Descriptions.Item label={isZh ? "店铺扩展信息" : "Shop Ext"} span={2}>
+                <Descriptions.Item label="店铺扩展信息" span={2}>
                   {renderExtList(detailShop?.ext)}
                 </Descriptions.Item>
               </Descriptions>
             </section>
 
             <section className="admin-detail-block">
-              <h4 className="admin-detail-title">{isZh ? "资质材料" : "Qualification Materials"}</h4>
+              <h4 className="admin-detail-title">资质材料</h4>
               {credentialAssets.length === 0 ? (
-                <Text type="secondary">{isZh ? "未提交可识别的证件素材" : "No recognizable credential assets submitted."}</Text>
+                <Text type="secondary">未提交可识别的资质文件</Text>
               ) : (
                 <div className="admin-cert-grid">
                   {credentialAssets.map((asset) => {
@@ -614,22 +632,16 @@ export default function MerchantReviewPage() {
                           <Image className="admin-cert-image" src={previewUrl} alt={asset.label} />
                         ) : (
                           <div className="admin-cert-placeholder">
-                            {assetUrlLoading
-                              ? isZh
-                                ? "加载预览中..."
-                                : "Loading preview..."
-                              : isZh
-                                ? "无法加载预览，保留 assetId 供追踪"
-                                : "Preview unavailable, keep asset id for tracing"}
+                            {assetUrlLoading ? "加载预览中..." : "暂时无法加载预览，请检查 media 服务读链路"}
                           </div>
                         )}
                         <div className="admin-cert-actions">
                           {previewUrl ? (
                             <a href={previewUrl} target="_blank" rel="noreferrer">
-                              {isZh ? "新窗口查看" : "Open in new tab"}
+                              新窗口查看
                             </a>
                           ) : (
-                            <Text type="secondary">{isZh ? "请检查 media-svc 读链接权限" : "Check media read-url permission"}</Text>
+                            <Text type="secondary">保留 assetId 以便继续排查</Text>
                           )}
                         </div>
                       </article>
@@ -640,18 +652,18 @@ export default function MerchantReviewPage() {
             </section>
 
             <section className="admin-detail-block">
-              <h4 className="admin-detail-title">{isZh ? "审核信息" : "Review Notes"}</h4>
+              <h4 className="admin-detail-title">审核信息</h4>
               <Descriptions bordered size="small" column={2}>
-                <Descriptions.Item label={isZh ? "审核备注" : "Review Comment"} span={2}>
+                <Descriptions.Item label="审核备注" span={2}>
                   <Paragraph className="admin-detail-paragraph">{displayValue(detailApplication.reviewComment)}</Paragraph>
                 </Descriptions.Item>
-                <Descriptions.Item label={isZh ? "驳回原因编码" : "Reject Reason Code"}>
+                <Descriptions.Item label="驳回原因编码">
                   {displayValue(detailApplication.latestReject?.rejectReasonCode)}
                 </Descriptions.Item>
-                <Descriptions.Item label={isZh ? "驳回时间" : "Rejected At"}>
-                  {formatDateTime(detailApplication.latestReject?.rejectedAt, locale)}
+                <Descriptions.Item label="驳回时间">
+                  {formatDateTime(detailApplication.latestReject?.rejectedAt)}
                 </Descriptions.Item>
-                <Descriptions.Item label={isZh ? "驳回备注" : "Reject Comment"} span={2}>
+                <Descriptions.Item label="驳回说明" span={2}>
                   <Paragraph className="admin-detail-paragraph">{displayValue(detailApplication.latestReject?.rejectComment)}</Paragraph>
                 </Descriptions.Item>
               </Descriptions>

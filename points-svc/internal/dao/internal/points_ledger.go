@@ -21,24 +21,42 @@ type PointsLedgerDao struct {
 
 // PointsLedgerColumns defines and stores column names for the table points_ledger.
 type PointsLedgerColumns struct {
-	Id           string //
-	UserId       string //
-	BizType      string // REGISTER_INIT/ORDER_PAY/REFUND/etc
-	BizId        string // Business id for idempotency
-	Delta        string // Points delta
-	BalanceAfter string // Balance snapshot after apply
-	CreatedAt    string //
+	Id              string //
+	LedgerNo        string // Business ledger identifier
+	UserId          string //
+	EntryTypeCode   string // INIT/LOCK/CONFIRM/CANCEL/GRANT/RETURN/REVERSE/EXPIRE/ADJUST/FREEZE/UNFREEZE
+	BizType         string // REGISTER_INIT/ORDER_PAY/REFUND/etc
+	BizNo           string // Business identifier for idempotency
+	ReservationNo   string // Reservation identifier if relevant
+	RelatedBucketNo string // Bucket identifier if relevant
+	PointsDelta     string // Points delta for this ledger entry
+	AvailableAfter  string // Available balance snapshot after apply
+	FrozenAfter     string // Frozen balance snapshot after apply
+	DebtAfter       string // Debt snapshot after apply
+	CashAmountCent  string // Related cash amount in cents
+	Remark          string // Operator remark or domain explanation
+	ExtraJson       string // Extended metadata snapshot
+	CreatedAt       string //
 }
 
 // pointsLedgerColumns holds the columns for the table points_ledger.
 var pointsLedgerColumns = PointsLedgerColumns{
-	Id:           "id",
-	UserId:       "user_id",
-	BizType:      "biz_type",
-	BizId:        "biz_id",
-	Delta:        "delta",
-	BalanceAfter: "balance_after",
-	CreatedAt:    "created_at",
+	Id:              "id",
+	LedgerNo:        "ledger_no",
+	UserId:          "user_id",
+	EntryTypeCode:   "entry_type_code",
+	BizType:         "biz_type",
+	BizNo:           "biz_no",
+	ReservationNo:   "reservation_no",
+	RelatedBucketNo: "related_bucket_no",
+	PointsDelta:     "points_delta",
+	AvailableAfter:  "available_after",
+	FrozenAfter:     "frozen_after",
+	DebtAfter:       "debt_after",
+	CashAmountCent:  "cash_amount_cent",
+	Remark:          "remark",
+	ExtraJson:       "extra_json",
+	CreatedAt:       "created_at",
 }
 
 // NewPointsLedgerDao creates and returns a new DAO object for table data access.

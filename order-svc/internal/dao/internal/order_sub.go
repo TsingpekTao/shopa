@@ -21,40 +21,44 @@ type OrderSubDao struct {
 
 // OrderSubColumns defines and stores column names for the table order_sub.
 type OrderSubColumns struct {
-	Id             string //
-	SubOrderNo     string //
-	OrderNo        string //
-	ShopNo         string //
-	SubStatus      string //
-	GoodsAmount    string //
-	FreightAmount  string //
-	DiscountAmount string //
-	PayableAmount  string //
-	PaidAmount     string //
-	SellerRemark   string //
-	BuyerRemark    string //
-	CreatedAt      string //
-	UpdatedAt      string //
-	DeletedAt      string //
+	Id                   string //
+	SubOrderNo           string //
+	OrderNo              string //
+	ShopNo               string //
+	SubStatus            string //
+	GoodsAmount          string //
+	FreightAmount        string //
+	DiscountAmount       string //
+	PayableAmount        string //
+	PaidAmount           string //
+	PointsUsed           string //
+	PointsDiscountAmount string //
+	SellerRemark         string //
+	BuyerRemark          string //
+	CreatedAt            string //
+	UpdatedAt            string //
+	DeletedAt            string //
 }
 
 // orderSubColumns holds the columns for the table order_sub.
 var orderSubColumns = OrderSubColumns{
-	Id:             "id",
-	SubOrderNo:     "sub_order_no",
-	OrderNo:        "order_no",
-	ShopNo:         "shop_no",
-	SubStatus:      "sub_status",
-	GoodsAmount:    "goods_amount",
-	FreightAmount:  "freight_amount",
-	DiscountAmount: "discount_amount",
-	PayableAmount:  "payable_amount",
-	PaidAmount:     "paid_amount",
-	SellerRemark:   "seller_remark",
-	BuyerRemark:    "buyer_remark",
-	CreatedAt:      "created_at",
-	UpdatedAt:      "updated_at",
-	DeletedAt:      "deleted_at",
+	Id:                   "id",
+	SubOrderNo:           "sub_order_no",
+	OrderNo:              "order_no",
+	ShopNo:               "shop_no",
+	SubStatus:            "sub_status",
+	GoodsAmount:          "goods_amount",
+	FreightAmount:        "freight_amount",
+	DiscountAmount:       "discount_amount",
+	PayableAmount:        "payable_amount",
+	PaidAmount:           "paid_amount",
+	PointsUsed:           "points_used",
+	PointsDiscountAmount: "points_discount_amount",
+	SellerRemark:         "seller_remark",
+	BuyerRemark:          "buyer_remark",
+	CreatedAt:            "created_at",
+	UpdatedAt:            "updated_at",
+	DeletedAt:            "deleted_at",
 }
 
 // NewOrderSubDao creates and returns a new DAO object for table data access.

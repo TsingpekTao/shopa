@@ -109,14 +109,14 @@ func (*Controller) CheckKycStatus(ctx context.Context, req *v1.CheckKycStatusReq
 	return nil, gerror.NewCode(gcode.CodeNotImplemented)
 }
 
-func (*Controller) HasShopRole(ctx context.Context, req *v1.HasShopRoleReq) (res *v1.HasShopRoleRes, err error) {
-	return nil, gerror.NewCode(gcode.CodeNotImplemented)
+func (c *Controller) HasShopRole(ctx context.Context, req *v1.HasShopRoleReq) (res *v1.HasShopRoleRes, err error) {
+	return c.auth.HasShopRole(ctx, req)
 }
 
-func (*Controller) AssignShopSellerRole(ctx context.Context, req *v1.AssignShopSellerRoleReq) (res *v1.AssignShopSellerRoleRes, err error) {
-	return nil, gerror.NewCode(gcode.CodeNotImplemented)
+func (c *Controller) AssignShopSellerRole(ctx context.Context, req *v1.AssignShopSellerRoleReq) (res *v1.AssignShopSellerRoleRes, err error) {
+	return c.auth.AssignShopSellerRole(ctx, req)
 }
 
-func (*Controller) RevokeShopSellerRoleAndBumpToken(ctx context.Context, req *v1.RevokeShopSellerRoleAndBumpTokenReq) (res *v1.RevokeShopSellerRoleAndBumpTokenRes, err error) {
-	return nil, gerror.NewCode(gcode.CodeNotImplemented)
+func (c *Controller) RevokeShopSellerRoleAndBumpToken(ctx context.Context, req *v1.RevokeShopSellerRoleAndBumpTokenReq) (res *v1.RevokeShopSellerRoleAndBumpTokenRes, err error) {
+	return c.auth.RevokeShopSellerRoleAndBumpToken(ctx, req)
 }

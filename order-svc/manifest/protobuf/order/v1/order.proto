@@ -33,6 +33,7 @@ service SellerOrderService {
 service InternalOrderService {
   rpc CloseOrderIfUnpaid(CloseOrderIfUnpaidReq) returns (CloseOrderIfUnpaidRes);
   rpc HandlePayCallback(HandlePayCallbackReq) returns (HandlePayCallbackRes);
+  rpc CompleteOrder(CompleteOrderReq) returns (CompleteOrderRes);
   rpc GetOrderSnapshotByNo(GetOrderSnapshotByNoReq) returns (GetOrderSnapshotByNoRes);
 }
 
@@ -91,6 +92,7 @@ message OrderAmount {
   uint64 discount_amount = 3;
   uint64 payable_amount = 4;
   uint64 paid_amount = 5;
+  uint64 points_discount_amount = 6;
 }
 
 message OrderAddressSnapshot {
@@ -139,6 +141,8 @@ message OrderSub {
   google.protobuf.Timestamp created_at = 8;
   google.protobuf.Timestamp updated_at = 9;
   repeated OrderItemSnapshot items = 10;
+  uint64 points_used = 11;
+  uint64 points_discount_amount = 12;
 }
 
 message OrderMain {
@@ -158,6 +162,11 @@ message OrderMain {
   repeated OrderSub sub_orders = 14;
   string buyer_remark = 15;
   CancelReasonCode cancel_reason_code = 16;
+  string points_reservation_no = 17;
+  uint64 points_used = 18;
+  uint64 points_discount_amount = 19;
+  string points_rule_snapshot_json = 20;
+  string points_rule_snapshot_digest = 21;
 }
 
 message CreateOrderFromCartReq {
@@ -166,6 +175,10 @@ message CreateOrderFromCartReq {
   string buyer_remark = 3;
   string submit_source_code = 4;
   string expected_snapshot_digest = 5;
+  bool use_points = 6;
+  uint64 intent_points = 7;
+  uint64 expected_points_cash_amount = 8;
+  string points_rule_snapshot_digest = 9;
   string idempotency_key = 99;
 }
 
@@ -186,6 +199,10 @@ message CreateOrderBuyNowReq {
   uint64 address_id = 2;
   string buyer_remark = 3;
   string submit_source_code = 4;
+  bool use_points = 5;
+  uint64 intent_points = 6;
+  uint64 expected_points_cash_amount = 7;
+  string points_rule_snapshot_digest = 8;
   string idempotency_key = 99;
 }
 
@@ -299,6 +316,19 @@ message HandlePayCallbackRes {
   bool callback_idempotent_hit = 4;
   bool refund_required = 5;
   string refund_reason_code = 6;
+}
+
+message CompleteOrderReq {
+  string order_no = 1;
+  string completion_note = 2;
+  string completion_source_code = 3;
+  string idempotency_key = 99;
+}
+
+message CompleteOrderRes {
+  string order_no = 1;
+  OrderStatus order_status = 2;
+  bool points_grant_triggered = 3;
 }
 
 message GetOrderSnapshotByNoReq { string order_no = 1; }

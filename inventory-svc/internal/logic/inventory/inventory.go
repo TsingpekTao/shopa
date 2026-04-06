@@ -2,6 +2,8 @@ package inventory
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -52,7 +54,24 @@ func (s *sInventory) BatchAdjustMySkuStock(ctx context.Context, req *v1.BatchAdj
 				return err
 			}
 			if ctxRow == nil {
-				return gerror.NewCodef(gcode.CodeNotFound, "sku context not found for %s", item.GetSkuNo())
+				if strings.TrimSpace(item.GetSpuNo()) == "" {
+					return gerror.NewCodef(gcode.CodeNotFound, "sku context not found for %s", item.GetSkuNo())
+				}
+				if err := s.upsertSkuContextItemTx(ctx, tx, &v1.SkuContextItem{
+					SkuNo:   item.GetSkuNo(),
+					SpuNo:   item.GetSpuNo(),
+					ShopNo:  req.GetShopNo(),
+					Enabled: true,
+				}); err != nil {
+					return err
+				}
+				ctxRow, err = s.getSkuContextTx(ctx, tx, item.GetSkuNo())
+				if err != nil {
+					return err
+				}
+				if ctxRow == nil {
+					return gerror.NewCodef(gcode.CodeNotFound, "sku context not found for %s", item.GetSkuNo())
+				}
 			}
 			if ctxRow.ShopNo != req.GetShopNo() {
 				return gerror.NewCodef(gcode.CodeInvalidParameter, "sku %s does not belong to shop %s", item.GetSkuNo(), req.GetShopNo())
@@ -72,6 +91,7 @@ func (s *sInventory) BatchAdjustMySkuStock(ctx context.Context, req *v1.BatchAdj
 	if err != nil {
 		return nil, err
 	}
+	s.logCatalogProjectionSyncFailure(ctx, "seller stock adjust", s.syncCatalogProjectionByAdjustResults(ctx, results))
 	return &v1.BatchAdjustMySkuStockRes{Results: results}, nil
 }
 
@@ -278,6 +298,9 @@ func (s *sInventory) ReserveStock(ctx context.Context, req *v1.ReserveStockReq) 
 	if err != nil {
 		return nil, err
 	}
+	if response != nil && response.GetSuccess() {
+		s.logCatalogProjectionSyncFailure(ctx, "reserve stock", s.syncCatalogProjectionByReservation(ctx, response.GetReservation()))
+	}
 	return response, nil
 }
 
@@ -371,6 +394,9 @@ func (s *sInventory) ConfirmReservation(ctx context.Context, req *v1.ConfirmRese
 	})
 	if err != nil {
 		return nil, err
+	}
+	if response != nil {
+		s.logCatalogProjectionSyncFailure(ctx, "confirm reservation", s.syncCatalogProjectionByReservation(ctx, response.GetReservation()))
 	}
 	return response, nil
 }
@@ -467,6 +493,9 @@ func (s *sInventory) CancelReservation(ctx context.Context, req *v1.CancelReserv
 	if err != nil {
 		return nil, err
 	}
+	if response != nil {
+		s.logCatalogProjectionSyncFailure(ctx, "cancel reservation", s.syncCatalogProjectionByReservation(ctx, response.GetReservation()))
+	}
 	return response, nil
 }
 
@@ -502,6 +531,7 @@ func (s *sInventory) BatchAdjustStockByAdmin(ctx context.Context, req *v1.BatchA
 	if err != nil {
 		return nil, err
 	}
+	s.logCatalogProjectionSyncFailure(ctx, "admin stock adjust", s.syncCatalogProjectionByAdjustResults(ctx, results))
 	return &v1.BatchAdjustStockByAdminRes{Results: results}, nil
 }
 
@@ -710,6 +740,9 @@ func (s *sInventory) getStockEntity(ctx context.Context, skuNo string) (*entity.
 		Where(dao.InventoryStock.Columns().SkuNo, skuNo).
 		Scan(&row)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
 		return nil, gerror.Wrap(err, "query stock failed")
 	}
 	if row.Id == 0 {
@@ -725,6 +758,9 @@ func (s *sInventory) getStockEntityTx(ctx context.Context, tx gdb.TX, skuNo stri
 		Where(dao.InventoryStock.Columns().SkuNo, skuNo).
 		Scan(&row)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
 		return nil, gerror.Wrap(err, "query stock failed")
 	}
 	if row.Id == 0 {
@@ -740,6 +776,9 @@ func (s *sInventory) getSkuContextTx(ctx context.Context, tx gdb.TX, skuNo strin
 		Where(dao.InventorySkuContext.Columns().SkuNo, skuNo).
 		Scan(&row)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
 		return nil, gerror.Wrap(err, "query sku context failed")
 	}
 	if row.Id == 0 {
@@ -755,6 +794,9 @@ func (s *sInventory) getReservationEntityTx(ctx context.Context, tx gdb.TX, rese
 		Where(dao.InventoryReservation.Columns().ReservationNo, reservationNo).
 		Scan(&row)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
 		return nil, gerror.Wrap(err, "query reservation failed")
 	}
 	if row.Id == 0 {

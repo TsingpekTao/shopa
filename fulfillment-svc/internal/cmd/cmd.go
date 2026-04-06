@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/TsingpekTao/shopa/fulfillment-svc/internal/controller/fulfillment"
+	_ "github.com/TsingpekTao/shopa/fulfillment-svc/internal/logic"
 	"github.com/gogf/gf/contrib/rpc/grpcx/v2"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"

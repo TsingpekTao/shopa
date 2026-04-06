@@ -32,6 +32,8 @@ upstream:
   edgeGateway: "edge-gateway:8000"
   iam: "iam-svc:8001"
   userProfile: "user-profile-svc:8003"
+  userProfileGrpc: "127.0.0.1:8002"
+  sellerShopGrpc: "127.0.0.1:50051"
 
 chat:
   backplane:

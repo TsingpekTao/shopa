@@ -11,12 +11,21 @@ import (
 
 // PointsLedger is the golang structure of table points_ledger for DAO operations like Where/Data.
 type PointsLedger struct {
-	g.Meta       `orm:"table:points_ledger, do:true"`
-	Id           any         //
-	UserId       any         //
-	BizType      any         // REGISTER_INIT/ORDER_PAY/REFUND/etc
-	BizId        any         // Business id for idempotency
-	Delta        any         // Points delta
-	BalanceAfter any         // Balance snapshot after apply
-	CreatedAt    *gtime.Time //
+	g.Meta          `orm:"table:points_ledger, do:true"`
+	Id              any         //
+	LedgerNo        any         // Business ledger identifier
+	UserId          any         //
+	EntryTypeCode   any         // INIT/LOCK/CONFIRM/CANCEL/GRANT/RETURN/REVERSE/EXPIRE/ADJUST/FREEZE/UNFREEZE
+	BizType         any         // REGISTER_INIT/ORDER_PAY/REFUND/etc
+	BizNo           any         // Business identifier for idempotency
+	ReservationNo   any         // Reservation identifier if relevant
+	RelatedBucketNo any         // Bucket identifier if relevant
+	PointsDelta     any         // Points delta for this ledger entry
+	AvailableAfter  any         // Available balance snapshot after apply
+	FrozenAfter     any         // Frozen balance snapshot after apply
+	DebtAfter       any         // Debt snapshot after apply
+	CashAmountCent  any         // Related cash amount in cents
+	Remark          any         // Operator remark or domain explanation
+	ExtraJson       any         // Extended metadata snapshot
+	CreatedAt       *gtime.Time //
 }

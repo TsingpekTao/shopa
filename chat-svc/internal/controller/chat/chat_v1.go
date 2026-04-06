@@ -2,9 +2,11 @@ package chat
 
 import (
 	"context"
+	"strings"
 
 	chatv1 "github.com/TsingpekTao/shopa/chat-svc/api/chat/v1"
 	pb "github.com/TsingpekTao/shopa/chat-svc/api/v1"
+	"github.com/gogf/gf/v2/frame/g"
 )
 
 func (c *ControllerV1) CreateOrGetConversation(ctx context.Context, req *chatv1.CreateOrGetConversationReq) (*chatv1.CreateOrGetConversationRes, error) {
@@ -64,6 +66,17 @@ func (c *ControllerV1) ListShopConversationsAlias(ctx context.Context, req *chat
 		ShopNo:     req.ShopNo,
 		PageSize:   req.PageSize,
 		NextCursor: req.NextCursor,
+	})
+}
+
+func (c *ControllerV1) ListMessagesAsSeller(ctx context.Context, req *chatv1.ListMessagesAsSellerReq) (*chatv1.ListMessagesAsSellerRes, error) {
+	if r := g.RequestFromCtx(ctx); r != nil && strings.TrimSpace(req.ShopNo) != "" {
+		r.Header.Set("X-Shop-No", strings.TrimSpace(req.ShopNo))
+	}
+	return c.chat.ListMessages(ctx, &pb.ListMessagesReq{
+		ConversationNo: req.ConversationNo,
+		PageSize:       req.PageSize,
+		NextCursor:     req.NextCursor,
 	})
 }
 

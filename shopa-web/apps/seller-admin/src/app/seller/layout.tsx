@@ -8,13 +8,16 @@ import {
   ContainerOutlined,
   DeploymentUnitOutlined,
   LineChartOutlined,
+  MessageOutlined,
   PictureOutlined,
   ShopOutlined,
+  TagsOutlined,
   TeamOutlined,
   UserOutlined
 } from "@ant-design/icons";
 import { Layout, Menu, Skeleton, Typography } from "antd";
 import { useI18n } from "@shopa/ui";
+import { useAuth } from "@/features/iam/useAuth";
 import { useAuthStore } from "@/features/iam/store";
 
 const { Sider, Content } = Layout;
@@ -29,6 +32,7 @@ export default function SellerLayout({ children }: Props) {
   const pathname = usePathname();
   const { locale } = useI18n();
   const isZh = locale === "zh-CN";
+  const { bootstrap } = useAuth();
   const tokenPair = useAuthStore((state) => state.tokenPair);
   const [ready, setReady] = useState(false);
 
@@ -55,6 +59,11 @@ export default function SellerLayout({ children }: Props) {
         label: <Link href="/seller/products">{isZh ? "商品管理" : "Products"}</Link>
       },
       {
+        key: "/seller/store-categories",
+        icon: <TagsOutlined />,
+        label: <Link href="/seller/store-categories">{isZh ? "店内分类" : "Store Categories"}</Link>
+      },
+      {
         key: "/seller/media/library",
         icon: <PictureOutlined />,
         label: <Link href="/seller/media/library">{isZh ? "素材库" : "Media Library"}</Link>
@@ -63,6 +72,11 @@ export default function SellerLayout({ children }: Props) {
         key: "/seller/inventory",
         icon: <ShopOutlined />,
         label: <Link href="/seller/inventory">{isZh ? "库存管理" : "Inventory"}</Link>
+      },
+      {
+        key: "/seller/conversations",
+        icon: <MessageOutlined />,
+        label: <Link href="/seller/conversations">{isZh ? "会话中心" : "Conversations"}</Link>
       },
       {
         key: "/seller/profile",
@@ -79,13 +93,30 @@ export default function SellerLayout({ children }: Props) {
   );
 
   useEffect(() => {
-    const accessToken = tokenPair?.accessToken ?? localStorage.getItem("shopa_seller_access_token");
-    if (!accessToken) {
-      router.replace("/login");
-      return;
-    }
-    setReady(true);
-  }, [router, tokenPair?.accessToken]);
+    let active = true;
+    (async () => {
+      const accessToken = tokenPair?.accessToken ?? localStorage.getItem("shopa_seller_access_token");
+      if (accessToken) {
+        if (active) {
+          setReady(true);
+        }
+        return;
+      }
+
+      const ok = await bootstrap();
+      if (!active) {
+        return;
+      }
+      if (!ok) {
+        router.replace("/login");
+        return;
+      }
+      setReady(true);
+    })();
+    return () => {
+      active = false;
+    };
+  }, [bootstrap, router, tokenPair?.accessToken]);
 
   const selectedKey = useMemo(() => {
     const found = menuItems.find((item) => pathname.startsWith(item.key));

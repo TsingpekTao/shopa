@@ -93,6 +93,16 @@ type ListShopConversationsAliasReq struct {
 
 type ListShopConversationsAliasRes = pb.ListShopConversationsRes
 
+type ListMessagesAsSellerReq struct {
+	g.Meta         `path:"/v1/chat/seller/shops/{shop_no}/conversations/{conversation_no}/messages" method:"get" tags:"Chat-Seller" summary:"List shop conversation messages"`
+	ShopNo         string `json:"shop_no" v:"required#shop_no is required"`
+	ConversationNo string `json:"conversation_no" v:"required#conversation_no is required"`
+	PageSize       int32  `json:"page_size"`
+	NextCursor     string `json:"next_cursor"`
+}
+
+type ListMessagesAsSellerRes = pb.ListMessagesRes
+
 type SendMessageAsSellerReq struct {
 	g.Meta `path:"/v1/chat/seller/messages:send" method:"post" tags:"Chat-Seller" summary:"Seller send message"`
 	pb.SendMessageAsSellerReq

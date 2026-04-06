@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { useState } from "react";
@@ -15,6 +15,32 @@ type FormValue = {
   password: string;
   confirmPassword: string;
 };
+
+type ApiErrorLike = {
+  message?: string;
+};
+
+function getPasswordRuleHint(isZh: boolean): string {
+  return isZh
+    ? "密码需为 8-20 位，且同时包含字母、数字和特殊字符，不能包含空格。"
+    : "Password must be 8-20 characters and include letters, numbers, and special characters without spaces.";
+}
+
+function getPasswordValidationMessage(value: string, isZh: boolean): string | null {
+  if (!value) {
+    return null;
+  }
+  if (/\s/.test(value)) {
+    return isZh ? "密码不能包含空格" : "Password cannot contain spaces";
+  }
+  if (value.length < 8 || value.length > 20) {
+    return isZh ? "密码长度必须为 8-20 位" : "Password must be 8-20 characters long";
+  }
+  if (!/[A-Za-z]/.test(value) || !/\d/.test(value) || !/[^A-Za-z\d\s]/.test(value)) {
+    return isZh ? "密码必须同时包含字母、数字和特殊字符" : "Password must include letters, numbers, and special characters";
+  }
+  return null;
+}
 
 export default function RegisterPage() {
   const { locale } = useI18n();
@@ -59,8 +85,12 @@ export default function RegisterPage() {
       await registerByPassword(values);
       notification.success({ message: isZh ? "注册成功，请登录并提交入驻资料" : "Register success, please login and submit onboarding" });
       window.location.href = "/login";
-    } catch (_err) {
-      notification.error({ message: isZh ? "注册失败" : "Register failed" });
+    } catch (error) {
+      const apiErr = error as ApiErrorLike;
+      notification.error({
+        message: isZh ? "注册失败" : "Register failed",
+        description: apiErr?.message?.trim() || getPasswordRuleHint(isZh)
+      });
     } finally {
       setSubmitting(false);
     }
@@ -95,9 +125,15 @@ export default function RegisterPage() {
           <Form.Item
             name="password"
             label={isZh ? "密码" : "Password"}
+            extra={getPasswordRuleHint(isZh)}
             rules={[
               { required: true, message: isZh ? "请输入密码" : "Please input password" },
-              { min: 8, message: isZh ? "至少 8 位字符" : "At least 8 chars" }
+              {
+                validator(_, value) {
+                  const message = getPasswordValidationMessage(String(value ?? ""), isZh);
+                  return message ? Promise.reject(new Error(message)) : Promise.resolve();
+                }
+              }
             ]}
           >
             <Input.Password placeholder={isZh ? "密码" : "Password"} prefix={<LockOutlined />} />

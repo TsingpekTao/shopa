@@ -1,0 +1,49 @@
+# points-svc configuration (local environment).
+
+grpc:
+  address: ":9012"
+  name: "points.svc"
+  logPath: ""
+  logStdout: true
+  errorStack: true
+  errorLogEnabled: true
+  errorLogPattern: "error-{Ymd}.log"
+  accessLogEnabled: true
+  accessLogPattern: "access-{Ymd}.log"
+
+server:
+  address: ":8021"
+  openapiPath: "/api.json"
+  swaggerPath: "/swagger"
+
+app:
+  env: "local"
+  project: "shopa"
+  service: "points-svc"
+
+database:
+  default:
+    link: "mysql:root:123456@tcp(127.0.0.1:3307)/shopa_points_svc?charset=utf8mb4&parseTime=true&loc=Local"
+
+redis:
+  default:
+    address: "127.0.0.1:6379"
+    db: 0
+    pass: ""
+
+mq:
+  rabbitmq:
+    enabled: false
+    url: "amqp://guest:guest@127.0.0.1:5672/"
+    exchange: "shopa.user.events"
+    queueRegisterInit: "points.register-init.q"
+    routingKeyUserRegistered: "iam.user.registered"
+
+upstream:
+  iamGrpc: "127.0.0.1:9001"
+  userProfileGrpc: "127.0.0.1:8002"
+  pointsGrpc: "127.0.0.1:9012"
+
+logger:
+  level: "all"
+  stdout: true

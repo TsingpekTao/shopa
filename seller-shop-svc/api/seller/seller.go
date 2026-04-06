@@ -1,4 +1,4 @@
-﻿package seller
+package seller
 
 import (
 	"context"
@@ -29,5 +29,13 @@ type ISellerV1 interface {
 	BatchGetShopsByNo(ctx context.Context, req *v1.BatchGetShopsByNoReq) (res *v1.BatchGetShopsByNoRes, err error)
 	ListShopsByOwnerUserId(ctx context.Context, req *v1.ListShopsByOwnerUserIdReq) (res *v1.ListShopsByOwnerUserIdRes, err error)
 	IsUserShopOwner(ctx context.Context, req *v1.IsUserShopOwnerReq) (res *v1.IsUserShopOwnerRes, err error)
+	ListStoreCategories(ctx context.Context, req *v1.ListStoreCategoriesReq) (res *v1.ListStoreCategoriesRes, err error)
+	CreateStoreCategory(ctx context.Context, req *v1.CreateStoreCategoryReq) (res *v1.CreateStoreCategoryRes, err error)
+	UpdateStoreCategory(ctx context.Context, req *v1.UpdateStoreCategoryReq) (res *v1.UpdateStoreCategoryRes, err error)
+	SortStoreCategories(ctx context.Context, req *v1.SortStoreCategoriesReq) (res *v1.SortStoreCategoriesRes, err error)
+	DeleteStoreCategory(ctx context.Context, req *v1.DeleteStoreCategoryReq) (res *v1.DeleteStoreCategoryRes, err error)
+	GetProductStoreCategoryBinding(ctx context.Context, req *v1.GetProductStoreCategoryBindingReq) (res *v1.GetProductStoreCategoryBindingRes, err error)
+	BatchGetProductStoreCategoryBindings(ctx context.Context, req *v1.BatchGetProductStoreCategoryBindingsReq) (res *v1.BatchGetProductStoreCategoryBindingsRes, err error)
+	UpdateProductStoreCategoryBinding(ctx context.Context, req *v1.UpdateProductStoreCategoryBindingReq) (res *v1.UpdateProductStoreCategoryBindingRes, err error)
+	ListBuyerStoreCategories(ctx context.Context, req *v1.ListBuyerStoreCategoriesReq) (res *v1.ListBuyerStoreCategoriesRes, err error)
 }
-

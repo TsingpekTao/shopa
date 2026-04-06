@@ -19,6 +19,7 @@ type IChatV1 interface {
 	GetUnreadSummaryAlias(ctx context.Context, req *v1.GetUnreadSummaryAliasReq) (res *v1.GetUnreadSummaryAliasRes, err error)
 	ListShopConversations(ctx context.Context, req *v1.ListShopConversationsReq) (res *v1.ListShopConversationsRes, err error)
 	ListShopConversationsAlias(ctx context.Context, req *v1.ListShopConversationsAliasReq) (res *v1.ListShopConversationsAliasRes, err error)
+	ListMessagesAsSeller(ctx context.Context, req *v1.ListMessagesAsSellerReq) (res *v1.ListMessagesAsSellerRes, err error)
 	SendMessageAsSeller(ctx context.Context, req *v1.SendMessageAsSellerReq) (res *v1.SendMessageAsSellerRes, err error)
 	MarkConversationReadAsSeller(ctx context.Context, req *v1.MarkConversationReadAsSellerReq) (res *v1.MarkConversationReadAsSellerRes, err error)
 	MarkConversationReadAsSellerAlias(ctx context.Context, req *v1.MarkConversationReadAsSellerAliasReq) (res *v1.MarkConversationReadAsSellerAliasRes, err error)

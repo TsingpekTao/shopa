@@ -21,42 +21,52 @@ type RefundTaskDao struct {
 
 // RefundTaskColumns defines and stores column names for the table refund_task.
 type RefundTaskColumns struct {
-	Id               string //
-	RefundTaskNo     string //
-	AfterSaleNo      string //
-	OrderNo          string //
-	SubOrderNo       string //
-	PayNo            string //
-	RefundAmount     string //
-	Status           string //
-	RetryCount       string //
-	NextRetryAt      string //
-	LastErrorCode    string //
-	LastErrorMessage string //
-	Version          string //
-	CreatedAt        string //
-	UpdatedAt        string //
-	DeletedAt        string //
+	Id                     string //
+	RefundTaskNo           string //
+	AfterSaleNo            string //
+	OrderNo                string //
+	SubOrderNo             string //
+	PayNo                  string //
+	RefundAmount           string //
+	PointsReturnAmount     string // 鏈??閫??杩旇繕鐨勫凡娑堣垂绉?垎锛屽崟浣嶏細鍒
+	PointsReverseAmount    string // 鏈??閫??鍐插洖鐨勫凡璧犵Н鍒嗭紝鍗曚綅锛氬垎
+	PointsCashOffsetAmount string // 璧犲垎鍐插洖浣欓?涓嶈冻鏃剁殑鐜伴噾鎶垫墸閲戦?锛屽崟浣嶏細鍒
+	FinalCashRefundAmount  string // 瀹為檯鐜伴噾閫??閲戦?锛屽崟浣嶏細鍒
+	AccountDebtAfter       string // 閫??鎵ц?鍚庣Н鍒嗚处鎴锋瑺璐︾粷瀵瑰?锛屽崟浣嶏細鍒
+	Status                 string //
+	RetryCount             string //
+	NextRetryAt            string //
+	LastErrorCode          string //
+	LastErrorMessage       string //
+	Version                string //
+	CreatedAt              string //
+	UpdatedAt              string //
+	DeletedAt              string //
 }
 
 // refundTaskColumns holds the columns for the table refund_task.
 var refundTaskColumns = RefundTaskColumns{
-	Id:               "id",
-	RefundTaskNo:     "refund_task_no",
-	AfterSaleNo:      "after_sale_no",
-	OrderNo:          "order_no",
-	SubOrderNo:       "sub_order_no",
-	PayNo:            "pay_no",
-	RefundAmount:     "refund_amount",
-	Status:           "status",
-	RetryCount:       "retry_count",
-	NextRetryAt:      "next_retry_at",
-	LastErrorCode:    "last_error_code",
-	LastErrorMessage: "last_error_message",
-	Version:          "version",
-	CreatedAt:        "created_at",
-	UpdatedAt:        "updated_at",
-	DeletedAt:        "deleted_at",
+	Id:                     "id",
+	RefundTaskNo:           "refund_task_no",
+	AfterSaleNo:            "after_sale_no",
+	OrderNo:                "order_no",
+	SubOrderNo:             "sub_order_no",
+	PayNo:                  "pay_no",
+	RefundAmount:           "refund_amount",
+	PointsReturnAmount:     "points_return_amount",
+	PointsReverseAmount:    "points_reverse_amount",
+	PointsCashOffsetAmount: "points_cash_offset_amount",
+	FinalCashRefundAmount:  "final_cash_refund_amount",
+	AccountDebtAfter:       "account_debt_after",
+	Status:                 "status",
+	RetryCount:             "retry_count",
+	NextRetryAt:            "next_retry_at",
+	LastErrorCode:          "last_error_code",
+	LastErrorMessage:       "last_error_message",
+	Version:                "version",
+	CreatedAt:              "created_at",
+	UpdatedAt:              "updated_at",
+	DeletedAt:              "deleted_at",
 }
 
 // NewRefundTaskDao creates and returns a new DAO object for table data access.

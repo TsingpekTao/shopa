@@ -1,4 +1,4 @@
-﻿package seller
+package seller
 
 import (
 	"context"
@@ -207,4 +207,3 @@ func (c *ControllerV1) IsUserShopOwner(ctx context.Context, req *sellerv1.IsUser
 	}
 	return &sellerv1.IsUserShopOwnerRes{IsOwner: out.GetIsOwner()}, nil
 }
-

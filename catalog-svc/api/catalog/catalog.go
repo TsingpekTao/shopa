@@ -3,8 +3,7 @@ package catalog
 import (
 	"context"
 
-	httpv1 "github.com/TsingpekTao/shopa/catalog-svc/api/catalog/v1"
-	v1 "github.com/TsingpekTao/shopa/catalog-svc/api/v1"
+	v1 "github.com/TsingpekTao/shopa/catalog-svc/api/catalog/v1"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -29,8 +28,9 @@ type ICatalogV1 interface {
 	UnfreezeProduct(ctx context.Context, req *v1.UnfreezeProductReq) (res *v1.UnfreezeProductRes, err error)
 	ForceOffShelf(ctx context.Context, req *v1.ForceOffShelfReq) (res *v1.ForceOffShelfRes, err error)
 
-	GetProductDetail(ctx context.Context, req *httpv1.GetProductDetailReq) (res *httpv1.GetProductDetailRes, err error)
-	ListProducts(ctx context.Context, req *httpv1.ListProductsReq) (res *httpv1.ListProductsRes, err error)
-	SearchProducts(ctx context.Context, req *httpv1.SearchProductsReq) (res *httpv1.SearchProductsRes, err error)
-	ListBuyerProductImages(ctx context.Context, req *httpv1.ListBuyerProductImagesReq) (res *httpv1.ListBuyerProductImagesRes, err error)
+	GetProductDetail(ctx context.Context, req *v1.GetProductDetailReq) (res *v1.GetProductDetailRes, err error)
+	ListProducts(ctx context.Context, req *v1.ListProductsReq) (res *v1.ListProductsRes, err error)
+	SearchProducts(ctx context.Context, req *v1.SearchProductsReq) (res *v1.SearchProductsRes, err error)
+	ListBuyerProductImages(ctx context.Context, req *v1.ListBuyerProductImagesReq) (res *v1.ListBuyerProductImagesRes, err error)
+	UpsertSkuStockProjectionInternal(ctx context.Context, req *v1.UpsertSkuStockProjectionInternalReq) (res *v1.UpsertSkuStockProjectionInternalRes, err error)
 }

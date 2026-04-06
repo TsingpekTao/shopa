@@ -29,6 +29,16 @@ type (
 		BatchGetShopsByNo(ctx context.Context, req *v1.BatchGetShopsByNoReq) (*v1.BatchGetShopsByNoRes, error)
 		ListShopsByOwnerUserId(ctx context.Context, req *v1.ListShopsByOwnerUserIdReq) (*v1.ListShopsByOwnerUserIdRes, error)
 		IsUserShopOwner(ctx context.Context, req *v1.IsUserShopOwnerReq) (*v1.IsUserShopOwnerRes, error)
+		ListStoreCategories(ctx context.Context, req *v1.ListStoreCategoriesReq) (*v1.ListStoreCategoriesRes, error)
+		CreateStoreCategory(ctx context.Context, req *v1.CreateStoreCategoryReq) (*v1.CreateStoreCategoryRes, error)
+		UpdateStoreCategory(ctx context.Context, req *v1.UpdateStoreCategoryReq) (*v1.UpdateStoreCategoryRes, error)
+		SortStoreCategories(ctx context.Context, req *v1.SortStoreCategoriesReq) (*v1.SortStoreCategoriesRes, error)
+		DeleteStoreCategory(ctx context.Context, req *v1.DeleteStoreCategoryReq) (*v1.DeleteStoreCategoryRes, error)
+		GetProductStoreCategoryBinding(ctx context.Context, req *v1.GetProductStoreCategoryBindingReq) (*v1.GetProductStoreCategoryBindingRes, error)
+		BatchGetProductStoreCategoryBindings(ctx context.Context, req *v1.BatchGetProductStoreCategoryBindingsReq) (*v1.BatchGetProductStoreCategoryBindingsRes, error)
+		UpdateProductStoreCategoryBinding(ctx context.Context, req *v1.UpdateProductStoreCategoryBindingReq) (*v1.UpdateProductStoreCategoryBindingRes, error)
+		ListBuyerStoreCategories(ctx context.Context, req *v1.ListBuyerStoreCategoriesReq) (*v1.ListBuyerStoreCategoriesRes, error)
+		ReconcileStoreCategoryCounts(ctx context.Context, req *v1.ReconcileStoreCategoryCountsReq) (*v1.ReconcileStoreCategoryCountsRes, error)
 	}
 )
 

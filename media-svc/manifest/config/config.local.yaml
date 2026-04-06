@@ -45,6 +45,14 @@ storage:
   accessKeyId: "replace-with-local-ak"
   accessKeySecret: "replace-with-local-sk"
   bucket: "shopa-picture-1"
+  buckets:
+    default: "shopa-picture-1"
+    sellerOnboarding: "shopa-picture-1"
+    catalog: "shopa-catalog-1"
+    byScene:
+      seller_onboarding_cert: "shopa-picture-1"
+      seller_media: "shopa-catalog-1"
+      buyer_avatar: "shopa-avater-1"
 
 logger:
   level: "all"

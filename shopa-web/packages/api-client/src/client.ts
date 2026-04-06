@@ -21,12 +21,13 @@ class ApiResponseError extends Error {
 
 export type ApiHooks = {
   getToken?: () => string | null;
-  onUnauthorized?: () => void;
+  onUnauthorized?: (error: AxiosError) => void | string | null | Promise<void | string | null>;
   onDegraded?: (fields: string[]) => void;
 };
 
 export type ApiRequestConfig = AxiosRequestConfig & {
   silentDegraded?: boolean;
+  _retryUnauthorized?: boolean;
 };
 
 export type CreateApiClientOptions = {
@@ -34,6 +35,18 @@ export type CreateApiClientOptions = {
   timeoutMs?: number;
   hooks?: ApiHooks;
 };
+
+function resolveDefaultBaseURL() {
+  const envBaseURL = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+  if (envBaseURL) {
+    return envBaseURL;
+  }
+  if (typeof window !== "undefined") {
+    const { protocol, hostname } = window.location;
+    return `${protocol}//${hostname}:8000`;
+  }
+  return "http://127.0.0.1:8000";
+}
 
 export class ApiClient {
   private hooks: ApiHooks = {};
@@ -43,7 +56,7 @@ export class ApiClient {
   constructor(options?: CreateApiClientOptions) {
     this.hooks = options?.hooks ?? {};
     this.http = axios.create({
-      baseURL: options?.baseURL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000",
+      baseURL: options?.baseURL ?? resolveDefaultBaseURL(),
       withCredentials: true,
       timeout: options?.timeoutMs ?? 15000
     });
@@ -60,9 +73,17 @@ export class ApiClient {
 
     this.http.interceptors.response.use(
       (response) => response,
-      (error: AxiosError) => {
+      async (error: AxiosError) => {
         if (error.response?.status === 401) {
-          this.hooks.onUnauthorized?.();
+          const originalConfig = error.config as ApiRequestConfig | undefined;
+          const nextToken = await this.hooks.onUnauthorized?.(error);
+          if (typeof nextToken === "string" && nextToken.trim() && originalConfig && !originalConfig._retryUnauthorized) {
+            originalConfig._retryUnauthorized = true;
+            const headers = originalConfig.headers ?? {};
+            (headers as Record<string, string>).Authorization = `Bearer ${nextToken.trim()}`;
+            originalConfig.headers = headers;
+            return this.http.request(originalConfig);
+          }
         }
         return Promise.reject(error);
       }

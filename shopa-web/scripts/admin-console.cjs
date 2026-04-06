@@ -4,7 +4,7 @@ const path = require("path");
 
 const action = process.argv[2] || "dev";
 if (action === "dev" && !process.env.PORT) {
-  process.env.PORT = "3200";
+  process.env.PORT = "3102";
 }
 const child = spawn(process.execPath, [path.resolve(__dirname, "./run-next-app.cjs"), "admin-console", action], {
   stdio: "inherit",

@@ -5,6 +5,7 @@ export const mallMessages: MessageDict = {
   topbar_login_tip: { "zh-CN": "你好，请登录", "en-US": "Hi, please login" },
   topbar_cart: { "zh-CN": "购物车", "en-US": "Cart" },
   topbar_orders: { "zh-CN": "我的订单", "en-US": "Orders" },
+  topbar_messages: { "zh-CN": "消息中心", "en-US": "Messages" },
   topbar_help: { "zh-CN": "帮助中心", "en-US": "Help" },
   help_official: { "zh-CN": "官方客服", "en-US": "Official Support" },
   help_merchant: { "zh-CN": "商家客服", "en-US": "Merchant Support" },

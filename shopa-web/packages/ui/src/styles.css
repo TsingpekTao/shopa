@@ -62,6 +62,56 @@
   color: var(--tb-orange);
 }
 
+.tb-topbar-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: 14px;
+  font-weight: 500;
+  color: inherit;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.tb-topbar-action:hover {
+  background: #fff2ea;
+  color: var(--tb-orange);
+}
+
+.tb-topbar-action--with-badge {
+  position: relative;
+  padding-right: 18px;
+}
+
+.tb-topbar-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  line-height: 1;
+  border-radius: 999px;
+  padding: 0 6px;
+}
+
+.tb-topbar-badge--count {
+  background: #fff2ea;
+  color: #c34100;
+  font-weight: 600;
+}
+
+.tb-topbar-badge--alert {
+  position: absolute;
+  top: -6px;
+  right: -4px;
+  background: #ff4d4f;
+  color: #fff;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-weight: 600;
+  box-shadow: 0 0 0 2px #f5f5f5;
+}
+
 .tb-topbar-drop {
   border: 0;
   background: transparent;
@@ -272,6 +322,10 @@
   .tb-header-inner {
     grid-template-columns: 150px 1fr;
     gap: 10px;
+  }
+
+  .tb-search {
+    grid-template-columns: 112px 1fr;
   }
 
   .tb-header-actions {

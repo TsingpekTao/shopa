@@ -30,78 +30,100 @@ import (
 
 type sProxy struct {
 	buyerProductsCache *gcache.Cache
+
 	buyerProductsGroup singleflight.Group
 }
 
 func New() *sProxy {
+
 	ctx := gctx.New()
+
 	lruCap := g.Cfg().MustGet(ctx, "gateway.proxy.buyerProductsCacheLruCap", 512).Int()
 	if lruCap <= 0 {
+
 		lruCap = 512
 	}
 	return &sProxy{
+
 		buyerProductsCache: gcache.New(lruCap),
 	}
 }
 
 func init() {
+
 	service.RegisterProxy(New())
 }
 
 func (s *sProxy) HandleProxyRequest(ctx context.Context, r *ghttp.Request) (bool, error) {
+
 	if r == nil {
 		return false, nil
 	}
 
 	method := strings.ToUpper(strings.TrimSpace(r.Method))
 	if !isProxyMethod(method) {
+
 		return false, nil
 	}
 
 	route, err := s.matchRoute(ctx, method, r.URL.Path)
 	if err != nil {
+
 		g.Log().Warningf(ctx, "[edge-gateway] query proxy route failed, fallback builtin route, err=%+v", err)
 	}
 	if route == nil {
+
 		route = s.matchBuiltinRoute(method, r.URL.Path)
 	}
 	if route == nil {
+
 		return false, nil
 	}
 
 	requestID := strings.TrimSpace(r.Header.Get("X-Request-Id"))
 	if requestID == "" {
+
 		requestID = strings.ReplaceAll(guid.S(), "-", "")
 		r.Header.Set("X-Request-Id", requestID)
 	}
 
 	startAt := time.Now()
+
 	params := extractPathParams(route.PathPattern, r.URL.Path)
+
 	action := strings.TrimSpace(route.Action)
 	if action == "" {
 		action = strings.TrimSpace(route.RouteCode)
 	}
+
 	resourceID := pickResourceID(route.ResourceIdPathKey, params)
 
 	var (
-		userID        uint64
-		statusCode    = http.StatusBadGateway
-		errCode       string
+		userID uint64
+
+		statusCode = http.StatusBadGateway
+
+		errCode string
+
 		permissionKey = strings.TrimSpace(route.RequiredPermissionKey)
 	)
 
 	if route.AuthRequired == 1 {
+
 		verified, verifyErr := service.Auth().VerifyAccessToken(ctx, service.Auth().ExtractAccessToken(r))
 		if verifyErr != nil {
 			return true, verifyErr
 		}
+
 		userID = verified.UserID
 
 		if permissionKey != "" && !hasPermission(verified.Permissions, permissionKey) {
+
 			return true, gerror.NewCodef(consts.CodeForbidden, "permission denied: %s", permissionKey)
 		}
 
 		if route.InjectUserContext == 1 {
+
 			r.Header.Set("X-User-Id", fmt.Sprintf("%d", verified.UserID))
 			r.Header.Set("X-Account-Status-Code", verified.AccountStatusCode)
 		}
@@ -111,6 +133,7 @@ func (s *sProxy) HandleProxyRequest(ctx context.Context, r *ghttp.Request) (bool
 	if err != nil {
 		return true, err
 	}
+
 	targetURL, err := parseUpstreamURL(targetBase)
 	if err != nil {
 		return true, err
@@ -120,16 +143,21 @@ func (s *sProxy) HandleProxyRequest(ctx context.Context, r *ghttp.Request) (bool
 	if upstreamPath == "" {
 		upstreamPath = r.URL.Path
 	}
+
 	upstreamPath = applyPathParams(upstreamPath, params)
 
 	cacheEnabled := s.isBuyerProductsCacheEnabled(ctx) && isBuyerProductsListPath(method, r.URL.Path)
 	if cacheEnabled {
+
 		cacheKey := buildBuyerProductsCacheKey(method, r.URL.Path, r.URL.RawQuery)
 		if payload, ok := s.getBuyerProductsCache(ctx, cacheKey); ok {
+
 			s.writeBufferedResponse(r, payload, "HIT")
 			statusCode = payload.StatusCode
 		} else {
+
 			value, doErr, _ := s.buyerProductsGroup.Do(cacheKey, func() (interface{}, error) {
+
 				reqClone := r.Request.Clone(ctx)
 				return s.proxyToBuffer(targetURL, upstreamPath, requestID, reqClone), nil
 			})
@@ -138,6 +166,7 @@ func (s *sProxy) HandleProxyRequest(ctx context.Context, r *ghttp.Request) (bool
 			}
 			payload, _ := value.(*cachedProxyResponse)
 			if payload == nil {
+
 				payload = &cachedProxyResponse{
 					StatusCode:  http.StatusBadGateway,
 					ContentType: "text/plain; charset=utf-8",
@@ -150,23 +179,30 @@ func (s *sProxy) HandleProxyRequest(ctx context.Context, r *ghttp.Request) (bool
 			statusCode = payload.StatusCode
 
 			if payload.StatusCode == http.StatusOK {
+
 				ttlSeconds := s.getBuyerProductsCacheTTLSeconds(ctx)
 				_ = s.buyerProductsCache.Set(ctx, cacheKey, payload, time.Duration(ttlSeconds)*time.Second)
 			}
 			if payload.StatusCode == http.StatusBadGateway {
+
 				errCode = "UPSTREAM_PROXY_ERROR"
 			}
 		}
 	} else {
+
 		proxy := httputil.NewSingleHostReverseProxy(targetURL)
 		defaultDirector := proxy.Director
 		proxy.Director = func(req *http.Request) {
+
 			defaultDirector(req)
+
 			req.URL.Path = upstreamPath
 			req.Host = targetURL.Host
+
 			req.Header.Set("X-Request-Id", requestID)
 		}
 		proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, proxyErr error) {
+
 			statusCode = http.StatusBadGateway
 			errCode = "UPSTREAM_PROXY_ERROR"
 			http.Error(rw, proxyErr.Error(), http.StatusBadGateway)
@@ -174,6 +210,7 @@ func (s *sProxy) HandleProxyRequest(ctx context.Context, r *ghttp.Request) (bool
 
 		recorder := &statusRecorder{ResponseWriter: r.Response.Writer, statusCode: http.StatusOK}
 		proxy.ServeHTTP(recorder, r.Request)
+
 		statusCode = recorder.StatusCode()
 	}
 
@@ -198,6 +235,7 @@ func (s *sProxy) HandleProxyRequest(ctx context.Context, r *ghttp.Request) (bool
 }
 
 func (s *sProxy) matchRoute(ctx context.Context, method, path string) (*entity.EdgeProxyRoute, error) {
+
 	var routes []*entity.EdgeProxyRoute
 	err := dao.EdgeProxyRoute.Ctx(ctx).
 		Where(dao.EdgeProxyRoute.Columns().Method, method).
@@ -211,12 +249,15 @@ func (s *sProxy) matchRoute(ctx context.Context, method, path string) (*entity.E
 
 	for _, route := range routes {
 		if route == nil {
+
 			continue
 		}
 		if matchPathPattern(route.PathPattern, path) {
+
 			return route, nil
 		}
 	}
+
 	return nil, nil
 }
 
@@ -249,6 +290,8 @@ func (s *sProxy) resolveUpstream(ctx context.Context, upstreamService string) (s
 		key = "upstream.fulfillmentHttp"
 	case "chat":
 		key = "upstream.chatHttp"
+	case "agent":
+		key = "upstream.agentHttp"
 	case "media":
 		key = "upstream.mediaHttp"
 	case "iam":
@@ -263,6 +306,7 @@ func (s *sProxy) resolveUpstream(ctx context.Context, upstreamService string) (s
 
 	value := strings.TrimSpace(g.Cfg().MustGet(ctx, key).String())
 	if value == "" {
+
 		return "", gerror.NewCodef(gcode.CodeInvalidParameter, "missing upstream config: %s", key)
 	}
 	return value, nil
@@ -270,12 +314,15 @@ func (s *sProxy) resolveUpstream(ctx context.Context, upstreamService string) (s
 
 func (s *sProxy) writeAudit(ctx context.Context, data *do.EdgeRequestAudit) {
 	if data == nil {
+
 		return
 	}
 	if fields, ok := data.DegradedFieldsJson.([]string); ok {
+
 		b, _ := json.Marshal(fields)
 		data.DegradedFieldsJson = string(b)
 	}
+
 	_, _ = dao.EdgeRequestAudit.Ctx(ctx).Data(data).Insert()
 }
 
@@ -303,6 +350,7 @@ func (s *sProxy) matchBuiltinRoute(method, path string) *entity.EdgeProxyRoute {
 
 func builtinProxyRoutes() []entity.EdgeProxyRoute {
 	return []entity.EdgeProxyRoute{
+
 		{RouteCode: "BUILTIN_IAM_SMS_SEND", Method: http.MethodPost, PathPattern: "/v1/auth/sms/send", UpstreamService: "iam", UpstreamPathTemplate: "/v1/auth/sms/send", AuthRequired: 0, InjectUserContext: 0},
 		{RouteCode: "BUILTIN_IAM_REGISTER_PASSWORD", Method: http.MethodPost, PathPattern: "/v1/auth/register/password", UpstreamService: "iam", UpstreamPathTemplate: "/v1/auth/register/password", AuthRequired: 0, InjectUserContext: 0},
 		{RouteCode: "BUILTIN_IAM_LOGIN_PASSWORD", Method: http.MethodPost, PathPattern: "/v1/auth/login/password", UpstreamService: "iam", UpstreamPathTemplate: "/v1/auth/login/password", AuthRequired: 0, InjectUserContext: 0},
@@ -325,18 +373,31 @@ func builtinProxyRoutes() []entity.EdgeProxyRoute {
 		{RouteCode: "BUILTIN_SELLER_APPLICATION_UPDATE_DRAFT", Method: http.MethodPatch, PathPattern: "/v1/seller/applications/{applicationNo}/draft", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/seller/applications/{applicationNo}/draft", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_SELLER_APPLICATION_SUBMIT", Method: http.MethodPost, PathPattern: "/v1/seller/applications/{applicationNo}/submit", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/seller/applications/{applicationNo}/submit", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_SELLER_APPLICATION_RESUBMIT", Method: http.MethodPost, PathPattern: "/v1/seller/applications/{rejectedApplicationNo}/resubmit", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/seller/applications/{rejectedApplicationNo}/resubmit", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_SELLER_STORE_CATEGORY_LIST", Method: http.MethodGet, PathPattern: "/v1/seller/shops/{shopNo}/store-categories", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/seller/shops/{shopNo}/store-categories", AuthRequired: 1, InjectUserContext: 1, Action: "seller.shop.store_category.list", ResourceIdPathKey: "shopNo"},
+		{RouteCode: "BUILTIN_SELLER_STORE_CATEGORY_CREATE", Method: http.MethodPost, PathPattern: "/v1/seller/shops/{shopNo}/store-categories", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/seller/shops/{shopNo}/store-categories", AuthRequired: 1, InjectUserContext: 1, Action: "seller.shop.store_category.create", ResourceIdPathKey: "shopNo"},
+		{RouteCode: "BUILTIN_SELLER_STORE_CATEGORY_SORT", Method: http.MethodPost, PathPattern: "/v1/seller/shops/{shopNo}/store-categories:sort", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/seller/shops/{shopNo}/store-categories:sort", AuthRequired: 1, InjectUserContext: 1, Action: "seller.shop.store_category.sort", ResourceIdPathKey: "shopNo"},
+		{RouteCode: "BUILTIN_SELLER_STORE_CATEGORY_UPDATE", Method: http.MethodPatch, PathPattern: "/v1/seller/shops/{shopNo}/store-categories/{categoryId}", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/seller/shops/{shopNo}/store-categories/{categoryId}", AuthRequired: 1, InjectUserContext: 1, Action: "seller.shop.store_category.update", ResourceIdPathKey: "categoryId"},
+		{RouteCode: "BUILTIN_SELLER_STORE_CATEGORY_DELETE", Method: http.MethodDelete, PathPattern: "/v1/seller/shops/{shopNo}/store-categories/{categoryId}", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/seller/shops/{shopNo}/store-categories/{categoryId}", AuthRequired: 1, InjectUserContext: 1, Action: "seller.shop.store_category.delete", ResourceIdPathKey: "categoryId"},
+		{RouteCode: "BUILTIN_SELLER_PRODUCT_STORE_CATEGORY_GET", Method: http.MethodGet, PathPattern: "/v1/seller/shops/{shopNo}/products/{spuNo}/store-category", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/seller/shops/{shopNo}/products/{spuNo}/store-category", AuthRequired: 1, InjectUserContext: 1, Action: "seller.shop.product_store_category.get", ResourceIdPathKey: "spuNo"},
+		{RouteCode: "BUILTIN_SELLER_PRODUCT_STORE_CATEGORY_UPDATE", Method: http.MethodPut, PathPattern: "/v1/seller/shops/{shopNo}/products/{spuNo}/store-category", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/seller/shops/{shopNo}/products/{spuNo}/store-category", AuthRequired: 1, InjectUserContext: 1, Action: "seller.shop.product_store_category.update", ResourceIdPathKey: "spuNo"},
+		{RouteCode: "BUILTIN_SELLER_PRODUCT_STORE_CATEGORY_BATCH_GET", Method: http.MethodPost, PathPattern: "/v1/seller/shops/{shopNo}/products/store-categories:batch-get", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/seller/shops/{shopNo}/products/store-categories:batch-get", AuthRequired: 1, InjectUserContext: 1, Action: "seller.shop.product_store_category.batch_get", ResourceIdPathKey: "shopNo"},
 
 		{RouteCode: "BUILTIN_CATALOG_LIST_MY_PRODUCTS", Method: http.MethodGet, PathPattern: "/v1/catalog/seller/products", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/seller/products", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_CATALOG_GET_MY_PRODUCT", Method: http.MethodGet, PathPattern: "/v1/catalog/seller/products/{spu_no}", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/seller/products/{spu_no}", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_CATALOG_CREATE_DRAFT", Method: http.MethodPost, PathPattern: "/v1/catalog/seller/products/draft", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/seller/products/draft", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_CATALOG_UPDATE_DRAFT", Method: http.MethodPut, PathPattern: "/v1/catalog/seller/products/draft", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/seller/products/draft", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CATALOG_DELETE_DRAFT", Method: http.MethodPost, PathPattern: "/v1/catalog/seller/products/draft:delete", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/seller/products/draft:delete", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_CATALOG_UPSERT_SKU", Method: http.MethodPost, PathPattern: "/v1/catalog/seller/products/skus:upsert", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/seller/products/skus:upsert", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CATALOG_SUBMIT_REVIEW", Method: http.MethodPost, PathPattern: "/v1/catalog/seller/products/review:submit", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/seller/products/review:submit", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CATALOG_RESUBMIT_REVIEW", Method: http.MethodPost, PathPattern: "/v1/catalog/seller/products/review:resubmit", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/seller/products/review:resubmit", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_CATALOG_LIST_BUYER_PRODUCTS", Method: http.MethodGet, PathPattern: "/v1/catalog/buyer/products", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/buyer/products", AuthRequired: 0, InjectUserContext: 0},
 		{RouteCode: "BUILTIN_CATALOG_LIST_BUYER_PRODUCT_IMAGES", Method: http.MethodGet, PathPattern: "/v1/catalog/buyer/product-images", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/buyer/product-images", AuthRequired: 0, InjectUserContext: 0},
 		{RouteCode: "BUILTIN_CATALOG_SEARCH_BUYER_PRODUCTS", Method: http.MethodGet, PathPattern: "/v1/catalog/buyer/products/search", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/buyer/products/search", AuthRequired: 0, InjectUserContext: 0},
 		{RouteCode: "BUILTIN_CATALOG_GET_BUYER_PRODUCT", Method: http.MethodGet, PathPattern: "/v1/catalog/buyer/products/{spu_no}", UpstreamService: "catalog", UpstreamPathTemplate: "/v1/catalog/buyer/products/{spu_no}", AuthRequired: 0, InjectUserContext: 0},
 
 		{RouteCode: "BUILTIN_INVENTORY_ADJUST", Method: http.MethodPost, PathPattern: "/v1/inventory/seller/stock:adjust", UpstreamService: "inventory", UpstreamPathTemplate: "/v1/inventory/seller/stock:adjust", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_INVENTORY_GET_SKU", Method: http.MethodGet, PathPattern: "/v1/inventory/sku/{sku_no}", UpstreamService: "inventory", UpstreamPathTemplate: "/v1/inventory/sku/{sku_no}", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_INVENTORY_BATCH_GET_SKU", Method: http.MethodPost, PathPattern: "/v1/inventory/sku:batch-get", UpstreamService: "inventory", UpstreamPathTemplate: "/v1/inventory/sku:batch-get", AuthRequired: 1, InjectUserContext: 1},
 
 		{RouteCode: "BUILTIN_CART_ADD_ITEM", Method: http.MethodPost, PathPattern: "/v1/cart/items:add", UpstreamService: "cart", UpstreamPathTemplate: "/v1/cart/items:add", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_CART_UPDATE_QTY", Method: http.MethodPost, PathPattern: "/v1/cart/items:qty", UpstreamService: "cart", UpstreamPathTemplate: "/v1/cart/items:qty", AuthRequired: 1, InjectUserContext: 1},
@@ -392,16 +453,26 @@ func builtinProxyRoutes() []entity.EdgeProxyRoute {
 		{RouteCode: "BUILTIN_CHAT_BUYER_MARK_READ", Method: http.MethodPost, PathPattern: "/v1/chat/buyer/conversations:mark-read", UpstreamService: "chat", UpstreamPathTemplate: "/v1/chat/buyer/conversations:mark-read", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_CHAT_BUYER_UNREAD_SUMMARY", Method: http.MethodGet, PathPattern: "/v1/chat/buyer/unread-summary", UpstreamService: "chat", UpstreamPathTemplate: "/v1/chat/buyer/unread-summary", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_CHAT_SELLER_CONVERSATIONS", Method: http.MethodGet, PathPattern: "/v1/chat/seller/shops/{shop_no}/conversations", UpstreamService: "chat", UpstreamPathTemplate: "/v1/chat/seller/shops/{shop_no}/conversations", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_CHAT_SELLER_MESSAGES", Method: http.MethodGet, PathPattern: "/v1/chat/seller/shops/{shop_no}/conversations/{conversation_no}/messages", UpstreamService: "chat", UpstreamPathTemplate: "/v1/chat/seller/shops/{shop_no}/conversations/{conversation_no}/messages", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_CHAT_SELLER_SEND", Method: http.MethodPost, PathPattern: "/v1/chat/seller/messages:send", UpstreamService: "chat", UpstreamPathTemplate: "/v1/chat/seller/messages:send", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_CHAT_SELLER_MARK_READ", Method: http.MethodPost, PathPattern: "/v1/chat/seller/conversations:mark-read", UpstreamService: "chat", UpstreamPathTemplate: "/v1/chat/seller/conversations:mark-read", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_CHAT_INTERNAL_SYSTEM_NOTICE", Method: http.MethodPost, PathPattern: "/v1/chat/internal/system-notices:publish", UpstreamService: "chat", UpstreamPathTemplate: "/v1/chat/internal/system-notices:publish", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_CHAT_INTERNAL_SNAPSHOT", Method: http.MethodGet, PathPattern: "/v1/chat/internal/conversations/{conversation_no}/snapshot", UpstreamService: "chat", UpstreamPathTemplate: "/v1/chat/internal/conversations/{conversation_no}/snapshot", AuthRequired: 1, InjectUserContext: 1},
 
+		{RouteCode: "BUILTIN_AGENT_BUYER_CREATE_CONVERSATION", Method: http.MethodPost, PathPattern: "/v1/agent/buyer/conversations:get-or-create", UpstreamService: "agent", UpstreamPathTemplate: "/v1/agent/buyer/conversations:get-or-create", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_AGENT_BUYER_SEND", Method: http.MethodPost, PathPattern: "/v1/agent/buyer/messages:send", UpstreamService: "agent", UpstreamPathTemplate: "/v1/agent/buyer/messages:send", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_AGENT_BUYER_RUN_STATUS", Method: http.MethodGet, PathPattern: "/v1/agent/buyer/conversations/{conversation_no}/run-status", UpstreamService: "agent", UpstreamPathTemplate: "/v1/agent/buyer/conversations/{conversation_no}/run-status", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_AGENT_BUYER_MESSAGES", Method: http.MethodGet, PathPattern: "/v1/agent/buyer/conversations/{conversation_no}/messages", UpstreamService: "agent", UpstreamPathTemplate: "/v1/agent/buyer/conversations/{conversation_no}/messages", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_AGENT_BUYER_ESCALATE", Method: http.MethodPost, PathPattern: "/v1/agent/buyer/conversations/{conversation_no}:escalate", UpstreamService: "agent", UpstreamPathTemplate: "/v1/agent/buyer/conversations/{conversation_no}:escalate", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_AGENT_BUYER_FEEDBACK", Method: http.MethodPost, PathPattern: "/v1/agent/buyer/feedback:submit", UpstreamService: "agent", UpstreamPathTemplate: "/v1/agent/buyer/feedback:submit", AuthRequired: 1, InjectUserContext: 1},
+
 		{RouteCode: "BUILTIN_MEDIA_UPLOAD_INIT", Method: http.MethodPost, PathPattern: "/v1/media/upload/init", UpstreamService: "media", UpstreamPathTemplate: "/v1/media/upload/init", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_MEDIA_UPLOAD_COMPLETE", Method: http.MethodPost, PathPattern: "/v1/media/upload/complete", UpstreamService: "media", UpstreamPathTemplate: "/v1/media/upload/complete", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_MEDIA_ASSET_PROCESS_STATUS", Method: http.MethodGet, PathPattern: "/v1/media/assets/{assetId}/process-status", UpstreamService: "media", UpstreamPathTemplate: "/v1/media/assets/{assetId}/process-status", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_MEDIA_ASSET_READ_URL", Method: http.MethodGet, PathPattern: "/v1/media/assets/{assetId}/read-url", UpstreamService: "media", UpstreamPathTemplate: "/v1/media/assets/{assetId}/read-url", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_MEDIA_BIZ_ASSETS", Method: http.MethodGet, PathPattern: "/v1/media/biz-assets", UpstreamService: "media", UpstreamPathTemplate: "/v1/media/biz-assets", AuthRequired: 1, InjectUserContext: 1},
 		{RouteCode: "BUILTIN_MEDIA_BINDING_REPLACE", Method: http.MethodPost, PathPattern: "/v1/media/bindings/replace", UpstreamService: "media", UpstreamPathTemplate: "/v1/media/bindings/replace", AuthRequired: 1, InjectUserContext: 1},
+		{RouteCode: "BUILTIN_MEDIA_BINDING_BATCH_UNBIND", Method: http.MethodPost, PathPattern: "/v1/media/bindings/batch-unbind", UpstreamService: "media", UpstreamPathTemplate: "/v1/media/bindings/batch-unbind", AuthRequired: 1, InjectUserContext: 1},
 
 		{RouteCode: "BUILTIN_ADMIN_SELLER_APPLICATIONS", Method: http.MethodGet, PathPattern: "/v1/admin/seller/applications", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/admin/seller/applications", AuthRequired: 1, InjectUserContext: 1, RequiredPermissionKey: "merchant:review:view", Action: "merchant.review.list"},
 		{RouteCode: "BUILTIN_ADMIN_SELLER_APPLICATION_DETAIL", Method: http.MethodGet, PathPattern: "/v1/admin/seller/applications/{applicationNo}", UpstreamService: "seller_shop", UpstreamPathTemplate: "/v1/admin/seller/applications/{applicationNo}", AuthRequired: 1, InjectUserContext: 1, RequiredPermissionKey: "merchant:review:view", Action: "merchant.review.detail", ResourceIdPathKey: "applicationNo"},
@@ -514,6 +585,7 @@ func (s *sProxy) proxyToBuffer(
 	req *http.Request,
 ) *cachedProxyResponse {
 	if targetURL == nil || req == nil {
+
 		return &cachedProxyResponse{
 			StatusCode:  http.StatusBadGateway,
 			ContentType: "text/plain; charset=utf-8",
@@ -525,15 +597,19 @@ func (s *sProxy) proxyToBuffer(
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
 	defaultDirector := proxy.Director
 	proxy.Director = func(proxyReq *http.Request) {
+
 		defaultDirector(proxyReq)
 		proxyReq.URL.Path = upstreamPath
 		proxyReq.Host = targetURL.Host
 		proxyReq.Header.Set("X-Request-Id", requestID)
 	}
 	proxy.ErrorHandler = func(rw http.ResponseWriter, proxyReq *http.Request, proxyErr error) {
+
 		http.Error(rw, proxyErr.Error(), http.StatusBadGateway)
 	}
+
 	proxy.ServeHTTP(recorder, req)
+
 	return recorder.ToCachedResponse()
 }
 
@@ -699,21 +775,26 @@ func newBufferedProxyResponseRecorder() *bufferedProxyResponseRecorder {
 }
 
 func (r *bufferedProxyResponseRecorder) Header() http.Header {
+
 	return r.header
 }
 
 func (r *bufferedProxyResponseRecorder) WriteHeader(code int) {
+
 	r.statusCode = code
 }
 
 func (r *bufferedProxyResponseRecorder) Write(data []byte) (int, error) {
 	if r.statusCode <= 0 {
+
 		r.statusCode = http.StatusOK
 	}
+
 	return r.body.Write(data)
 }
 
 func (r *bufferedProxyResponseRecorder) ToCachedResponse() *cachedProxyResponse {
+
 	bodyBytes := append([]byte(nil), r.body.Bytes()...)
 	return &cachedProxyResponse{
 		StatusCode:  r.statusCode,
@@ -728,12 +809,14 @@ type statusRecorder struct {
 }
 
 func (r *statusRecorder) WriteHeader(code int) {
+
 	r.statusCode = code
 	r.ResponseWriter.WriteHeader(code)
 }
 
 func (r *statusRecorder) StatusCode() int {
 	if r.statusCode <= 0 {
+
 		return http.StatusOK
 	}
 	return r.statusCode

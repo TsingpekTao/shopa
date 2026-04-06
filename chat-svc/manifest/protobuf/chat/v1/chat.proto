@@ -75,6 +75,18 @@ message Conversation {
 
   google.protobuf.Timestamp created_at = 13;
   google.protobuf.Timestamp updated_at = 14;
+
+  // 展示信息（避免前端直接展示 shop_no / buyer_id）
+  string shop_name = 15;
+  string buyer_display_name = 16;
+  string buyer_avatar_url = 17;
+  string shop_avatar_url = 18;
+
+  // 双边已读游标（用于消息页展示读态）
+  string buyer_read_to_message_no = 19;
+  string seller_read_to_message_no = 20;
+  bool latest_message_read_by_peer = 21;
+  google.protobuf.Timestamp latest_message_peer_read_at = 22;
 }
 
 message ChatMessage {
@@ -92,6 +104,12 @@ message ChatMessage {
   string ext_json = 9;
 
   google.protobuf.Timestamp sent_at = 10;
+
+  // 展示信息 + 对端读态
+  string sender_display_name = 11;
+  string sender_avatar_url = 12;
+  bool peer_read = 13;
+  google.protobuf.Timestamp peer_read_at = 14;
 }
 
 message CreateOrGetConversationReq {

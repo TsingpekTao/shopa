@@ -2,51 +2,68 @@ CREATE DATABASE IF NOT EXISTS shopa_search_svc CHARACTER SET utf8mb4 COLLATE utf
 USE shopa_search_svc;
 
 CREATE TABLE IF NOT EXISTS search_spu_doc (
-  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   spu_no VARCHAR(64) NOT NULL,
   title VARCHAR(255) NOT NULL,
   shop_no VARCHAR(64) NOT NULL,
+  shop_name VARCHAR(128) NOT NULL DEFAULT '',
   category_no VARCHAR(64) NOT NULL DEFAULT '',
+  cover_asset_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  cover_url VARCHAR(512) NOT NULL DEFAULT '',
   min_price BIGINT UNSIGNED NOT NULL DEFAULT 0,
   max_price BIGINT UNSIGNED NOT NULL DEFAULT 0,
   stock_total BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  sales_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
   avg_score_x100 BIGINT UNSIGNED NOT NULL DEFAULT 0,
   review_total BIGINT UNSIGNED NOT NULL DEFAULT 0,
   shop_status_code VARCHAR(32) NOT NULL DEFAULT '',
   on_shelf_status_code VARCHAR(32) NOT NULL DEFAULT '',
-  attrs_json MEDIUMTEXT,
+  attrs_json JSON NULL,
+  source_version BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  source_updated_at DATETIME(3) NULL,
   deleted TINYINT UNSIGNED NOT NULL DEFAULT 0,
-  source_updated_at DATETIME NULL,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY uk_spu_no(spu_no),
-  KEY idx_shop_status(shop_status_code, on_shelf_status_code),
-  KEY idx_category_no(category_no),
-  FULLTEXT KEY ft_title_attrs(title, attrs_json)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  deleted_at DATETIME(3) NULL,
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_spu_no (spu_no),
+  KEY idx_shop_no (shop_no),
+  KEY idx_category_no (category_no),
+  KEY idx_shop_status (shop_status_code, on_shelf_status_code),
+  KEY idx_deleted_at (deleted, deleted_at),
+  FULLTEXT KEY ft_title (title)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS search_keyword_stat (
-  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   keyword VARCHAR(128) NOT NULL,
-  hit_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY uk_keyword(keyword)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  search_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  last_searched_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_keyword (keyword),
+  KEY idx_search_count (search_count)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS search_rebuild_job (
-  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   job_no VARCHAR(64) NOT NULL,
   reason_code VARCHAR(64) NOT NULL,
-  status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
-  started_at DATETIME NULL,
-  finished_at DATETIME NULL,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY uk_job_no(job_no)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  status VARCHAR(32) NOT NULL,
+  total_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  success_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  fail_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  started_at DATETIME(3) NULL,
+  finished_at DATETIME(3) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_job_no (job_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS search_outbox_event (
-  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   event_id VARCHAR(64) NOT NULL,
   aggregate_type VARCHAR(64) NOT NULL,
   aggregate_id VARCHAR(64) NOT NULL,
@@ -57,6 +74,7 @@ CREATE TABLE IF NOT EXISTS search_outbox_event (
   next_retry_at DATETIME NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY uk_event_id(event_id),
-  KEY idx_status_next_retry(status, next_retry_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_event_id (event_id),
+  KEY idx_status_next_retry (status, next_retry_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

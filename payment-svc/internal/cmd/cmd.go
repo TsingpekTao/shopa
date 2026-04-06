@@ -11,6 +11,7 @@ import (
 
 	"github.com/TsingpekTao/shopa/payment-svc/internal/controller/api"
 	"github.com/TsingpekTao/shopa/payment-svc/internal/controller/hello"
+	"github.com/TsingpekTao/shopa/payment-svc/internal/controller/payment"
 )
 
 var (
@@ -30,7 +31,10 @@ var (
 			s := g.Server()
 			s.Group("/", func(group *ghttp.RouterGroup) {
 				group.Middleware(ghttp.MiddlewareHandlerResponse)
-				group.Bind(hello.NewV1())
+				group.Bind(
+					hello.NewV1(),
+					payment.NewV1(),
+				)
 			})
 			s.Run()
 			return nil

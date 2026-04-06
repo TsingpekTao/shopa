@@ -1,7 +1,7 @@
 import { apiClient } from "@shopa/api-client";
 import { InventoryAdjustPayload, InventoryAdjustResponse, InventoryRecord, InventorySummary } from "./types";
 
-const shopNo = process.env.NEXT_PUBLIC_INVENTORY_SHOP_NO ?? "demo-shop";
+const shopNo = process.env.NEXT_PUBLIC_INVENTORY_SHOP_NO ?? "";
 const fallbackStocks: InventoryRecord[] = [
   {
     skuNo: "SKU-1001",
@@ -83,13 +83,14 @@ export async function fetchInventoryList(): Promise<InventoryRecord[]> {
 
 function buildAdjustRequest(payload: InventoryAdjustPayload) {
   return {
-    shop_no: shopNo,
+    shop_no: payload.shopNo ?? shopNo,
     items: [
       {
         sku_no: payload.skuNo,
+        spu_no: payload.spuNo ?? "",
         delta_total_qty: payload.delta,
         biz_no: payload.bizNo ?? "",
-        reason_code: payload.reasonCode ?? "SELLER_CORRECTION",
+        reason_code: payload.reasonCode ? `ADJUST_REASON_CODE_${payload.reasonCode}` : "ADJUST_REASON_CODE_SELLER_CORRECTION",
         remark: payload.remark ?? payload.reason ?? ""
       }
     ]
@@ -100,7 +101,10 @@ export async function adjustInventory(payload: InventoryAdjustPayload): Promise<
   const idempotencyKey = payload.idempotencyKey ?? `inventory-adjust:${payload.skuNo}:${Date.now()}`;
   try {
     const response = await apiClient.post<{ results: InventoryStockResponse[] }>("/v1/inventory/seller/stock:adjust", buildAdjustRequest(payload), {
-      headers: { "x-idempotency-key": idempotencyKey }
+      headers: {
+        "x-idempotency-key": idempotencyKey,
+        "x-shop-no": payload.shopNo ?? shopNo
+      }
     });
     const results = (response?.results ?? []).map(normalizeStock);
     return {
@@ -109,9 +113,10 @@ export async function adjustInventory(payload: InventoryAdjustPayload): Promise<
       results
     };
   } catch (error) {
+    const reason = error instanceof Error ? error.message : "Unable to reach inventory service";
     return {
       success: false,
-      failedItems: [{ skuNo: payload.skuNo, reason: "Unable to reach inventory service" }]
+      failedItems: [{ skuNo: payload.skuNo, reason }]
     };
   }
 }

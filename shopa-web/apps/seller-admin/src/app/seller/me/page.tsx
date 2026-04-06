@@ -7,7 +7,6 @@ import { Alert, Button, Card, Col, Input, Modal, Row, Space, Tag, Typography, no
 import { ExclamationCircleOutlined, LogoutOutlined, SafetyOutlined, StopOutlined } from "@ant-design/icons";
 import { useI18n } from "@shopa/ui";
 import { useAuth } from "@/features/iam/useAuth";
-import { useAuthStore } from "@/features/iam/store";
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -16,7 +15,6 @@ export default function MyAccountPage() {
   const { locale } = useI18n();
   const isZh = locale === "zh-CN";
   const { logout } = useAuth();
-  const tokenPair = useAuthStore((state) => state.tokenPair);
   const [deactivateOpen, setDeactivateOpen] = useState(false);
   const [confirmText, setConfirmText] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -83,16 +81,8 @@ export default function MyAccountPage() {
                 <Tag color="success">{isZh ? "已登录" : "Signed In"}</Tag>
               </div>
               <div>
-                <span>{isZh ? "Token SID" : "Token SID"}</span>
-                <Text code>{tokenPair?.sid || "-"}</Text>
-              </div>
-              <div>
-                <span>{isZh ? "Access 令牌" : "Access Token"}</span>
-                <Tag color={tokenPair?.accessToken ? "processing" : "default"}>{tokenPair?.accessToken ? "ACTIVE" : "N/A"}</Tag>
-              </div>
-              <div>
-                <span>{isZh ? "Refresh 令牌" : "Refresh Token"}</span>
-                <Tag color={tokenPair?.refreshToken ? "processing" : "default"}>{tokenPair?.refreshToken ? "ACTIVE" : "N/A"}</Tag>
+                <span>{isZh ? "登录平台" : "Platform"}</span>
+                <Text>{isZh ? "seller-admin 商家端" : "seller-admin dashboard"}</Text>
               </div>
             </div>
           </Card>

@@ -7,6 +7,11 @@ import {
   MerchantApplicationListResponse,
   MerchantEntityProfile,
   MerchantShopProfile,
+  ProductReviewDetail,
+  ProductInventorySnapshot,
+  ProductReviewDetailSku,
+  ProductReviewDetailSpu,
+  ProductReviewTask,
   ProductReviewTaskListResponse,
   QualificationDoc,
   RejectInfo,
@@ -206,6 +211,123 @@ function normalizeMerchantApplication(raw: unknown): MerchantApplication {
   };
 }
 
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((item) => toStringValue(item)).filter(Boolean) as string[];
+}
+
+function toMinorAmount(value: unknown): number {
+  return toNumberValue(value, 0) / 100;
+}
+
+function normalizeAttributeMap(value: unknown): Record<string, string> | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const pairs = value
+    .map((item) => {
+      if (!isRecord(item)) {
+        return undefined;
+      }
+      const key = toStringValue(item.attrName ?? item.attr_name ?? item.attrCode ?? item.attr_code);
+      const mappedValue = toStringValue(item.value);
+      if (!key || !mappedValue) {
+        return undefined;
+      }
+      return [key, mappedValue] as const;
+    })
+    .filter(Boolean) as [string, string][];
+  if (!pairs.length) {
+    return undefined;
+  }
+  return Object.fromEntries(pairs);
+}
+
+function normalizeProductReviewTask(raw: unknown): ProductReviewTask {
+  const record = isRecord(raw) ? raw : {};
+  return {
+    taskNo: toStringValue(record.taskNo ?? record.task_no),
+    spuNo: toStringValue(record.spuNo ?? record.spu_no) ?? "",
+    shopNo: toStringValue(record.shopNo ?? record.shop_no),
+    title: toStringValue(record.title),
+    spuStatus: toNumberValue(record.spuStatus ?? record.spu_status, 0),
+    submittedAt: toTimestampValue(record.submittedAt ?? record.submitted_at)
+  };
+}
+
+function normalizeReviewSpu(raw: unknown): ProductReviewDetailSpu | null {
+  if (!isRecord(raw)) {
+    return null;
+  }
+  return {
+    spuNo: toStringValue(raw.spuNo ?? raw.spu_no) ?? "",
+    shopNo: toStringValue(raw.shopNo ?? raw.shop_no),
+    title: toStringValue(raw.title),
+    subTitle: toStringValue(raw.subTitle ?? raw.sub_title),
+    categoryId: toNumberValue(raw.categoryId ?? raw.category_id, 0),
+    brandNo: toStringValue(raw.brandNo ?? raw.brand_no),
+    mainImageAssetIds: toStringArray(raw.mainImageAssetIds ?? raw.main_image_asset_ids),
+    detailImageAssetIds: toStringArray(raw.detailImageAssetIds ?? raw.detail_image_asset_ids),
+    attributeValues: normalizeAttributeMap(raw.spuAttrs ?? raw.spu_attrs),
+    spuStatus: toNumberValue(raw.spuStatus ?? raw.spu_status, 0),
+    spuStockStatus: toNumberValue(raw.spuStockStatus ?? raw.spu_stock_status, 0),
+    minSalePrice: toMinorAmount(raw.minSalePrice ?? raw.min_sale_price),
+    maxSalePrice: toMinorAmount(raw.maxSalePrice ?? raw.max_sale_price),
+    version: toNumberValue(raw.version, 0)
+  };
+}
+
+function normalizeReviewSku(raw: unknown): ProductReviewDetailSku | null {
+  if (!isRecord(raw)) {
+    return null;
+  }
+  return {
+    skuNo: toStringValue(raw.skuNo ?? raw.sku_no) ?? "",
+    spuNo: toStringValue(raw.spuNo ?? raw.spu_no),
+    skuName: toStringValue(raw.skuName ?? raw.sku_name),
+    skuImageAssetId: toStringValue(raw.skuImageAssetId ?? raw.sku_image_asset_id),
+    salePrice: toMinorAmount(raw.salePrice ?? raw.sale_price),
+    marketPrice: toMinorAmount(raw.marketPrice ?? raw.market_price),
+    saleAttrs: normalizeAttributeMap(raw.saleAttrs ?? raw.sale_attrs),
+    stockStatus: toNumberValue(raw.stockStatus ?? raw.stock_status, 0)
+  };
+}
+
+function normalizeInventorySnapshot(raw: unknown): ProductInventorySnapshot | null {
+  if (!isRecord(raw)) {
+    return null;
+  }
+  return {
+    skuNo: toStringValue(raw.skuNo ?? raw.sku_no) ?? "",
+    totalQty: toNumberValue(raw.totalQty ?? raw.total_qty, 0),
+    availableQty: toNumberValue(raw.availableQty ?? raw.available_qty, 0),
+    stockStatus: toNumberValue(raw.stockStatus ?? raw.stock_status, 0)
+  };
+}
+
+function normalizeProductReviewDetail(raw: unknown): ProductReviewDetail {
+  const record = isRecord(raw) ? raw : {};
+  const product = isRecord(record.product) ? record.product : {};
+  const review = isRecord(record.review) ? record.review : undefined;
+  return {
+    product: {
+      spu: normalizeReviewSpu(product.spu),
+      skus: Array.isArray(product.skus) ? product.skus.map((item) => normalizeReviewSku(item)).filter(Boolean) as ProductReviewDetailSku[] : []
+    },
+    review: review
+      ? {
+          reviewStatus: toNumberValue(review.reviewStatus ?? review.review_status, 0),
+          rejectReasonCode: toStringValue(review.rejectReasonCode ?? review.reject_reason_code),
+          rejectComment: toStringValue(review.rejectComment ?? review.reject_comment),
+          reviewerId: toStringValue(review.reviewerId ?? review.reviewer_id),
+          reviewedAt: toTimestampValue(review.reviewedAt ?? review.reviewed_at)
+        }
+      : undefined
+  };
+}
+
 export async function fetchDashboardOverview(): Promise<DashboardOverviewResponse> {
   return apiClient.get<DashboardOverviewResponse>("/v1/admin/dashboard/overview");
 }
@@ -218,23 +340,53 @@ export async function fetchMerchantApplications(params?: {
 }) {
   const page = params?.page ?? 1;
   const pageSize = params?.pageSize ?? 20;
-  const query = new URLSearchParams();
-  query.set("page", String(page));
-  query.set("pageSize", String(pageSize));
-  if (params?.keyword?.trim()) {
-    query.set("keyword", params.keyword.trim());
+  const keyword = params?.keyword?.trim();
+  const statuses = (params?.statuses ?? []).filter((status) => Number.isFinite(status) && status > 0);
+
+  const requestPage = async (singleStatus?: number) => {
+    const query = new URLSearchParams();
+    query.set("page", String(singleStatus && statuses.length > 1 ? 1 : page));
+    query.set("pageSize", String(singleStatus && statuses.length > 1 ? page * pageSize : pageSize));
+    if (keyword) {
+      query.set("keyword", keyword);
+    }
+    if (singleStatus) {
+      query.set("statuses", String(singleStatus));
+    }
+    const response = await apiClient.get<MerchantApplicationListResponse>(`/v1/admin/seller/applications?${query.toString()}`);
+    return {
+      applications: (response.applications ?? []).map((item) => normalizeMerchantApplication(item)).filter((item) => item.applicationNo),
+      page: Number(response.page ?? page),
+      pageSize: Number(response.pageSize ?? pageSize),
+      total: Number(response.total ?? 0)
+    };
+  };
+
+  if (statuses.length <= 1) {
+    return requestPage(statuses[0]);
   }
-  if (params?.statuses?.length) {
-    params.statuses.forEach((status) => {
-      query.append("statuses", String(status));
+
+  const responses = await Promise.all(statuses.map((status) => requestPage(status)));
+  const mergedMap = new Map<string, ReturnType<typeof normalizeMerchantApplication>>();
+  responses.forEach((response) => {
+    response.applications.forEach((item) => {
+      mergedMap.set(item.applicationNo, item);
     });
-  }
-  const response = await apiClient.get<MerchantApplicationListResponse>(`/v1/admin/seller/applications?${query.toString()}`);
+  });
+
+  const merged = Array.from(mergedMap.values()).sort((left, right) => {
+    const rightTime = new Date(right.updatedAt ?? right.submittedAt ?? right.createdAt ?? 0).getTime();
+    const leftTime = new Date(left.updatedAt ?? left.submittedAt ?? left.createdAt ?? 0).getTime();
+    return rightTime - leftTime;
+  });
+  const start = (page - 1) * pageSize;
+  const end = start + pageSize;
+
   return {
-    applications: (response.applications ?? []).map((item) => normalizeMerchantApplication(item)).filter((item) => item.applicationNo),
-    page: Number(response.page ?? page),
-    pageSize: Number(response.pageSize ?? pageSize),
-    total: Number(response.total ?? 0)
+    applications: merged.slice(start, end),
+    page,
+    pageSize,
+    total: responses.reduce((sum, item) => sum + item.total, 0)
   };
 }
 
@@ -285,14 +437,68 @@ export async function rejectMerchantApplication(payload: {
   });
 }
 
-export async function fetchProductReviewTasks(params?: { page?: number; pageSize?: number }) {
-  const page = params?.page ?? 1;
-  const pageSize = params?.pageSize ?? 20;
-  return apiClient.get<ProductReviewTaskListResponse>(`/v1/catalog/admin/review/tasks?page=${page}&pageSize=${pageSize}`);
+export async function freezeMerchantShop(payload: {
+  shopNo: string;
+  reasonCode: string;
+  remark?: string;
+}) {
+  return apiClient.post(`/v1/admin/seller/shops/${payload.shopNo}/freeze`, {
+    reasonCode: payload.reasonCode,
+    remark: payload.remark || ""
+  });
 }
 
-export async function fetchProductReviewDetail(spuNo: string) {
-  return apiClient.get<any>(`/v1/catalog/admin/review/${spuNo}`);
+export async function closeMerchantShop(payload: {
+  shopNo: string;
+  reasonCode: string;
+  remark?: string;
+}) {
+  return apiClient.post(`/v1/admin/seller/shops/${payload.shopNo}/close`, {
+    reasonCode: payload.reasonCode,
+    remark: payload.remark || ""
+  });
+}
+
+export async function fetchProductReviewTasks(params?: { page?: number; pageSize?: number; keyword?: string; statuses?: number[] }) {
+  const page = params?.page ?? 1;
+  const pageSize = params?.pageSize ?? 20;
+  const query = new URLSearchParams();
+  query.set("page", String(page));
+  query.set("page_size", String(pageSize));
+  if (params?.keyword?.trim()) {
+    query.set("keyword", params.keyword.trim());
+  }
+  if (params?.statuses?.length) {
+    params.statuses.forEach((status) => {
+      query.append("statuses", String(status));
+    });
+  }
+  const response = await apiClient.get<ProductReviewTaskListResponse>(`/v1/catalog/admin/review/tasks?${query.toString()}`);
+  const rawResponse = response as unknown as Record<string, unknown>;
+  return {
+    tasks: (response.tasks ?? []).map((item) => normalizeProductReviewTask(item)).filter((item) => item.spuNo),
+    page: toNumberValue(response.page, page),
+    pageSize: toNumberValue(response.pageSize ?? rawResponse.page_size, pageSize),
+    total: toNumberValue(response.total, 0)
+  };
+}
+
+export async function fetchProductReviewDetail(spuNo: string): Promise<ProductReviewDetail> {
+  const response = await apiClient.get<unknown>(`/v1/catalog/admin/review/${spuNo}`);
+  return normalizeProductReviewDetail(response);
+}
+
+export async function fetchInventorySnapshots(skuNos: string[]): Promise<ProductInventorySnapshot[]> {
+  const uniqueSkuNos = Array.from(new Set(skuNos.map((item) => item.trim()).filter(Boolean)));
+  if (!uniqueSkuNos.length) {
+    return [];
+  }
+  const response = await apiClient.post<{ stocks?: unknown[] }>("/v1/inventory/sku:batch-get", {
+    sku_nos: uniqueSkuNos
+  });
+  return (response.stocks ?? [])
+    .map((item) => normalizeInventorySnapshot(item))
+    .filter((item): item is ProductInventorySnapshot => Boolean(item?.skuNo));
 }
 
 export async function approveProduct(payload: { spuNo: string; expectedVersion: number; reviewComment?: string }) {

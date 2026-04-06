@@ -67,7 +67,7 @@ func looksLikeAutomation(ua string) bool {
 
 // bearerFromAuthHeader 从 Authorization 头提取 Bearer token。
 // 兼容两种输入：
-// 说明：1) "Bearer <token>"
+// 1) "Bearer <token>"
 // 2) 直接传入 token（无前缀）。
 func bearerFromAuthHeader(v string) string {
 	v = strings.TrimSpace(v)

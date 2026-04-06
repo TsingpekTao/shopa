@@ -8,6 +8,14 @@ type RawConversation = {
   buyerId?: number | string;
   shop_no?: string;
   shopNo?: string;
+  shop_name?: string;
+  shopName?: string;
+  buyer_display_name?: string;
+  buyerDisplayName?: string;
+  buyer_avatar_url?: string;
+  buyerAvatarUrl?: string;
+  shop_avatar_url?: string;
+  shopAvatarUrl?: string;
   anchor_spu_no?: string;
   anchorSpuNo?: string;
   anchor_sku_no?: string;
@@ -20,6 +28,14 @@ type RawConversation = {
   lastMessageAt?: string;
   conversation_status?: number | string;
   conversationStatus?: number | string;
+  buyer_read_to_message_no?: string;
+  buyerReadToMessageNo?: string;
+  seller_read_to_message_no?: string;
+  sellerReadToMessageNo?: string;
+  latest_message_read_by_peer?: boolean;
+  latestMessageReadByPeer?: boolean;
+  latest_message_peer_read_at?: string;
+  latestMessagePeerReadAt?: string;
 };
 
 type RawMessage = {
@@ -41,6 +57,14 @@ type RawMessage = {
   extJson?: string;
   sent_at?: string;
   sentAt?: string;
+  sender_display_name?: string;
+  senderDisplayName?: string;
+  sender_avatar_url?: string;
+  senderAvatarUrl?: string;
+  peer_read?: boolean;
+  peerRead?: boolean;
+  peer_read_at?: string;
+  peerReadAt?: string;
 };
 
 type RawCreateConversationRes = {
@@ -142,12 +166,20 @@ function normalizeConversation(raw?: RawConversation): ChatConversation {
     conversationNo: toString(raw?.conversation_no ?? raw?.conversationNo),
     buyerId: toNumber(raw?.buyer_id ?? raw?.buyerId),
     shopNo: toString(raw?.shop_no ?? raw?.shopNo),
+    shopName: toString(raw?.shop_name ?? raw?.shopName),
+    buyerDisplayName: toString(raw?.buyer_display_name ?? raw?.buyerDisplayName),
+    buyerAvatarUrl: toString(raw?.buyer_avatar_url ?? raw?.buyerAvatarUrl),
+    shopAvatarUrl: toString(raw?.shop_avatar_url ?? raw?.shopAvatarUrl),
     anchorSpuNo: toString(raw?.anchor_spu_no ?? raw?.anchorSpuNo),
     anchorSkuNo: toString(raw?.anchor_sku_no ?? raw?.anchorSkuNo),
     unreadCount: toNumber(raw?.unread_count ?? raw?.unreadCount),
     lastMessagePreview: toString(raw?.last_message_preview ?? raw?.lastMessagePreview),
     lastMessageAt: toString(raw?.last_message_at ?? raw?.lastMessageAt),
-    status: mapStatus(statusCode)
+    status: mapStatus(statusCode),
+    buyerReadToMessageNo: toString(raw?.buyer_read_to_message_no ?? raw?.buyerReadToMessageNo),
+    sellerReadToMessageNo: toString(raw?.seller_read_to_message_no ?? raw?.sellerReadToMessageNo),
+    latestMessageReadByPeer: Boolean(raw?.latest_message_read_by_peer ?? raw?.latestMessageReadByPeer),
+    latestMessagePeerReadAt: toString(raw?.latest_message_peer_read_at ?? raw?.latestMessagePeerReadAt)
   };
 }
 
@@ -161,7 +193,11 @@ function normalizeMessage(raw?: RawMessage): ChatMessage {
     contentText: toString(raw?.content_text ?? raw?.contentText),
     mediaAssetId: toNumber(raw?.media_asset_id ?? raw?.mediaAssetId),
     extJson: toString(raw?.ext_json ?? raw?.extJson),
-    sentAt: toString(raw?.sent_at ?? raw?.sentAt)
+    sentAt: toString(raw?.sent_at ?? raw?.sentAt),
+    senderDisplayName: toString(raw?.sender_display_name ?? raw?.senderDisplayName),
+    senderAvatarUrl: toString(raw?.sender_avatar_url ?? raw?.senderAvatarUrl),
+    peerRead: Boolean(raw?.peer_read ?? raw?.peerRead),
+    peerReadAt: toString(raw?.peer_read_at ?? raw?.peerReadAt)
   };
 }
 

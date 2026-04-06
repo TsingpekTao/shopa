@@ -16,7 +16,9 @@ const mockWorkbench: SellerWorkbenchResponse = {
 
 export async function fetchSellerWorkbench(): Promise<SellerWorkbenchResponse> {
   try {
-    return await apiClient.get<SellerWorkbenchResponse>("/v1/seller/workbench");
+    return await apiClient.get<SellerWorkbenchResponse>("/v1/seller/workbench", {
+      silentDegraded: true
+    });
   } catch (error) {
     console.warn("workbench fallback", error);
     return mockWorkbench;
@@ -25,7 +27,9 @@ export async function fetchSellerWorkbench(): Promise<SellerWorkbenchResponse> {
 
 export async function fetchShopDashboard(shopNo: string): Promise<ShopDashboardResponse> {
   try {
-    return await apiClient.get<ShopDashboardResponse>(`/v1/seller/shops/${shopNo}/dashboard`);
+    return await apiClient.get<ShopDashboardResponse>(`/v1/seller/shops/${shopNo}/dashboard`, {
+      silentDegraded: true
+    });
   } catch (error) {
     console.warn("shop dashboard fallback", error);
     return {

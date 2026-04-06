@@ -1,21 +1,20 @@
-﻿package inventory
+package inventory
 
 import (
 	"context"
 
-	v1 "github.com/TsingpekTao/shopa/inventory-svc/api/v1"
+	httpv1 "github.com/TsingpekTao/shopa/inventory-svc/api/inventory/v1"
 )
 
 // IInventoryV1 瀹氫箟搴撳瓨涓氬姟 API 鐨?HTTP 澶勭悊鍣ㄣ€?
 type IInventoryV1 interface {
-	BatchAdjustMySkuStock(ctx context.Context, req *v1.BatchAdjustMySkuStockReq) (res *v1.BatchAdjustMySkuStockRes, err error)
-	ReserveStock(ctx context.Context, req *v1.ReserveStockReq) (res *v1.ReserveStockRes, err error)
-	ConfirmReservation(ctx context.Context, req *v1.ConfirmReservationReq) (res *v1.ConfirmReservationRes, err error)
-	CancelReservation(ctx context.Context, req *v1.CancelReservationReq) (res *v1.CancelReservationRes, err error)
-	BatchAdjustStockByAdmin(ctx context.Context, req *v1.BatchAdjustStockByAdminReq) (res *v1.BatchAdjustStockByAdminRes, err error)
-	SetHotSku(ctx context.Context, req *v1.SetHotSkuReq) (res *v1.SetHotSkuRes, err error)
-	GetSkuInventory(ctx context.Context, req *v1.GetSkuInventoryReq) (res *v1.GetSkuInventoryRes, err error)
-	BatchGetSkuInventory(ctx context.Context, req *v1.BatchGetSkuInventoryReq) (res *v1.BatchGetSkuInventoryRes, err error)
-	UpsertSkuContext(ctx context.Context, req *v1.UpsertSkuContextReq) (res *v1.UpsertSkuContextRes, err error)
+	BatchAdjustMySkuStock(ctx context.Context, req *httpv1.BatchAdjustMySkuStockReq) (res *httpv1.BatchAdjustMySkuStockRes, err error)
+	ReserveStock(ctx context.Context, req *httpv1.ReserveStockReq) (res *httpv1.ReserveStockRes, err error)
+	ConfirmReservation(ctx context.Context, req *httpv1.ConfirmReservationReq) (res *httpv1.ConfirmReservationRes, err error)
+	CancelReservation(ctx context.Context, req *httpv1.CancelReservationReq) (res *httpv1.CancelReservationRes, err error)
+	BatchAdjustStockByAdmin(ctx context.Context, req *httpv1.BatchAdjustStockByAdminReq) (res *httpv1.BatchAdjustStockByAdminRes, err error)
+	SetHotSku(ctx context.Context, req *httpv1.SetHotSkuReq) (res *httpv1.SetHotSkuRes, err error)
+	GetSkuInventory(ctx context.Context, req *httpv1.GetSkuInventoryReq) (res *httpv1.GetSkuInventoryRes, err error)
+	BatchGetSkuInventory(ctx context.Context, req *httpv1.BatchGetSkuInventoryReq) (res *httpv1.BatchGetSkuInventoryRes, err error)
+	UpsertSkuContext(ctx context.Context, req *httpv1.UpsertSkuContextReq) (res *httpv1.UpsertSkuContextRes, err error)
 }
-

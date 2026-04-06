@@ -1,0 +1,567 @@
+syntax = "proto3";
+
+package shopa.agent.v1;
+
+option go_package = "github.com/TsingpekTao/shopa/agent-svc/api/v1;agentv1";
+
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/timestamp.proto";
+
+// Metadata convention:
+// - x-user-id: required for buyer RPCs
+// - x-operator-user-id: required for admin write RPCs
+// - x-idempotency-key: required for write RPCs
+// - x-request-id: recommended
+// - x-service-name: required for internal RPCs
+
+service BuyerAgentService {
+  rpc CreateOrGetAssistantConversation(CreateOrGetAssistantConversationReq) returns (CreateOrGetAssistantConversationRes);
+  rpc SendAssistantMessage(SendAssistantMessageReq) returns (SendAssistantMessageRes);
+  rpc GetAssistantRunStatus(GetAssistantRunStatusReq) returns (GetAssistantRunStatusRes);
+  rpc ListAssistantMessages(ListAssistantMessagesReq) returns (ListAssistantMessagesRes);
+  rpc EscalateToHuman(EscalateToHumanReq) returns (EscalateToHumanRes);
+  rpc SubmitAnswerFeedback(SubmitAnswerFeedbackReq) returns (SubmitAnswerFeedbackRes);
+}
+
+service KnowledgeAdminService {
+  rpc CreateKnowledgeDoc(CreateKnowledgeDocReq) returns (CreateKnowledgeDocRes);
+  rpc UpdateKnowledgeDoc(UpdateKnowledgeDocReq) returns (UpdateKnowledgeDocRes);
+  rpc GetKnowledgeDocDetail(GetKnowledgeDocDetailReq) returns (GetKnowledgeDocDetailRes);
+  rpc ListKnowledgeDocs(ListKnowledgeDocsReq) returns (ListKnowledgeDocsRes);
+
+  rpc SubmitKnowledgeDoc(SubmitKnowledgeDocReq) returns (SubmitKnowledgeDocRes);
+  rpc ApproveKnowledgeDoc(ApproveKnowledgeDocReq) returns (ApproveKnowledgeDocRes);
+  rpc RejectKnowledgeDoc(RejectKnowledgeDocReq) returns (RejectKnowledgeDocRes);
+
+  rpc PublishKnowledgeDoc(PublishKnowledgeDocReq) returns (PublishKnowledgeDocRes);
+  rpc OfflineKnowledgeDoc(OfflineKnowledgeDocReq) returns (OfflineKnowledgeDocRes);
+  rpc ReindexKnowledgeDoc(ReindexKnowledgeDocReq) returns (ReindexKnowledgeDocRes);
+
+  rpc SearchKnowledgeChunks(SearchKnowledgeChunksReq) returns (SearchKnowledgeChunksRes);
+}
+
+service AgentInternalService {
+  rpc ProcessUserTurn(ProcessUserTurnReq) returns (ProcessUserTurnRes);
+  rpc AbortRun(AbortRunReq) returns (AbortRunRes);
+  rpc RefreshSessionSummary(RefreshSessionSummaryReq) returns (RefreshSessionSummaryRes);
+  rpc GenerateHandoffSummary(GenerateHandoffSummaryReq) returns (GenerateHandoffSummaryRes);
+
+  rpc UpsertKnowledgeChunks(UpsertKnowledgeChunksReq) returns (UpsertKnowledgeChunksRes);
+  rpc MarkKnowledgeSourceDeleted(MarkKnowledgeSourceDeletedReq) returns (MarkKnowledgeSourceDeletedRes);
+}
+
+enum AgentRunStatusCode {
+  AGENT_RUN_STATUS_CODE_UNSPECIFIED = 0;
+  AGENT_RUN_STATUS_CODE_PENDING = 1;
+  AGENT_RUN_STATUS_CODE_PROCESSING = 2;
+  AGENT_RUN_STATUS_CODE_WAITING_TOOL_CALL = 3;
+  AGENT_RUN_STATUS_CODE_GENERATING = 4;
+  AGENT_RUN_STATUS_CODE_SUCCESS = 5;
+  AGENT_RUN_STATUS_CODE_FAILED = 6;
+  AGENT_RUN_STATUS_CODE_ABORTED = 7;
+  AGENT_RUN_STATUS_CODE_ESCALATED = 8;
+}
+
+enum ConversationStatusCode {
+  CONVERSATION_STATUS_CODE_UNSPECIFIED = 0;
+  CONVERSATION_STATUS_CODE_ACTIVE = 1;
+  CONVERSATION_STATUS_CODE_ESCALATION_PENDING = 2;
+  CONVERSATION_STATUS_CODE_ESCALATION_ACCEPTED = 3;
+  CONVERSATION_STATUS_CODE_HUMAN_HANDOVER = 4;
+  CONVERSATION_STATUS_CODE_HUMAN_CLOSED = 5;
+  CONVERSATION_STATUS_CODE_ARCHIVED = 6;
+}
+
+enum McpToolResultStatus {
+  MCP_TOOL_RESULT_STATUS_UNSPECIFIED = 0;
+  MCP_TOOL_RESULT_STATUS_SUCCESS = 1;
+  MCP_TOOL_RESULT_STATUS_DEGRADED = 2;
+  MCP_TOOL_RESULT_STATUS_ERROR = 3;
+}
+
+enum ToolScopeCode {
+  TOOL_SCOPE_CODE_UNSPECIFIED = 0;
+  TOOL_SCOPE_CODE_PUBLIC_READ = 1;
+  TOOL_SCOPE_CODE_USER_PRIVATE_READ = 2;
+  TOOL_SCOPE_CODE_SHOP_PRIVATE_READ = 3;
+  TOOL_SCOPE_CODE_HANDOFF = 4;
+}
+
+message McpToolCallContext {
+  string tool_name = 1;
+  ToolScopeCode tool_scope_code = 2;
+  string conversation_no = 3;
+  string run_no = 4;
+  uint64 user_id = 5;
+  string shop_no = 6;
+  string request_id = 7;
+  string bot_code = 8;
+}
+
+message McpToolResult {
+  McpToolResultStatus status = 1;
+  string message = 2;
+  string data_json = 3;
+  string degraded_reason_code = 4;
+  string adapter_code = 5;
+  string tool_name = 6;
+}
+
+message GraphCheckpoint {
+  string run_no = 1;
+  string current_node_code = 2;
+  AgentRunStatusCode checkpoint_status = 3;
+  string graph_state_json = 4;
+  google.protobuf.Timestamp tool_wait_timeout_at = 5;
+}
+
+message AssistantConversation {
+  string conversation_no = 1;
+  string bot_code = 2;
+  string scene_code = 3;
+
+  uint64 user_id = 4;
+  string shop_no = 5;
+  string order_no = 6;
+  string sub_order_no = 7;
+  string anchor_spu_no = 8;
+  string anchor_sku_no = 9;
+
+  ConversationStatusCode conversation_status_code = 10;
+  AgentRunStatusCode last_run_status_code = 11;
+
+  bool is_human_handover = 12;
+  uint64 pending_message_count = 13;
+
+  string session_summary = 14;
+  uint64 session_summary_version = 15;
+  string last_summarized_message_no = 16;
+
+  google.protobuf.Timestamp created_at = 17;
+  google.protobuf.Timestamp updated_at = 18;
+  google.protobuf.Timestamp last_queue_notice_at = 19;
+}
+
+message AssistantRun {
+  string run_no = 1;
+  string conversation_no = 2;
+  uint64 turn_no = 3;
+
+  string accepted_status_code = 4;
+  AgentRunStatusCode run_status_code = 5;
+  string risk_decision_code = 6;
+  bool prompt_injection_flag = 7;
+
+  bool reply_interrupted = 8;
+  string interrupt_reason_code = 9;
+
+  uint32 merged_message_count = 10;
+  uint32 tool_iteration_count = 11;
+  uint32 tool_call_count = 12;
+
+  uint32 prompt_token_estimate = 13;
+  uint32 completion_token_estimate = 14;
+
+  string error_code = 15;
+  string error_message = 16;
+
+  google.protobuf.Timestamp created_at = 17;
+  google.protobuf.Timestamp started_at = 18;
+  google.protobuf.Timestamp finished_at = 19;
+
+  string current_node_code = 20;
+  McpToolResultStatus tool_result_status = 21;
+  bool queue_blocked = 22;
+  string queue_hint_message = 23;
+  string degraded_reason_code = 24;
+}
+
+message AssistantMessage {
+  string message_no = 1;
+  string conversation_no = 2;
+  string run_no = 3;
+
+  string sender_type_code = 4;
+  string message_type_code = 5;
+
+  string client_message_no = 6;
+  string content_text = 7;
+  repeated uint64 asset_ids = 8;
+  string ext_json = 9;
+
+  bool interrupted = 10;
+  uint64 reply_to_turn_no = 11;
+
+  google.protobuf.Timestamp sent_at = 12;
+}
+
+message AnswerSource {
+  string source_type_code = 1;
+  string source_id = 2;
+  uint64 source_version = 3;
+  string title = 4;
+  string snippet = 5;
+}
+
+message HandoffTicket {
+  string ticket_no = 1;
+  string conversation_no = 2;
+  uint64 user_id = 3;
+  string shop_no = 4;
+  string escalation_reason_code = 5;
+  string status_code = 6;
+
+  string handoff_summary = 7;
+  string handoff_summary_status_code = 8;
+
+  uint64 operator_user_id = 9;
+  google.protobuf.Timestamp handoff_generated_at = 10;
+  google.protobuf.Timestamp created_at = 11;
+  google.protobuf.Timestamp updated_at = 12;
+  google.protobuf.Timestamp accepted_at = 13;
+  google.protobuf.Timestamp closed_at = 14;
+  string queue_appendix_json = 15;
+}
+
+message KnowledgeDoc {
+  string knowledge_doc_no = 1;
+  string title = 2;
+
+  string knowledge_scope_code = 3;
+  string source_type_code = 4;
+  string source_id = 5;
+  uint64 source_version = 6;
+
+  string shop_no = 7;
+  string content_type_code = 8;
+
+  string content_text = 9;
+  repeated uint64 asset_ids = 10;
+  repeated string tags = 11;
+
+  string status_code = 12;
+  string reject_reason_code = 13;
+  string reject_comment = 14;
+
+  uint64 version = 15;
+
+  google.protobuf.Timestamp published_at = 16;
+  google.protobuf.Timestamp created_at = 17;
+  google.protobuf.Timestamp updated_at = 18;
+}
+
+message KnowledgeChunk {
+  string chunk_no = 1;
+  string knowledge_doc_no = 2;
+
+  string source_type_code = 3;
+  string source_id = 4;
+  uint64 source_version = 5;
+
+  uint32 chunk_index = 6;
+  string chunk_text = 7;
+  string chunk_text_preview = 8;
+
+  bool is_deleted = 9;
+  string index_status_code = 10;
+
+  google.protobuf.Timestamp created_at = 11;
+  google.protobuf.Timestamp updated_at = 12;
+}
+
+message KnowledgeDocDraft {
+  string title = 1;
+  string knowledge_scope_code = 2;
+  string source_type_code = 3;
+  string source_id = 4;
+  string shop_no = 5;
+  string content_type_code = 6;
+  string content_text = 7;
+  repeated uint64 asset_ids = 8;
+  repeated string tags = 9;
+}
+
+message KnowledgeChunkUpsertItem {
+  uint32 chunk_index = 1;
+  string chunk_text = 2;
+  string chunk_text_preview = 3;
+  string vector_document_id = 4;
+  string metadata_json = 5;
+}
+
+message SearchKnowledgeChunkHit {
+  KnowledgeChunk chunk = 1;
+  double score = 2;
+}
+
+message CreateOrGetAssistantConversationReq {
+  string scene_code = 1;
+  string bot_code = 2;
+
+  string shop_no = 3;
+  string order_no = 4;
+  string sub_order_no = 5;
+  string anchor_spu_no = 6;
+  string anchor_sku_no = 7;
+
+  bool force_new = 8;
+}
+
+message CreateOrGetAssistantConversationRes {
+  AssistantConversation conversation = 1;
+  AssistantRun latest_run = 2;
+}
+
+message SendAssistantMessageReq {
+  string conversation_no = 1;
+  string client_message_no = 2;
+
+  string message_type_code = 3;
+  string content_text = 4;
+  repeated uint64 asset_ids = 5;
+  string ext_json = 6;
+}
+
+message SendAssistantMessageRes {
+  AssistantConversation conversation = 1;
+  AssistantRun run = 2;
+  AssistantMessage user_message = 3;
+  bool idempotent_replay = 4;
+}
+
+message GetAssistantRunStatusReq {
+  string conversation_no = 1;
+  string run_no = 2;
+}
+
+message GetAssistantRunStatusRes {
+  AssistantConversation conversation = 1;
+  AssistantRun run = 2;
+  AssistantMessage latest_assistant_message = 3;
+  repeated AnswerSource answer_sources = 4;
+  uint64 pending_message_count = 5;
+  string current_node_code = 6;
+  bool queue_blocked = 7;
+  string queue_hint_message = 8;
+  bool degraded_reply = 9;
+  string degraded_reason_code = 10;
+  GraphCheckpoint checkpoint = 11;
+}
+
+message ListAssistantMessagesReq {
+  string conversation_no = 1;
+  int32 page_size = 2;
+  string next_cursor = 3;
+}
+
+message ListAssistantMessagesRes {
+  repeated AssistantMessage list = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+}
+
+message EscalateToHumanReq {
+  string conversation_no = 1;
+  string escalation_reason_code = 2;
+  string remark = 3;
+}
+
+message EscalateToHumanRes {
+  HandoffTicket ticket = 1;
+  AssistantConversation conversation = 2;
+}
+
+message SubmitAnswerFeedbackReq {
+  string conversation_no = 1;
+  string run_no = 2;
+  string feedback_code = 3;
+  bool resolved = 4;
+  string comment = 5;
+}
+
+message SubmitAnswerFeedbackRes {
+  string conversation_no = 1;
+  string run_no = 2;
+  google.protobuf.Timestamp submitted_at = 3;
+}
+
+message CreateKnowledgeDocReq {
+  KnowledgeDocDraft doc = 1;
+}
+
+message CreateKnowledgeDocRes {
+  KnowledgeDoc doc = 1;
+}
+
+message UpdateKnowledgeDocReq {
+  string knowledge_doc_no = 1;
+  KnowledgeDocDraft doc = 2;
+  google.protobuf.FieldMask update_mask = 3;
+  uint64 expected_version = 4;
+}
+
+message UpdateKnowledgeDocRes {
+  KnowledgeDoc doc = 1;
+}
+
+message GetKnowledgeDocDetailReq {
+  string knowledge_doc_no = 1;
+}
+
+message GetKnowledgeDocDetailRes {
+  KnowledgeDoc doc = 1;
+}
+
+message ListKnowledgeDocsReq {
+  string knowledge_scope_code = 1;
+  string source_type_code = 2;
+  string shop_no = 3;
+  string status_code = 4;
+  string keyword = 5;
+
+  int32 page = 6;
+  int32 page_size = 7;
+}
+
+message ListKnowledgeDocsRes {
+  repeated KnowledgeDoc list = 1;
+  uint64 total = 2;
+  bool has_more = 3;
+  int32 total_pages = 4;
+}
+
+message SubmitKnowledgeDocReq {
+  string knowledge_doc_no = 1;
+  uint64 expected_version = 2;
+}
+
+message SubmitKnowledgeDocRes {
+  KnowledgeDoc doc = 1;
+}
+
+message ApproveKnowledgeDocReq {
+  string knowledge_doc_no = 1;
+  uint64 expected_version = 2;
+  string remark = 3;
+}
+
+message ApproveKnowledgeDocRes {
+  KnowledgeDoc doc = 1;
+}
+
+message RejectKnowledgeDocReq {
+  string knowledge_doc_no = 1;
+  uint64 expected_version = 2;
+  string reject_reason_code = 3;
+  string reject_comment = 4;
+}
+
+message RejectKnowledgeDocRes {
+  KnowledgeDoc doc = 1;
+}
+
+message PublishKnowledgeDocReq {
+  string knowledge_doc_no = 1;
+  uint64 expected_version = 2;
+}
+
+message PublishKnowledgeDocRes {
+  KnowledgeDoc doc = 1;
+}
+
+message OfflineKnowledgeDocReq {
+  string knowledge_doc_no = 1;
+  uint64 expected_version = 2;
+  string reason_code = 3;
+}
+
+message OfflineKnowledgeDocRes {
+  KnowledgeDoc doc = 1;
+}
+
+message ReindexKnowledgeDocReq {
+  string knowledge_doc_no = 1;
+  uint64 expected_version = 2;
+  string reason_code = 3;
+}
+
+message ReindexKnowledgeDocRes {
+  string knowledge_doc_no = 1;
+  string status_code = 2;
+}
+
+message SearchKnowledgeChunksReq {
+  string query = 1;
+  string knowledge_scope_code = 2;
+  string source_type_code = 3;
+  string source_id = 4;
+  string shop_no = 5;
+  int32 limit = 6;
+}
+
+message SearchKnowledgeChunksRes {
+  repeated SearchKnowledgeChunkHit list = 1;
+}
+
+message ProcessUserTurnReq {
+  string conversation_no = 1;
+  string run_no = 2;
+  bool streaming = 3;
+}
+
+message ProcessUserTurnRes {
+  AssistantRun run = 1;
+}
+
+message AbortRunReq {
+  string conversation_no = 1;
+  string run_no = 2;
+  string reason_code = 3;
+}
+
+message AbortRunRes {
+  bool aborted = 1;
+  AssistantRun run = 2;
+}
+
+message RefreshSessionSummaryReq {
+  string conversation_no = 1;
+}
+
+message RefreshSessionSummaryRes {
+  AssistantConversation conversation = 1;
+  bool summary_updated = 2;
+}
+
+message GenerateHandoffSummaryReq {
+  string conversation_no = 1;
+  string run_no = 2;
+  string escalation_reason_code = 3;
+}
+
+message GenerateHandoffSummaryRes {
+  HandoffTicket ticket = 1;
+}
+
+message UpsertKnowledgeChunksReq {
+  string knowledge_doc_no = 1;
+  string source_type_code = 2;
+  string source_id = 3;
+  uint64 source_version = 4;
+  repeated KnowledgeChunkUpsertItem items = 5;
+}
+
+message UpsertKnowledgeChunksRes {
+  uint64 upserted_count = 1;
+}
+
+message MarkKnowledgeSourceDeletedReq {
+  string source_type_code = 1;
+  string source_id = 2;
+  uint64 source_version = 3;
+  string reason_code = 4;
+}
+
+message MarkKnowledgeSourceDeletedRes {
+  uint64 affected_rows = 1;
+}

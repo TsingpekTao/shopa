@@ -75,6 +75,12 @@ export interface SubmitApplicationPayload {
   expectedVersion: number;
 }
 
+export interface ResubmitApplicationPayload extends SubmitApplicationPayload {
+  entity?: SellerEntityProfileInput;
+  shop?: SellerShopProfileInput;
+  updateMask?: string[];
+}
+
 export interface SellerApplicationListItem {
   applicationNo: string;
   version: number;
@@ -94,4 +100,46 @@ export interface ListMyApplicationsResponse {
   page: number;
   pageSize: number;
   total: number;
+}
+
+export interface SellerStoreCategory {
+  id: number;
+  shopNo: string;
+  parentId: number;
+  name: string;
+  level: number;
+  sortOrder: number;
+  isVisible: boolean;
+  isDeleted?: boolean;
+  productCount: number;
+  children: SellerStoreCategory[];
+}
+
+export interface SellerStoreCategorySortItem {
+  categoryId: number;
+  sortOrder: number;
+}
+
+export interface CreateSellerStoreCategoryPayload {
+  parentId?: number;
+  name: string;
+  sortOrder?: number;
+  isVisible?: boolean;
+}
+
+export interface UpdateSellerStoreCategoryPayload {
+  name?: string;
+  sortOrder?: number;
+  isVisible?: boolean;
+}
+
+export interface SellerProductStoreCategoryBinding {
+  shopNo: string;
+  spuNo: string;
+  storeCategoryId: number;
+  storeCategoryL1: number;
+  storeCategoryL2: number;
+  storeCategoryPath: number[];
+  storeCategoryName: string;
+  updatedAt?: string;
 }

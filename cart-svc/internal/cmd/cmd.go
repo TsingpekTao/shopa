@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/gogf/gf/contrib/rpc/grpcx/v2"
 	"github.com/gogf/gf/v2/frame/g"
@@ -34,6 +35,12 @@ var (
 
 			s := g.Server()
 			s.Group("/", func(group *ghttp.RouterGroup) {
+				group.Middleware(func(r *ghttp.Request) {
+					if r.Method != http.MethodGet && r.ContentLength != 0 {
+						r.MakeBodyRepeatableRead(true)
+					}
+					r.Middleware.Next()
+				})
 				group.Middleware(ghttp.MiddlewareHandlerResponse)
 				group.Bind(
 					hello.NewV1(),

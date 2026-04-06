@@ -45,16 +45,22 @@ export interface CatalogProduct {
 export interface CatalogDraft {
   title: string;
   summary: string;
+  categoryId: number;
+  brandNo: string;
   mainImageAssetId?: string;
+  detailImageAssetIds: string[];
+  submitNote?: string;
   attributeValues: Record<string, string>;
 }
 
 export interface CatalogSkuDraft {
   skuNo?: string;
   name: string;
+  skuImageAssetId?: string;
   salePrice: number;
   marketPrice: number;
   saleSpecs: Record<string, string>;
+  initialStock?: number;
 }
 
 export interface CatalogDraftPayload {
@@ -66,4 +72,48 @@ export interface CatalogSpuAttr {
   attrCode: string;
   attrName: string;
   value: string;
+}
+
+export interface CatalogAggregateSku {
+  skuNo: string;
+  skuName: string;
+  skuImageAssetId?: string;
+  salePrice: number;
+  marketPrice: number;
+  saleAttrs: Record<string, string>;
+  sortOrder: number;
+}
+
+export interface CatalogAggregateSpu {
+  spuNo: string;
+  shopNo: string;
+  title: string;
+  summary: string;
+  categoryId: number;
+  brandNo: string;
+  status: SpuStatus;
+  mainImageAssetIds: string[];
+  detailImageAssetIds: string[];
+  attributeValues: Record<string, string>;
+  version: number;
+}
+
+export interface CatalogProductAggregate {
+  spu: CatalogAggregateSpu;
+  skus: CatalogAggregateSku[];
+}
+
+export interface CatalogReviewInfo {
+  reviewStatus?: string;
+  rejectReasonCode?: string;
+  rejectComment?: string;
+}
+
+export interface SaveDraftResult {
+  product: CatalogProductAggregate;
+}
+
+export interface ProductDetailResult {
+  product: CatalogProductAggregate;
+  review?: CatalogReviewInfo;
 }

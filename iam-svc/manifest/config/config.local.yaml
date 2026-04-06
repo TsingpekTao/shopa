@@ -21,7 +21,7 @@ app:
 iam:
   jwt:
     secret: "shopa-iam-local-secret"
-    accessExpireSeconds: 900
+    accessExpireSeconds: 604800
     refreshExpireSeconds: 2592000
   register:
     defaultUsernamePrefix: "用户_"
@@ -34,7 +34,7 @@ iam:
 # Keep legacy keys for backward compatibility.
 jwt:
   secret: "shopa-iam-local-secret"
-  accessExpireSeconds: 900
+  accessExpireSeconds: 604800
   refreshExpireSeconds: 2592000
 security:
   loginFailMax: 5

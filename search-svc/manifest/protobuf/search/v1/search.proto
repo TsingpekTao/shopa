@@ -74,6 +74,10 @@ message SearchProductsReq {
   int32 page_size = 5;
   // 下一页游标
   string next_cursor = 6;
+  // 店内分类 ID
+  uint64 store_category_id = 7;
+  // 店内分类层级，1=一级，2=二级
+  int32 store_category_level = 8;
 }
 
 // SearchProductsRes 搜索响应
@@ -152,6 +156,14 @@ message UpsertSpuDocReq {
   string cover_url = 16;
   // 销量
   uint64 sales_count = 17;
+  // 叶子店内分类 ID
+  uint64 store_category_id = 18;
+  // 一级店内分类 ID
+  uint64 store_category_l1 = 19;
+  // 二级店内分类 ID
+  uint64 store_category_l2 = 20;
+  // 店内分类路径
+  repeated uint64 store_category_path = 21;
 }
 
 // UpsertSpuDocRes 写入/更新响应

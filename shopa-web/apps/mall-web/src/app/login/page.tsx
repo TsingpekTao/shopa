@@ -107,8 +107,8 @@ export default function LoginPage() {
           message={isZh ? "提示" : "Tip"}
           description={
             isZh
-              ? "卖家后台已独立，请访问 http://127.0.0.1:3100/ 进行商家操作。"
-              : "Seller backend is separated now. Open http://127.0.0.1:3100/ for seller operations."
+              ? "卖家后台已独立，请访问 http://localhost:3100/ 进行商家操作。"
+              : "Seller backend is separated now. Open http://localhost:3100/ for seller operations."
           }
         />
 

@@ -8,7 +8,8 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-// sAuth 是 GoFrame service 层适配器，仅负责协议层转发逻辑，所有状态与业务判定均由 core Service 承担。
+// sAuth 是 GoFrame service 层适配器，仅负责协议层转发逻辑。
+// 具体状态管理和业务判定都由 core Service 承担。
 type sAuth struct {
 	core *Service
 }
@@ -23,7 +24,7 @@ func init() {
 	service.RegisterAuth(newAuthLogic())
 }
 
-// StartBackgroundWorkers 启动 IAM outbox 相关的后台 worker（分发/归档/清理/指标）。
+// StartBackgroundWorkers 启动 IAM outbox 相关的后台 worker。
 func (s *sAuth) StartBackgroundWorkers(ctx context.Context) {
 	s.core.StartBackgroundWorkers(ctx)
 }
@@ -33,7 +34,7 @@ func (s *sAuth) SendSmsCode(ctx context.Context, req *v1.SendSmsCodeReq) (*v1.Se
 	return s.core.SendSmsCode(ctx, req)
 }
 
-// RegisterByPassword 使用手机号 + 短信码 + 密码完成注册。
+// RegisterByPassword 使用手机号、短信码和密码完成注册。
 func (s *sAuth) RegisterByPassword(ctx context.Context, req *v1.RegisterByPasswordReq) (*v1.RegisterByPasswordRes, error) {
 	return s.core.RegisterByPassword(ctx, req)
 }
@@ -68,7 +69,7 @@ func (s *sAuth) GetMySession(ctx context.Context, req *emptypb.Empty) (*v1.GetMy
 	return s.core.GetMySession(ctx, req)
 }
 
-// ChangePassword 登录态改密。
+// ChangePassword 在登录态下修改密码。
 func (s *sAuth) ChangePassword(ctx context.Context, req *v1.ChangePasswordReq) (*v1.ChangePasswordRes, error) {
 	return s.core.ChangePassword(ctx, req)
 }
@@ -106,4 +107,19 @@ func (s *sAuth) BatchGetAuthUsers(ctx context.Context, req *v1.BatchGetAuthUsers
 // VerifyAccessToken 供内部服务验证 access token 并返回鉴权上下文。
 func (s *sAuth) VerifyAccessToken(ctx context.Context, req *v1.VerifyAccessTokenReq) (*v1.VerifyAccessTokenRes, error) {
 	return s.core.VerifyAccessToken(ctx, req)
+}
+
+// HasShopRole 判断用户是否拥有指定店铺作用域下的卖家角色。
+func (s *sAuth) HasShopRole(ctx context.Context, req *v1.HasShopRoleReq) (*v1.HasShopRoleRes, error) {
+	return s.core.HasShopRole(ctx, req)
+}
+
+// AssignShopSellerRole 为用户授予指定店铺的卖家角色。
+func (s *sAuth) AssignShopSellerRole(ctx context.Context, req *v1.AssignShopSellerRoleReq) (*v1.AssignShopSellerRoleRes, error) {
+	return s.core.AssignShopSellerRole(ctx, req)
+}
+
+// RevokeShopSellerRoleAndBumpToken 回收卖家角色并提升 token_version。
+func (s *sAuth) RevokeShopSellerRoleAndBumpToken(ctx context.Context, req *v1.RevokeShopSellerRoleAndBumpTokenReq) (*v1.RevokeShopSellerRoleAndBumpTokenRes, error) {
+	return s.core.RevokeShopSellerRoleAndBumpToken(ctx, req)
 }

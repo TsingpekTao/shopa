@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, Button, Card, Form, Input, Typography, notification } from "antd";
 import { LockOutlined, UserOutlined } from "@ant-design/icons";
 import { useAuth } from "@/features/iam/useAuth";
@@ -101,10 +101,25 @@ function formatWaitHint(seconds: number, isZh: boolean): string {
 }
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, bootstrap } = useAuth();
   const { locale } = useI18n();
   const isZh = locale === "zh-CN";
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const ok = await bootstrap();
+      if (!active || !ok) {
+        return;
+      }
+      const target = await resolveSellerLanding();
+      window.location.href = target;
+    })();
+    return () => {
+      active = false;
+    };
+  }, [bootstrap]);
 
   const handlePasswordLogin = async (values: { identifier: string; password: string }) => {
     setLoading(true);

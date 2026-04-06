@@ -233,6 +233,11 @@ func (s *sCatalog) UpsertSkuDrafts(ctx context.Context, req *v1.UpsertSkuDraftsR
 	// 先 bump SPU 版本作为并发写入闸门，避免多端并发改 SKU 互相覆盖。
 	// 这是 SKU 维度写入共享的乐观锁入口，确保同一版本只会被消费一次。
 	err := dao.CatalogSpu.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		spu, err := s.getSpuEntityTx(ctx, tx, req.GetSpuNo())
+		if err != nil {
+			return err
+		}
+
 		result, err := tx.Model(dao.CatalogSpu.Table()).
 			Where(dao.CatalogSpu.Columns().SpuNo, req.GetSpuNo()).
 			Where(dao.CatalogSpu.Columns().Version, req.GetExpectedVersion()).
@@ -307,6 +312,7 @@ func (s *sCatalog) UpsertSkuDrafts(ctx context.Context, req *v1.UpsertSkuDraftsR
 					Data(do.CatalogSku{
 						SkuNo:           skuNo,
 						SpuNo:           req.GetSpuNo(),
+						ShopNo:          spu.ShopNo,
 						SkuName:         item.GetSkuName(),
 						SkuImageAssetId: item.GetSkuImageAssetId(),
 						SkuStatus:       uint(item.GetSkuStatus()),
@@ -411,26 +417,35 @@ func (s *sCatalog) SetProductOnShelf(ctx context.Context, req *v1.SetProductOnSh
 	}
 
 	// 乐观锁条件：版本命中且状态为 APPROVED/OFF_SHELF 才允许切换上架状态。
-	result, err := dao.CatalogSpu.Ctx(ctx).
-		Where(dao.CatalogSpu.Columns().SpuNo, req.GetSpuNo()).
-		Where(dao.CatalogSpu.Columns().Version, req.GetExpectedVersion()).
-		WhereNull(dao.CatalogSpu.Columns().DeletedAt).
-		WhereIn(dao.CatalogSpu.Columns().SpuStatus, []uint{
-			uint(v1.SpuStatus_SPU_STATUS_APPROVED),
-			uint(v1.SpuStatus_SPU_STATUS_OFF_SHELF),
-		}).
-		Data(do.CatalogSpu{
-			SpuStatus:   uint(nextStatus),
-			PublishTime: publishTime,
-			Version:     uint(req.GetExpectedVersion()) + 1,
-		}).
-		Update()
+	err := dao.CatalogSpu.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		result, err := tx.Model(dao.CatalogSpu.Table()).
+			Where(dao.CatalogSpu.Columns().SpuNo, req.GetSpuNo()).
+			Where(dao.CatalogSpu.Columns().Version, req.GetExpectedVersion()).
+			WhereNull(dao.CatalogSpu.Columns().DeletedAt).
+			WhereIn(dao.CatalogSpu.Columns().SpuStatus, []uint{
+				uint(v1.SpuStatus_SPU_STATUS_APPROVED),
+				uint(v1.SpuStatus_SPU_STATUS_OFF_SHELF),
+			}).
+			Data(do.CatalogSpu{
+				SpuStatus:   uint(nextStatus),
+				PublishTime: publishTime,
+				Version:     uint(req.GetExpectedVersion()) + 1,
+			}).
+			Update()
+		if err != nil {
+			return gerror.Wrap(err, "set product on shelf failed")
+		}
+		affected, _ := result.RowsAffected()
+		if affected == 0 {
+			return gerror.NewCode(gcode.CodeInvalidParameter, "spu version conflict or status not allowed")
+		}
+		if nextStatus == v1.SpuStatus_SPU_STATUS_ON_SHELF {
+			return s.syncSkuStatusBySpuTx(ctx, tx, req.GetSpuNo(), uint(v1.SkuStatus_SKU_STATUS_ENABLED))
+		}
+		return nil
+	})
 	if err != nil {
-		return nil, gerror.Wrap(err, "set product on shelf failed")
-	}
-	affected, _ := result.RowsAffected()
-	if affected == 0 {
-		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "spu version conflict or status not allowed")
+		return nil, err
 	}
 	// 返回 nextStatus，调用方可据此区分“立即上架”与“定时待生效”。
 	return &v1.SetProductOnShelfRes{SpuNo: req.GetSpuNo(), SpuStatus: nextStatus}, nil
@@ -442,21 +457,27 @@ func (s *sCatalog) SetProductOffShelf(ctx context.Context, req *v1.SetProductOff
 	if strings.TrimSpace(req.GetSpuNo()) == "" || req.GetExpectedVersion() == 0 {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "spu_no and expected_version are required")
 	}
-	result, err := dao.CatalogSpu.Ctx(ctx).
-		Where(dao.CatalogSpu.Columns().SpuNo, req.GetSpuNo()).
-		Where(dao.CatalogSpu.Columns().Version, req.GetExpectedVersion()).
-		WhereNull(dao.CatalogSpu.Columns().DeletedAt).
-		Data(do.CatalogSpu{
-			SpuStatus: uint(v1.SpuStatus_SPU_STATUS_OFF_SHELF),
-			Version:   uint(req.GetExpectedVersion()) + 1,
-		}).
-		Update()
+	err := dao.CatalogSpu.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		result, err := tx.Model(dao.CatalogSpu.Table()).
+			Where(dao.CatalogSpu.Columns().SpuNo, req.GetSpuNo()).
+			Where(dao.CatalogSpu.Columns().Version, req.GetExpectedVersion()).
+			WhereNull(dao.CatalogSpu.Columns().DeletedAt).
+			Data(do.CatalogSpu{
+				SpuStatus: uint(v1.SpuStatus_SPU_STATUS_OFF_SHELF),
+				Version:   uint(req.GetExpectedVersion()) + 1,
+			}).
+			Update()
+		if err != nil {
+			return gerror.Wrap(err, "set product off shelf failed")
+		}
+		affected, _ := result.RowsAffected()
+		if affected == 0 {
+			return gerror.NewCode(gcode.CodeInvalidParameter, "spu version conflict")
+		}
+		return s.syncSkuStatusBySpuTx(ctx, tx, req.GetSpuNo(), uint(v1.SkuStatus_SKU_STATUS_DISABLED))
+	})
 	if err != nil {
-		return nil, gerror.Wrap(err, "set product off shelf failed")
-	}
-	affected, _ := result.RowsAffected()
-	if affected == 0 {
-		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "spu version conflict")
+		return nil, err
 	}
 	return &v1.SetProductOffShelfRes{
 		SpuNo:     req.GetSpuNo(),
@@ -653,8 +674,9 @@ func (s *sCatalog) ApproveProduct(ctx context.Context, req *v1.ApproveProductReq
 			Where(dao.CatalogSpu.Columns().Version, req.GetExpectedVersion()).
 			Where(dao.CatalogSpu.Columns().SpuStatus, uint(v1.SpuStatus_SPU_STATUS_REVIEWING)).
 			Data(do.CatalogSpu{
-				SpuStatus:     uint(v1.SpuStatus_SPU_STATUS_APPROVED),
+				SpuStatus:     uint(v1.SpuStatus_SPU_STATUS_ON_SHELF),
 				ReviewStatus:  uint(v1.ReviewStatus_REVIEW_STATUS_APPROVED),
+				PublishTime:   now,
 				ReviewedAt:    now,
 				ReviewComment: req.GetReviewComment(),
 				Version:       uint(req.GetExpectedVersion()) + 1,
@@ -667,14 +689,17 @@ func (s *sCatalog) ApproveProduct(ctx context.Context, req *v1.ApproveProductReq
 			return gerror.NewCode(gcode.CodeInvalidParameter, "spu version conflict or status not reviewing")
 		}
 		// 收口最新 pending 审核任务，保证商品状态与任务状态一致。
-		return s.finishLatestReviewTaskTx(ctx, tx, req.GetSpuNo(), uint(v1.ReviewStatus_REVIEW_STATUS_APPROVED), "", "", req.GetReviewComment())
+		if err = s.finishLatestReviewTaskTx(ctx, tx, req.GetSpuNo(), uint(v1.ReviewStatus_REVIEW_STATUS_APPROVED), "", "", req.GetReviewComment()); err != nil {
+			return err
+		}
+		return s.syncSkuStatusBySpuTx(ctx, tx, req.GetSpuNo(), uint(v1.SkuStatus_SKU_STATUS_ENABLED))
 	})
 	if err != nil {
 		return nil, err
 	}
 	return &v1.ApproveProductRes{
 		SpuNo:     req.GetSpuNo(),
-		SpuStatus: v1.SpuStatus_SPU_STATUS_APPROVED,
+		SpuStatus: v1.SpuStatus_SPU_STATUS_ON_SHELF,
 	}, nil
 }
 
@@ -750,21 +775,27 @@ func (s *sCatalog) UnfreezeProduct(ctx context.Context, req *v1.UnfreezeProductR
 	if strings.TrimSpace(req.GetSpuNo()) == "" || req.GetExpectedVersion() == 0 {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "spu_no and expected_version are required")
 	}
-	result, err := dao.CatalogSpu.Ctx(ctx).
-		Where(dao.CatalogSpu.Columns().SpuNo, req.GetSpuNo()).
-		Where(dao.CatalogSpu.Columns().Version, req.GetExpectedVersion()).
-		Where(dao.CatalogSpu.Columns().SpuStatus, uint(v1.SpuStatus_SPU_STATUS_FROZEN)).
-		Data(do.CatalogSpu{
-			SpuStatus: uint(v1.SpuStatus_SPU_STATUS_OFF_SHELF),
-			Version:   uint(req.GetExpectedVersion()) + 1,
-		}).
-		Update()
+	err := dao.CatalogSpu.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		result, err := tx.Model(dao.CatalogSpu.Table()).
+			Where(dao.CatalogSpu.Columns().SpuNo, req.GetSpuNo()).
+			Where(dao.CatalogSpu.Columns().Version, req.GetExpectedVersion()).
+			Where(dao.CatalogSpu.Columns().SpuStatus, uint(v1.SpuStatus_SPU_STATUS_FROZEN)).
+			Data(do.CatalogSpu{
+				SpuStatus: uint(v1.SpuStatus_SPU_STATUS_OFF_SHELF),
+				Version:   uint(req.GetExpectedVersion()) + 1,
+			}).
+			Update()
+		if err != nil {
+			return gerror.Wrap(err, "unfreeze product failed")
+		}
+		affected, _ := result.RowsAffected()
+		if affected == 0 {
+			return gerror.NewCode(gcode.CodeInvalidParameter, "spu version conflict or status not frozen")
+		}
+		return s.syncSkuStatusBySpuTx(ctx, tx, req.GetSpuNo(), uint(v1.SkuStatus_SKU_STATUS_DISABLED))
+	})
 	if err != nil {
-		return nil, gerror.Wrap(err, "unfreeze product failed")
-	}
-	affected, _ := result.RowsAffected()
-	if affected == 0 {
-		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "spu version conflict or status not frozen")
+		return nil, err
 	}
 	return &v1.UnfreezeProductRes{SpuNo: req.GetSpuNo(), SpuStatus: v1.SpuStatus_SPU_STATUS_OFF_SHELF}, nil
 }
@@ -775,21 +806,27 @@ func (s *sCatalog) ForceOffShelf(ctx context.Context, req *v1.ForceOffShelfReq) 
 	if strings.TrimSpace(req.GetSpuNo()) == "" || req.GetExpectedVersion() == 0 {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "spu_no and expected_version are required")
 	}
-	result, err := dao.CatalogSpu.Ctx(ctx).
-		Where(dao.CatalogSpu.Columns().SpuNo, req.GetSpuNo()).
-		Where(dao.CatalogSpu.Columns().Version, req.GetExpectedVersion()).
-		WhereNull(dao.CatalogSpu.Columns().DeletedAt).
-		Data(do.CatalogSpu{
-			SpuStatus: uint(v1.SpuStatus_SPU_STATUS_OFF_SHELF),
-			Version:   uint(req.GetExpectedVersion()) + 1,
-		}).
-		Update()
+	err := dao.CatalogSpu.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		result, err := tx.Model(dao.CatalogSpu.Table()).
+			Where(dao.CatalogSpu.Columns().SpuNo, req.GetSpuNo()).
+			Where(dao.CatalogSpu.Columns().Version, req.GetExpectedVersion()).
+			WhereNull(dao.CatalogSpu.Columns().DeletedAt).
+			Data(do.CatalogSpu{
+				SpuStatus: uint(v1.SpuStatus_SPU_STATUS_OFF_SHELF),
+				Version:   uint(req.GetExpectedVersion()) + 1,
+			}).
+			Update()
+		if err != nil {
+			return gerror.Wrap(err, "force off shelf failed")
+		}
+		affected, _ := result.RowsAffected()
+		if affected == 0 {
+			return gerror.NewCode(gcode.CodeInvalidParameter, "spu version conflict")
+		}
+		return s.syncSkuStatusBySpuTx(ctx, tx, req.GetSpuNo(), uint(v1.SkuStatus_SKU_STATUS_DISABLED))
+	})
 	if err != nil {
-		return nil, gerror.Wrap(err, "force off shelf failed")
-	}
-	affected, _ := result.RowsAffected()
-	if affected == 0 {
-		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "spu version conflict")
+		return nil, err
 	}
 	return &v1.ForceOffShelfRes{SpuNo: req.GetSpuNo(), SpuStatus: v1.SpuStatus_SPU_STATUS_OFF_SHELF}, nil
 }
@@ -1153,6 +1190,21 @@ func (s *sCatalog) getProductAggregate(ctx context.Context, spuNo string, buyer 
 		Spu:  toProtoSpu(spu, spuAttrs),
 		Skus: outSkus,
 	}, nil
+}
+
+func (s *sCatalog) syncSkuStatusBySpuTx(ctx context.Context, tx gdb.TX, spuNo string, skuStatus uint) error {
+	_, err := tx.Model(dao.CatalogSku.Table()).
+		Where(dao.CatalogSku.Columns().SpuNo, spuNo).
+		WhereNull(dao.CatalogSku.Columns().DeletedAt).
+		WhereNotIn(dao.CatalogSku.Columns().SkuStatus, []uint{uint(v1.SkuStatus_SKU_STATUS_DELETED), skuStatus}).
+		Data(do.CatalogSku{
+			SkuStatus: skuStatus,
+		}).
+		Update()
+	if err != nil {
+		return gerror.Wrap(err, "sync sku status by spu failed")
+	}
+	return nil
 }
 
 // getSpuEntity 查询单个 SPU（非事务）。

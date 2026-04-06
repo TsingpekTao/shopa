@@ -13,6 +13,7 @@ import (
 	"github.com/TsingpekTao/shopa/seller-shop-svc/internal/controller/hello"
 	"github.com/TsingpekTao/shopa/seller-shop-svc/internal/controller/seller"
 	i18nmw "github.com/TsingpekTao/shopa/seller-shop-svc/internal/middleware/i18n"
+	"github.com/TsingpekTao/shopa/seller-shop-svc/internal/worker"
 )
 
 var (
@@ -21,6 +22,8 @@ var (
 		Usage: "main",
 		Brief: "start seller-shop gRPC and HTTP servers",
 		Func: func(ctx context.Context, parser *gcmd.Parser) (err error) {
+			worker.Start(ctx)
+
 			go func() {
 				c := grpcx.Server.NewConfig()
 				c.Options = append(c.Options, []grpc.ServerOption{

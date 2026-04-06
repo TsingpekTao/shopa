@@ -93,7 +93,7 @@ message RefundTask {
   string order_no = 3;
   string sub_order_no = 4;
   string pay_no = 5;
-  uint64 refund_amount = 6; // 金额单位：分
+  uint64 refund_amount = 6; // 审批快照退款金额，单位：分。退款执行阶段只认该快照，不反推当前积分门槛。
   RefundTaskStatus status = 7;
   uint32 retry_count = 8;
   google.protobuf.Timestamp next_retry_at = 9;
@@ -101,6 +101,11 @@ message RefundTask {
   string last_error_message = 11;
   google.protobuf.Timestamp created_at = 12;
   google.protobuf.Timestamp updated_at = 13;
+  uint64 points_return_amount = 14; // 本次退款返还给买家的已消费积分，单位：分
+  uint64 points_reverse_amount = 15; // 本次退款冲回的已赠积分，单位：分
+  uint64 points_cash_offset_amount = 16; // 已赠积分余额不足时，从现金退款中抵扣的金额，单位：分
+  uint64 final_cash_refund_amount = 17; // max(0, refund_amount - points_cash_offset_amount)，单位：分
+  uint64 account_debt_after = 18; // 冲回赠分后的积分欠账绝对值，单位：分
 }
 
 message CreateAfterSaleReq {
@@ -205,6 +210,8 @@ message ExecuteRefundTaskRes {
   RefundTask task = 1;
   bool refund_succeeded = 2;
   bool should_retry = 3;
+  uint64 final_cash_refund_amount = 4;
+  uint64 points_cash_offset_amount = 5;
 }
 
 message RetryRefundTaskReq {

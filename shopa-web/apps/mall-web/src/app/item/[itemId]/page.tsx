@@ -1,13 +1,13 @@
-﻿"use client";
+"use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { MouseEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { message } from "antd";
 import { useI18n } from "@shopa/ui";
 import { addCartItem } from "@/features/cart/api";
-import { getBuyerProductDetail, listBuyerProductImages } from "@/features/catalog/api";
+import { getBuyerProductDetail, listBuyerAssetReadUrls, listBuyerProductImages } from "@/features/catalog/api";
 import { upsertCartItemHint } from "@/lib/cart-hints";
 import { getDemoMarketPriceCents, getDemoSalePriceCents } from "@/lib/demo-pricing";
 import { formatCnyFromCents } from "@/lib/price";
@@ -25,6 +25,28 @@ function getDefaultAddressId(): number {
   return Math.trunc(value);
 }
 
+function readMallAccessToken(): string {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  const direct = window.localStorage.getItem("shopa_mall_access_token")?.trim() ?? "";
+  if (direct) {
+    return direct;
+  }
+  try {
+    const raw = window.localStorage.getItem("shopa-mall-auth");
+    if (!raw) {
+      return "";
+    }
+    const parsed = JSON.parse(raw) as {
+      state?: { tokenPair?: { accessToken?: string } };
+    };
+    return parsed?.state?.tokenPair?.accessToken?.trim() ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export default function ItemDetailPage({ params }: { params: { itemId: string } }) {
   const { locale } = useI18n();
   const isZh = locale === "zh-CN";
@@ -32,6 +54,7 @@ export default function ItemDetailPage({ params }: { params: { itemId: string } 
   const [messageApi, contextHolder] = message.useMessage();
   const [qty, setQty] = useState(1);
   const [selectedSkuNo, setSelectedSkuNo] = useState("");
+  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [submitting, setSubmitting] = useState(false);
 
   const detailQuery = useQuery({
@@ -64,9 +87,30 @@ export default function ItemDetailPage({ params }: { params: { itemId: string } 
     return skus.find((item) => item.skuNo === selectedSkuNo) ?? skus[0];
   }, [detailQuery.data?.skus, selectedSkuNo]);
 
-  const resolvedSpuNo = selectedSku?.spuNo || detailQuery.data?.spuNo || params.itemId;
-  const resolvedShopNo = selectedSku?.shopNo || detailQuery.data?.shopNo || "DEMO_SHOP";
-  const resolvedSkuNo = selectedSku?.skuNo || `SKU_${resolvedSpuNo}`;
+  const imageAssetIds = useMemo(() => {
+    const assetIds = [
+      selectedSku?.skuImageAssetId ?? "",
+      ...(detailQuery.data?.mainImageAssetIds ?? []),
+      ...(detailQuery.data?.detailImageAssetIds ?? [])
+    ];
+    return Array.from(new Set(assetIds.map((item) => item.trim()).filter((item) => item.length > 0)));
+  }, [detailQuery.data?.detailImageAssetIds, detailQuery.data?.mainImageAssetIds, selectedSku?.skuImageAssetId]);
+
+  useEffect(() => {
+    setSelectedImageIndex(0);
+  }, [selectedSku?.skuImageAssetId, detailQuery.data?.spuNo]);
+
+  const imageAssetUrlsQuery = useQuery({
+    queryKey: ["buyer-product-detail-asset-urls", imageAssetIds.join(",")],
+    queryFn: () => listBuyerAssetReadUrls(imageAssetIds),
+    enabled: imageAssetIds.length > 0,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false
+  });
+
+  const resolvedSpuNo = selectedSku?.spuNo || detailQuery.data?.spuNo || "";
+  const resolvedShopNo = selectedSku?.shopNo || detailQuery.data?.shopNo || "";
+  const resolvedSkuNo = selectedSku?.skuNo || "";
 
   const rawSalePrice = selectedSku?.salePrice ?? detailQuery.data?.minSalePrice ?? 0;
   const demoSalePrice = getDemoSalePriceCents(resolvedSpuNo, resolvedSkuNo);
@@ -76,13 +120,28 @@ export default function ItemDetailPage({ params }: { params: { itemId: string } 
     rawMarketPrice > currentPrice
       ? rawMarketPrice
       : getDemoMarketPriceCents(currentPrice, resolvedSpuNo, resolvedSkuNo);
-  const mainImage = imageQuery.data?.[imageSpuNo] || pickProductImageBySpuNo(detailQuery.data?.spuNo ?? params.itemId);
+  const galleryImages = useMemo(() => {
+    const assetUrlMap = imageAssetUrlsQuery.data ?? {};
+    const urls = imageAssetIds.map((assetId) => assetUrlMap[assetId]).filter((item): item is string => Boolean(item));
+    const fallbackImage = imageQuery.data?.[imageSpuNo] || pickProductImageBySpuNo(detailQuery.data?.spuNo ?? params.itemId);
+    if (urls.length > 0) {
+      return urls;
+    }
+    return fallbackImage ? [fallbackImage] : [];
+  }, [detailQuery.data?.spuNo, imageAssetIds, imageAssetUrlsQuery.data, imageQuery.data, imageSpuNo, params.itemId]);
+  const mainImage = galleryImages[selectedImageIndex] || galleryImages[0] || "";
 
-  const canSubmit = Boolean(resolvedSkuNo) && !submitting;
+  const hasResolvedCartPayload = Boolean(resolvedSkuNo && resolvedSpuNo && resolvedShopNo);
+  const canSubmit = hasResolvedCartPayload && !detailQuery.isLoading && !submitting;
 
   async function handleAddToCart() {
-    if (!resolvedSkuNo) {
+    if (!hasResolvedCartPayload) {
       messageApi.warning(isZh ? "当前商品暂无可购买规格" : "No available sku for this product");
+      return;
+    }
+    if (!readMallAccessToken()) {
+      messageApi.info(isZh ? "请先登录后再加入购物车" : "Please sign in before adding items to your cart");
+      router.push("/login");
       return;
     }
     setSubmitting(true);
@@ -116,8 +175,13 @@ export default function ItemDetailPage({ params }: { params: { itemId: string } 
   }
 
   function handleBuyNow() {
-    if (!resolvedSkuNo) {
+    if (!hasResolvedCartPayload) {
       messageApi.warning(isZh ? "当前商品暂无可购买规格" : "No available sku for this product");
+      return;
+    }
+    if (!readMallAccessToken()) {
+      messageApi.info(isZh ? "请先登录后再立即购买" : "Please sign in before buying now");
+      router.push("/login");
       return;
     }
     const query = new URLSearchParams({
@@ -131,6 +195,28 @@ export default function ItemDetailPage({ params }: { params: { itemId: string } 
     router.push(`/checkout/confirm?${query.toString()}`);
   }
 
+  function buildConsultHref(): string {
+    const query = new URLSearchParams({
+      shop_no: resolvedShopNo,
+      spu_no: resolvedSpuNo,
+      sku_no: resolvedSkuNo
+    });
+    return `/me/messages?${query.toString()}`;
+  }
+
+  function handleConsultSeller(event: MouseEvent<HTMLAnchorElement>) {
+    if (!resolvedShopNo) {
+      event.preventDefault();
+      messageApi.warning(isZh ? "当前商品暂时无法发起咨询" : "This product is not ready for chat yet");
+      return;
+    }
+    if (!readMallAccessToken()) {
+      event.preventDefault();
+      messageApi.info(isZh ? "请先登录后再咨询商家" : "Please sign in before chatting with the seller");
+      router.push("/login");
+    }
+  }
+
   return (
     <main className="tb-pdp-page">
       {contextHolder}
@@ -138,9 +224,17 @@ export default function ItemDetailPage({ params }: { params: { itemId: string } 
         <div>
           <div className="tb-pdp-main-image" style={mainImage ? { backgroundImage: `url(${mainImage})`, backgroundSize: "cover" } : undefined} />
           <div className="tb-pdp-thumbs">
-            <button type="button" aria-label="preview">
-              <span style={mainImage ? { backgroundImage: `url(${mainImage})`, backgroundSize: "cover" } : undefined} />
-            </button>
+            {(galleryImages.length > 0 ? galleryImages : [""]).map((imageUrl, index) => (
+              <button
+                key={`${imageUrl || "empty"}-${index}`}
+                type="button"
+                aria-label={`preview-${index + 1}`}
+                className={index === selectedImageIndex ? "active" : ""}
+                onClick={() => setSelectedImageIndex(index)}
+              >
+                <span style={imageUrl ? { backgroundImage: `url(${imageUrl})`, backgroundSize: "cover" } : undefined} />
+              </button>
+            ))}
           </div>
         </div>
 
@@ -191,10 +285,7 @@ export default function ItemDetailPage({ params }: { params: { itemId: string } 
             <button type="button" className="tb-pdp-buy" onClick={handleBuyNow} disabled={!canSubmit}>
               {isZh ? "立即购买" : "Buy Now"}
             </button>
-            <Link
-              href={`/me/messages?shop_no=${encodeURIComponent(resolvedShopNo)}&spu_no=${encodeURIComponent(resolvedSpuNo)}&sku_no=${encodeURIComponent(resolvedSkuNo)}`}
-              className="tb-pdp-chat"
-            >
+            <Link href={buildConsultHref()} className="tb-pdp-chat" onClick={handleConsultSeller}>
               {isZh ? "咨询商家" : "Consult Seller"}
             </Link>
           </div>
@@ -211,8 +302,11 @@ export default function ItemDetailPage({ params }: { params: { itemId: string } 
           <Link href={`/shop/${encodeURIComponent(detailQuery.data?.shopNo || "UNKNOWN_SHOP")}`}>
             {isZh ? "进入店铺" : "Visit shop"}
           </Link>
-          <Link href={`/me/messages?shop_no=${encodeURIComponent(resolvedShopNo)}&spu_no=${encodeURIComponent(resolvedSpuNo)}`}>
+          <Link href={buildConsultHref()} onClick={handleConsultSeller}>
             {isZh ? "售前咨询" : "Pre-sale Chat"}
+          </Link>
+          <Link href={`/service/assistant?shop_no=${encodeURIComponent(resolvedShopNo)}&spu_no=${encodeURIComponent(resolvedSpuNo)}&sku_no=${encodeURIComponent(resolvedSkuNo)}`}>
+            {isZh ? "AI 导购" : "AI Assistant"}
           </Link>
         </div>
       </section>

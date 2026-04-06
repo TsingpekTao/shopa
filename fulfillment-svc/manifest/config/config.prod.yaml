@@ -4,7 +4,7 @@
 
 # HTTP server configuration (OpenAPI/Swagger + optional REST APIs).
 server:
-  address: ":8009"
+  address: ":8012"
   openapiPath: "/api.json"
   swaggerPath: "/swagger"
 

@@ -2,6 +2,7 @@ go 1.24.3
 
 use (
 	./aftersale-svc
+	./agent-svc
 	./cart-svc
 	./catalog-svc
 	./chat-svc

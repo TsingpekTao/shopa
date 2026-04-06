@@ -47,6 +47,11 @@ type RawGetMyCartRes = {
   loadedFromBackup?: boolean;
 };
 
+type RawAddCartItemRes = {
+  item?: RawCartItem;
+  summary?: RawCartSummary;
+};
+
 type RawCheckoutSnapshotItem = {
   sku_no?: string;
   skuNo?: string;
@@ -92,6 +97,21 @@ type RawCheckoutSnapshot = {
 type RawPrepareCheckoutRes = {
   snapshot?: RawCheckoutSnapshot;
 };
+
+function toFormData(payload: Record<string, string | number | boolean | string[] | undefined>): URLSearchParams {
+  const formData = new URLSearchParams();
+  Object.entries(payload).forEach(([key, value]) => {
+    if (value === undefined) {
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((item) => formData.append(key, item));
+      return;
+    }
+    formData.set(key, String(value));
+  });
+  return formData;
+}
 
 function toNumber(value: unknown, fallback = 0): number {
   const num = Number(value);
@@ -181,26 +201,44 @@ export async function addCartItem(payload: {
   shopNo: string;
   qty: number;
   checked?: boolean;
-}): Promise<MyCart> {
-  const response = await apiClient.post<RawGetMyCartRes>("/v1/cart/items:add", {
-    sku_no: payload.skuNo,
-    spu_no: payload.spuNo,
-    shop_no: payload.shopNo,
-    qty: payload.qty,
-    checked: payload.checked ?? true
-  });
+}): Promise<{
+  item?: CartItem;
+  summary: CartSummary;
+}> {
+  const response = await apiClient.post<RawAddCartItemRes>(
+    "/v1/cart/items:add",
+    toFormData({
+      sku_no: payload.skuNo,
+      spu_no: payload.spuNo,
+      shop_no: payload.shopNo,
+      qty: payload.qty,
+      checked: payload.checked ?? true
+    }),
+    {
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      }
+    }
+  );
   return {
-    items: response?.items?.map((item) => normalizeCartItem(item)) ?? [],
-    summary: normalizeSummary(response?.summary),
-    loadedFromBackup: false
+    item: response?.item ? normalizeCartItem(response.item) : undefined,
+    summary: normalizeSummary(response?.summary)
   };
 }
 
 export async function updateCartItemQty(skuNo: string, qty: number): Promise<MyCart> {
-  const response = await apiClient.post<RawGetMyCartRes>("/v1/cart/items:qty", {
-    sku_no: skuNo,
-    qty
-  });
+  const response = await apiClient.post<RawGetMyCartRes>(
+    "/v1/cart/items:qty",
+    toFormData({
+      sku_no: skuNo,
+      qty
+    }),
+    {
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      }
+    }
+  );
   return {
     items: response?.items?.map((item) => normalizeCartItem(item)) ?? [],
     summary: normalizeSummary(response?.summary),
@@ -209,10 +247,18 @@ export async function updateCartItemQty(skuNo: string, qty: number): Promise<MyC
 }
 
 export async function toggleCartItemChecked(skuNo: string, checked: boolean): Promise<MyCart> {
-  const response = await apiClient.post<RawGetMyCartRes>("/v1/cart/items:check", {
-    sku_no: skuNo,
-    checked
-  });
+  const response = await apiClient.post<RawGetMyCartRes>(
+    "/v1/cart/items:check",
+    toFormData({
+      sku_no: skuNo,
+      checked
+    }),
+    {
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      }
+    }
+  );
   return {
     items: response?.items?.map((item) => normalizeCartItem(item)) ?? [],
     summary: normalizeSummary(response?.summary),
@@ -221,9 +267,17 @@ export async function toggleCartItemChecked(skuNo: string, checked: boolean): Pr
 }
 
 export async function removeCartItems(skuNos: string[]): Promise<MyCart> {
-  const response = await apiClient.post<RawGetMyCartRes>("/v1/cart/items:remove", {
-    sku_nos: skuNos
-  });
+  const response = await apiClient.post<RawGetMyCartRes>(
+    "/v1/cart/items:remove",
+    toFormData({
+      sku_nos: skuNos
+    }),
+    {
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      }
+    }
+  );
   return {
     items: response?.items?.map((item) => normalizeCartItem(item)) ?? [],
     summary: normalizeSummary(response?.summary),
@@ -236,10 +290,18 @@ export async function prepareCheckout(payload: {
   skuNos?: string[];
   addressId: number;
 }): Promise<CheckoutSnapshot> {
-  const response = await apiClient.post<RawPrepareCheckoutRes>("/v1/cart/checkout:prepare", {
-    scope: payload.scope,
-    sku_nos: payload.skuNos ?? [],
-    address_id: payload.addressId
-  });
+  const response = await apiClient.post<RawPrepareCheckoutRes>(
+    "/v1/cart/checkout:prepare",
+    toFormData({
+      scope: payload.scope,
+      sku_nos: payload.skuNos ?? [],
+      address_id: payload.addressId
+    }),
+    {
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      }
+    }
+  );
   return normalizeSnapshot(response?.snapshot);
 }
