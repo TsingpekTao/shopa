@@ -6,12 +6,12 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { message } from "antd";
 import { useI18n } from "@shopa/ui";
 import { getMyCart, removeCartItems, toggleCartItemChecked, updateCartItemQty } from "@/features/cart/api";
-import { getBuyerProductDetail, listBuyerProductImages } from "@/features/catalog/api";
+import { getBuyerProductDetail, listBuyerAssetReadUrls, listBuyerProductImages } from "@/features/catalog/api";
 import { getCartItemHints } from "@/lib/cart-hints";
 import { getDemoMarketPriceCents, getDemoSalePriceCents } from "@/lib/demo-pricing";
 import { CartItem } from "@/features/cart/types";
 import { formatCnyFromCents } from "@/lib/price";
-import { pickProductImageBySpuNo } from "@/lib/product-images";
+import { collectProductDetailAssetIds, resolveProductImageUrl, type ProductDetailMap } from "@/lib/product-media";
 
 type SkuEnrich = {
   salePrice: number;
@@ -24,6 +24,7 @@ type SpuEnrich = {
   title: string;
   subTitle: string;
   shopNo: string;
+  detail: ProductDetailMap[string];
 };
 
 function parseSaleAttrsText(raw: string): string {
@@ -103,7 +104,8 @@ export default function CartPage() {
         spuMap[detail.spuNo] = {
           title: detail.title,
           subTitle: detail.subTitle,
-          shopNo: detail.shopNo
+          shopNo: detail.shopNo,
+          detail
         };
         for (const sku of detail.skus) {
           skuMap[sku.skuNo] = {
@@ -118,10 +120,45 @@ export default function CartPage() {
     }
   });
 
+  const assetIds = useMemo(
+    () => Array.from(new Set(items.map((item) => item.skuImageAssetId.trim()).filter((item) => item.length > 0))),
+    [items]
+  );
+
+  const assetUrlsQuery = useQuery({
+    queryKey: ["cart-item-asset-urls", assetIds.join(",")],
+    queryFn: () => listBuyerAssetReadUrls(assetIds),
+    enabled: assetIds.length > 0,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false
+  });
+
+  const detailMap = useMemo<ProductDetailMap>(() => {
+    const spuMap = enrichQuery.data?.spuMap ?? {};
+    return Object.values(spuMap).reduce<ProductDetailMap>((acc, item) => {
+      if (item.detail?.spuNo) {
+        acc[item.detail.spuNo] = item.detail;
+      }
+      return acc;
+    }, {});
+  }, [enrichQuery.data?.spuMap]);
+
+  const detailAssetIds = useMemo(() => collectProductDetailAssetIds(detailMap), [detailMap]);
+
+  const detailAssetUrlsQuery = useQuery({
+    queryKey: ["cart-detail-asset-urls", detailAssetIds.join(",")],
+    queryFn: () => listBuyerAssetReadUrls(detailAssetIds),
+    enabled: detailAssetIds.length > 0,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false
+  });
+
   const displayItems = useMemo(() => {
     const skuMap = enrichQuery.data?.skuMap ?? {};
     const spuMap = enrichQuery.data?.spuMap ?? {};
     const imageMap = imageMapQuery.data ?? {};
+    const assetUrlMap = assetUrlsQuery.data ?? {};
+    const detailAssetUrlMap = detailAssetUrlsQuery.data ?? {};
     const cartHints = getCartItemHints();
 
     return items.map((item) => {
@@ -150,7 +187,7 @@ export default function CartPage() {
       const subTitle = spuEnrich?.subTitle || hint?.subTitle || "";
       const shopNo = item.shopNo || spuEnrich?.shopNo || hint?.shopNo || "";
       const attrsText = parseSaleAttrsText(item.saleAttrsJson || skuEnrich?.saleAttrsJson || "[]");
-      const imageUrl = imageMap[item.spuNo] || hint?.imageUrl || pickProductImageBySpuNo(item.spuNo);
+      const imageUrl = resolveProductImageUrl(item, assetUrlMap, imageMap, detailMap, detailAssetUrlMap) || encodeURI((hint?.imageUrl ?? "").trim());
 
       return {
         ...item,
@@ -164,7 +201,7 @@ export default function CartPage() {
         imageUrl
       };
     });
-  }, [items, enrichQuery.data, imageMapQuery.data]);
+  }, [items, enrichQuery.data, imageMapQuery.data, assetUrlsQuery.data, detailMap, detailAssetUrlsQuery.data]);
 
   const selectedSkuNos = useMemo(
     () => displayItems.filter((item) => item.checked).map((item) => item.skuNo),
@@ -252,13 +289,18 @@ export default function CartPage() {
                     disabled={disabled}
                   />
                 </label>
-                <div
-                  className="tb-cart-cover"
-                  style={{
-                    backgroundImage: `url(${item.imageUrl})`,
-                    backgroundSize: "cover"
-                  }}
-                />
+                <div className="tb-cart-cover" style={item.imageUrl ? undefined : { background: "linear-gradient(135deg, #ffe2d1, #ffd1ae)" }}>
+                  {item.imageUrl ? (
+                    <img
+                      src={item.imageUrl}
+                      alt={item.title}
+                      loading="lazy"
+                      decoding="async"
+                      referrerPolicy="no-referrer"
+                      style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                    />
+                  ) : null}
+                </div>
                 <div className="tb-cart-info">
                   <h3>{item.title}</h3>
                   <p>{item.skuName}</p>

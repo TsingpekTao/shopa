@@ -5,6 +5,7 @@ import (
 
 	"github.com/TsingpekTao/shopa/aftersale-svc/internal/controller/aftersale"
 	_ "github.com/TsingpekTao/shopa/aftersale-svc/internal/logic"
+	"github.com/TsingpekTao/shopa/aftersale-svc/internal/worker"
 	"github.com/gogf/gf/contrib/rpc/grpcx/v2"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
@@ -21,6 +22,8 @@ var (
 		Usage: "main",
 		Brief: "start aftersale gRPC and HTTP servers",
 		Func: func(ctx context.Context, parser *gcmd.Parser) (err error) {
+			worker.StartRefundAutoApproveWorker(ctx)
+
 			go func() {
 				c := grpcx.Server.NewConfig()
 				c.Options = append(c.Options, []grpc.ServerOption{

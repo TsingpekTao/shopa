@@ -8,6 +8,9 @@ import (
 	"strings"
 	"time"
 
+	orderv1 "github.com/TsingpekTao/shopa/order-svc/api/v1"
+	paymentv1 "github.com/TsingpekTao/shopa/payment-svc/api/v1"
+
 	v1 "github.com/TsingpekTao/shopa/aftersale-svc/api/v1"
 	"github.com/TsingpekTao/shopa/aftersale-svc/internal/dao"
 	"github.com/TsingpekTao/shopa/aftersale-svc/internal/model/do"
@@ -429,47 +432,130 @@ func (s *sAfterSale) ExecuteRefundTask(ctx context.Context, req *v1.ExecuteRefun
 	}
 	// 已经成功的任务再次执行时直接幂等返回成功，避免重复退款。
 	if task.Status == uint(v1.RefundTaskStatus_REFUND_TASK_STATUS_SUCCEEDED) {
+		finalCashRefundAmount := task.FinalCashRefundAmount
+		if finalCashRefundAmount == 0 && task.RefundAmount >= task.PointsCashOffsetAmount {
+			finalCashRefundAmount = task.RefundAmount - task.PointsCashOffsetAmount
+		}
 		return &v1.ExecuteRefundTaskRes{
-			Task:            toProtoRefundTask(task),
-			RefundSucceeded: true,
-			ShouldRetry:     false,
+			Task:                   toProtoRefundTask(task),
+			RefundSucceeded:        true,
+			ShouldRetry:            false,
+			FinalCashRefundAmount:  finalCashRefundAmount,
+			PointsCashOffsetAmount: task.PointsCashOffsetAmount,
 		}, nil
 	}
-	// 退款执行成功后需要同时更新退款任务状态和售后主单状态，所以放到同一个事务里。
+
+	// 先把本地任务标记为 processing，避免并发执行同一退款任务时重复打外部服务。
+	_, err = dao.RefundTask.Ctx(ctx).
+		Where(dao.RefundTask.Columns().RefundTaskNo, task.RefundTaskNo).
+		WhereIn(dao.RefundTask.Columns().Status, []uint{
+			uint(v1.RefundTaskStatus_REFUND_TASK_STATUS_PENDING),
+			uint(v1.RefundTaskStatus_REFUND_TASK_STATUS_FAILED),
+			uint(v1.RefundTaskStatus_REFUND_TASK_STATUS_PROCESSING),
+		}).
+		Data(do.RefundTask{
+			Status:           uint(v1.RefundTaskStatus_REFUND_TASK_STATUS_PROCESSING),
+			RetryCount:       task.RetryCount + 1,
+			NextRetryAt:      nil,
+			LastErrorCode:    "",
+			LastErrorMessage: "",
+		}).Update()
+	if err != nil {
+		return nil, gerror.Wrap(err, "mark refund task processing failed")
+	}
+
+	afterSaleRow, err := s.getAfterSaleByNo(ctx, task.AfterSaleNo)
+	if err != nil {
+		return nil, err
+	}
+	conn, paymentClient, err := s.newPaymentClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	execRes, execErr := paymentClient.ExecuteRefundTask(ctx, &paymentv1.ExecuteRefundTaskReq{
+		RefundTaskNo:   task.RefundTaskNo,
+		IdempotencyKey: fmt.Sprintf("execute_%s", task.RefundTaskNo),
+	})
+	conn.Close()
+	if execErr != nil {
+		if markErr := s.markLocalRefundTaskFailed(ctx, task, "PAYMENT_EXECUTE_FAILED", execErr.Error()); markErr != nil {
+			return nil, markErr
+		}
+		task, _ = s.getRefundTaskByNo(ctx, req.GetRefundTaskNo())
+		return &v1.ExecuteRefundTaskRes{
+			Task:            toProtoRefundTask(task),
+			RefundSucceeded: false,
+			ShouldRetry:     true,
+		}, nil
+	}
+
+	orderConn, orderClient, err := s.newOrderClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	finalizeRes, finalizeErr := orderClient.FinalizeSubOrderRefund(ctx, &orderv1.FinalizeSubOrderRefundReq{
+		OrderNo:              task.OrderNo,
+		SubOrderNo:           task.SubOrderNo,
+		RefundNo:             task.AfterSaleNo,
+		ApprovedRefundAmount: task.RefundAmount,
+	})
+	orderConn.Close()
+	if finalizeErr != nil {
+		if markErr := s.markLocalRefundTaskFailed(ctx, task, "ORDER_FINALIZE_FAILED", finalizeErr.Error()); markErr != nil {
+			return nil, markErr
+		}
+		task, _ = s.getRefundTaskByNo(ctx, req.GetRefundTaskNo())
+		return &v1.ExecuteRefundTaskRes{
+			Task:            toProtoRefundTask(task),
+			RefundSucceeded: false,
+			ShouldRetry:     true,
+		}, nil
+	}
+
+	finalCashRefundAmount := task.RefundAmount
+	if finalizeRes.GetPointsCashOffsetAmount() >= finalCashRefundAmount {
+		finalCashRefundAmount = 0
+	} else {
+		finalCashRefundAmount -= finalizeRes.GetPointsCashOffsetAmount()
+	}
 	err = dao.RefundTask.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		if _, e := tx.Model(dao.RefundTask.Table()).
 			Where(dao.RefundTask.Columns().RefundTaskNo, task.RefundTaskNo).
 			Data(do.RefundTask{
-				Status:      int(v1.RefundTaskStatus_REFUND_TASK_STATUS_SUCCEEDED),
-				RetryCount:  task.RetryCount + 1,
-				NextRetryAt: nil,
+				Status:                 uint(v1.RefundTaskStatus_REFUND_TASK_STATUS_SUCCEEDED),
+				NextRetryAt:            nil,
+				LastErrorCode:          "",
+				LastErrorMessage:       "",
+				PointsReturnAmount:     finalizeRes.GetPointsReturnAmount(),
+				PointsReverseAmount:    finalizeRes.GetPointsReverseAmount(),
+				PointsCashOffsetAmount: finalizeRes.GetPointsCashOffsetAmount(),
+				FinalCashRefundAmount:  finalCashRefundAmount,
+				AccountDebtAfter:       finalizeRes.GetAccountDebtAfter(),
 			}).Update(); e != nil {
-			// 退款任务状态更新失败时整个事务回滚，避免售后主单先进入已退款。
 			return gerror.Wrap(e, "mark refund_task succeeded failed")
 		}
 		if _, e := tx.Model(dao.AfterSaleCase.Table()).
 			Where(dao.AfterSaleCase.Columns().AfterSaleNo, task.AfterSaleNo).
 			Data(do.AfterSaleCase{
-				AfterSaleStatus: int(v1.AfterSaleStatus_AFTER_SALE_STATUS_REFUNDED),
-				ClosedAt:        gtime.Now(),
+				AfterSaleStatus:      uint(v1.AfterSaleStatus_AFTER_SALE_STATUS_REFUNDED),
+				ApprovedRefundAmount: task.RefundAmount,
+				ClosedAt:             gtime.Now(),
+				Version:              afterSaleRow.Version + 1,
 			}).Update(); e != nil {
-			// 主单状态推进失败时同样回滚，确保退款任务与售后主单状态一致。
 			return gerror.Wrap(e, "mark after_sale_case refunded failed")
 		}
-		// 两个更新都成功时提交事务，正式完成退款任务执行。
 		return nil
 	})
 	if err != nil {
-		// 事务失败时直接返回错误，让调度器决定是否重试。
 		return nil, err
 	}
-	// 重新读取最新退款任务快照，确保响应里是执行后的状态。
 	task, _ = s.getRefundTaskByNo(ctx, req.GetRefundTaskNo())
-	// 返回执行后的退款任务状态，并告诉调用方无需再次重试。
 	return &v1.ExecuteRefundTaskRes{
-		Task:            toProtoRefundTask(task),
-		RefundSucceeded: true,
-		ShouldRetry:     false,
+		Task:                   toProtoRefundTask(task),
+		RefundSucceeded:        execRes.GetStatus() == paymentv1.RefundTaskStatus_REFUND_TASK_STATUS_SUCCEEDED,
+		ShouldRetry:            false,
+		FinalCashRefundAmount:  finalCashRefundAmount,
+		PointsCashOffsetAmount: finalizeRes.GetPointsCashOffsetAmount(),
 	}, nil
 }
 
@@ -581,8 +667,10 @@ func toProtoAfterSaleCase(row *entity.AfterSaleCase) *v1.AfterSaleCase {
 	}
 	// 预留附件证据列表，后续从 JSON 字段里反序列化出来。
 	var evidence []uint64
+	var selectedItemNos []string
 	// 证据字段解码失败时这里忽略错误，保持主流程尽量可用。
 	_ = json.Unmarshal([]byte(row.EvidenceAssetIdsJson), &evidence)
+	_ = json.Unmarshal([]byte(row.SelectedItemNosJson), &selectedItemNos)
 	// 把数据库实体逐字段映射成协议对象，作为对外统一返回结构。
 	return &v1.AfterSaleCase{
 		AfterSaleNo:          row.AfterSaleNo,
@@ -609,6 +697,12 @@ func toProtoAfterSaleCase(row *entity.AfterSaleCase) *v1.AfterSaleCase {
 		UpdatedAt:            toProtoTs(row.UpdatedAt),
 		ClosedAt:             toProtoTs(row.ClosedAt),
 		CancelReasonCode:     row.CancelReasonCode,
+		RefundBatchNo:        row.RefundBatchNo,
+		ScopeCode:            row.ScopeCode,
+		ReviewDeadlineAt:     toProtoTs(row.ReviewDeadlineAt),
+		AutoApprovedAt:       toProtoTs(row.AutoApprovedAt),
+		SelectedItemNos:      selectedItemNos,
+		PaymentNo:            row.PaymentNo,
 	}
 }
 
@@ -619,19 +713,24 @@ func toProtoRefundTask(row *entity.RefundTask) *v1.RefundTask {
 	}
 	// 把数据库退款任务实体转换成对外协议对象。
 	return &v1.RefundTask{
-		RefundTaskNo:     row.RefundTaskNo,
-		AfterSaleNo:      row.AfterSaleNo,
-		OrderNo:          row.OrderNo,
-		SubOrderNo:       row.SubOrderNo,
-		PayNo:            row.PayNo,
-		RefundAmount:     row.RefundAmount,
-		Status:           v1.RefundTaskStatus(row.Status),
-		RetryCount:       uint32(row.RetryCount),
-		NextRetryAt:      toProtoTs(row.NextRetryAt),
-		LastErrorCode:    row.LastErrorCode,
-		LastErrorMessage: row.LastErrorMessage,
-		CreatedAt:        toProtoTs(row.CreatedAt),
-		UpdatedAt:        toProtoTs(row.UpdatedAt),
+		RefundTaskNo:           row.RefundTaskNo,
+		AfterSaleNo:            row.AfterSaleNo,
+		OrderNo:                row.OrderNo,
+		SubOrderNo:             row.SubOrderNo,
+		PayNo:                  row.PayNo,
+		RefundAmount:           row.RefundAmount,
+		Status:                 v1.RefundTaskStatus(row.Status),
+		RetryCount:             uint32(row.RetryCount),
+		NextRetryAt:            toProtoTs(row.NextRetryAt),
+		LastErrorCode:          row.LastErrorCode,
+		LastErrorMessage:       row.LastErrorMessage,
+		CreatedAt:              toProtoTs(row.CreatedAt),
+		UpdatedAt:              toProtoTs(row.UpdatedAt),
+		PointsReturnAmount:     row.PointsReturnAmount,
+		PointsReverseAmount:    row.PointsReverseAmount,
+		PointsCashOffsetAmount: row.PointsCashOffsetAmount,
+		FinalCashRefundAmount:  row.FinalCashRefundAmount,
+		AccountDebtAfter:       row.AccountDebtAfter,
 	}
 }
 

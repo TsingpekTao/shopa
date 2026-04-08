@@ -52,6 +52,11 @@ worker:
     intervalSeconds: 10
     batchSize: 100
     maxRetry: 24
+  autoReceive:
+    enabled: true
+    intervalSeconds: 60
+    batchSize: 100
+    receiveAfterDays: 7
 
 # Object storage / media placeholders.
 storage:

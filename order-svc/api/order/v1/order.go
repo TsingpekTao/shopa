@@ -6,42 +6,57 @@ import (
 )
 
 type CreateOrderFromCartReq struct {
-	g.Meta `path:"/v1/order/buyer/from-cart" method:"post" tags:"Order-Buyer" summary:"Create order from checkout token"`
+	g.Meta `path:"/v1/order/buyer/orders:create-from-cart" method:"post" tags:"Order-Buyer" summary:"Create order from checkout token"`
 	pb.CreateOrderFromCartReq
 }
 
 type CreateOrderFromCartRes = pb.CreateOrderFromCartRes
 
 type CreateOrderBuyNowReq struct {
-	g.Meta `path:"/v1/order/buyer/buy-now" method:"post" tags:"Order-Buyer" summary:"Create order by buy-now items"`
+	g.Meta `path:"/v1/order/buyer/orders:create-buy-now" method:"post" tags:"Order-Buyer" summary:"Create order by buy-now items"`
 	pb.CreateOrderBuyNowReq
 }
 
 type CreateOrderBuyNowRes = pb.CreateOrderBuyNowRes
 
+type UpdateMyOrderAddressReq struct {
+	g.Meta `path:"/v1/order/buyer/orders/{order_no}/address" method:"patch" tags:"Order-Buyer" summary:"Update address for my unpaid order"`
+	OrderNo   string `json:"order_no" in:"path" v:"required#order_no is required"`
+	AddressId uint64 `json:"address_id" v:"required#address_id is required"`
+}
+
+type UpdateMyOrderAddressRes = pb.UpdateMyOrderAddressRes
+
 type RequestPayReq struct {
-	g.Meta `path:"/v1/order/buyer/request-pay" method:"post" tags:"Order-Buyer" summary:"Create pay intent for order"`
+	g.Meta `path:"/v1/order/buyer/orders:request-pay" method:"post" tags:"Order-Buyer" summary:"Create pay intent for order"`
 	pb.RequestPayReq
 }
 
 type RequestPayRes = pb.RequestPayRes
 
 type CancelMyOrderReq struct {
-	g.Meta `path:"/v1/order/buyer/cancel" method:"post" tags:"Order-Buyer" summary:"Cancel my order"`
+	g.Meta `path:"/v1/order/buyer/orders:cancel" method:"post" tags:"Order-Buyer" summary:"Cancel my order"`
 	pb.CancelMyOrderReq
 }
 
 type CancelMyOrderRes = pb.CancelMyOrderRes
 
+type ConfirmMyOrderReceivedReq struct {
+	g.Meta `path:"/v1/order/buyer/orders:confirm-received" method:"post" tags:"Order-Buyer" summary:"Confirm receipt for my order"`
+	pb.CompleteOrderReq
+}
+
+type ConfirmMyOrderReceivedRes = pb.CompleteOrderRes
+
 type GetMyOrderDetailReq struct {
-	g.Meta  `path:"/v1/order/buyer/{order_no}" method:"get" tags:"Order-Buyer" summary:"Get my order detail"`
+	g.Meta  `path:"/v1/order/buyer/orders/{order_no}" method:"get" tags:"Order-Buyer" summary:"Get my order detail"`
 	OrderNo string `json:"order_no" v:"required#order_no is required"`
 }
 
 type GetMyOrderDetailRes = pb.GetMyOrderDetailRes
 
 type ListMyOrdersReq struct {
-	g.Meta `path:"/v1/order/buyer/list" method:"post" tags:"Order-Buyer" summary:"List my orders with cursor"`
+	g.Meta `path:"/v1/order/buyer/orders" method:"get" tags:"Order-Buyer" summary:"List my orders with cursor"`
 	pb.ListMyOrdersReq
 }
 

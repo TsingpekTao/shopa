@@ -1,5 +1,5 @@
 import { apiClient } from "@/lib/api-client";
-import { ChatConversation, ChatMessage } from "./types";
+import { ChatConversation, ChatMessage, ChatMessageType, ConversationSceneCode } from "./types";
 
 type RawConversation = {
   conversation_no?: string;
@@ -16,6 +16,12 @@ type RawConversation = {
   buyerAvatarUrl?: string;
   shop_avatar_url?: string;
   shopAvatarUrl?: string;
+  scene_code?: string;
+  sceneCode?: string;
+  order_no?: string;
+  orderNo?: string;
+  sub_order_no?: string;
+  subOrderNo?: string;
   anchor_spu_no?: string;
   anchorSpuNo?: string;
   anchor_sku_no?: string;
@@ -111,7 +117,33 @@ function toString(value: unknown): string {
   if (value === null || value === undefined) {
     return "";
   }
-  return String(value);
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (typeof value === "object" && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    const seconds = Number(record.seconds ?? 0);
+    const nanos = Number(record.nanos ?? 0);
+    if (Number.isFinite(seconds) || Number.isFinite(nanos)) {
+      const millis = seconds * 1000 + Math.floor(nanos / 1_000_000);
+      if (millis > 0) {
+        return new Date(millis).toISOString();
+      }
+    }
+    const candidates = [record.text, record.content, record.title, record.name, record.message, record.value];
+    for (const item of candidates) {
+      if (typeof item === "string" && item.trim()) {
+        return item.trim();
+      }
+    }
+  }
+  return "";
 }
 
 function toNumber(value: unknown): number {
@@ -145,7 +177,7 @@ function mapSenderType(value: number): ChatMessage["senderType"] {
   }
 }
 
-function mapMessageType(value: number): ChatMessage["messageType"] {
+function mapMessageType(value: number): ChatMessageType {
   switch (value) {
     case 1:
       return "TEXT";
@@ -160,6 +192,17 @@ function mapMessageType(value: number): ChatMessage["messageType"] {
   }
 }
 
+function mapSceneCode(value: unknown): ConversationSceneCode {
+  const normalized = toString(value).trim().toUpperCase();
+  if (normalized === "PRE_SALE") {
+    return "PRE_SALE";
+  }
+  if (normalized === "AFTER_SALE") {
+    return "AFTER_SALE";
+  }
+  return "";
+}
+
 function normalizeConversation(raw?: RawConversation): ChatConversation {
   const statusCode = toNumber(raw?.conversation_status ?? raw?.conversationStatus);
   return {
@@ -170,6 +213,9 @@ function normalizeConversation(raw?: RawConversation): ChatConversation {
     buyerDisplayName: toString(raw?.buyer_display_name ?? raw?.buyerDisplayName),
     buyerAvatarUrl: toString(raw?.buyer_avatar_url ?? raw?.buyerAvatarUrl),
     shopAvatarUrl: toString(raw?.shop_avatar_url ?? raw?.shopAvatarUrl),
+    sceneCode: mapSceneCode(raw?.scene_code ?? raw?.sceneCode),
+    orderNo: toString(raw?.order_no ?? raw?.orderNo),
+    subOrderNo: toString(raw?.sub_order_no ?? raw?.subOrderNo),
     anchorSpuNo: toString(raw?.anchor_spu_no ?? raw?.anchorSpuNo),
     anchorSkuNo: toString(raw?.anchor_sku_no ?? raw?.anchorSkuNo),
     unreadCount: toNumber(raw?.unread_count ?? raw?.unreadCount),
@@ -203,11 +249,17 @@ function normalizeMessage(raw?: RawMessage): ChatMessage {
 
 export async function createOrGetConversation(payload: {
   shopNo: string;
+  sceneCode?: ConversationSceneCode;
+  orderNo?: string;
+  subOrderNo?: string;
   anchorSpuNo?: string;
   anchorSkuNo?: string;
 }): Promise<ChatConversation> {
   const response = await apiClient.post<RawCreateConversationRes>("/v1/chat/buyer/conversations:get-or-create", {
     shop_no: payload.shopNo,
+    scene_code: payload.sceneCode ?? "",
+    order_no: payload.orderNo ?? "",
+    sub_order_no: payload.subOrderNo ?? "",
     anchor_spu_no: payload.anchorSpuNo ?? "",
     anchor_sku_no: payload.anchorSkuNo ?? ""
   });
@@ -245,13 +297,17 @@ export async function listMessages(conversationNo: string, pageSize = 40, nextCu
 export async function sendBuyerMessage(payload: {
   conversationNo: string;
   contentText: string;
+  messageType?: ChatMessageType;
+  extJson?: string;
   clientMessageNo?: string;
 }): Promise<{ conversation: ChatConversation; message: ChatMessage; idempotentReplay: boolean }> {
+  const messageType = payload.messageType === "PRODUCT_CARD" ? 3 : payload.messageType === "SYSTEM_NOTICE" ? 4 : payload.messageType === "IMAGE" ? 2 : 1;
   const response = await apiClient.post<RawSendMessageRes>("/v1/chat/buyer/messages:send", {
     conversation_no: payload.conversationNo,
     client_message_no: payload.clientMessageNo ?? `m_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    message_type: 1,
-    content_text: payload.contentText
+    message_type: messageType,
+    content_text: payload.contentText,
+    ext_json: payload.extJson ?? ""
   });
   return {
     conversation: normalizeConversation(response?.conversation),
@@ -274,4 +330,3 @@ export async function getUnreadSummary(): Promise<{ totalUnreadConversations: nu
     totalUnreadMessages: toNumber(response?.total_unread_messages ?? response?.totalUnreadMessages)
   };
 }
-

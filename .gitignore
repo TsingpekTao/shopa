@@ -1,0 +1,6 @@
+# Local Electron/asar inspection artifacts
+__asar_check/
+__asar_full/
+__asar_tmp/
+app.fast.asar
+*.asar.bak

@@ -3,11 +3,13 @@ package cart
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	v1 "github.com/TsingpekTao/shopa/cart-svc/api/v1"
@@ -16,6 +18,7 @@ import (
 	"github.com/TsingpekTao/shopa/cart-svc/internal/model/do"
 	"github.com/TsingpekTao/shopa/cart-svc/internal/model/entity"
 	"github.com/TsingpekTao/shopa/cart-svc/internal/service"
+	catalogv1 "github.com/TsingpekTao/shopa/catalog-svc/api/v1"
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/database/gredis"
 	"github.com/gogf/gf/v2/errors/gcode"
@@ -25,6 +28,8 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 	"github.com/gogf/gf/v2/util/gconv"
 	"github.com/gogf/gf/v2/util/guid"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -59,6 +64,19 @@ return {1, payload}
 
 // sCart 是购物车领域的核心逻辑实现，负责 Redis 主存、结算快照和备份同步。
 type sCart struct{}
+
+type catalogSnapshotClient interface {
+	GetSkuSnapshotForOrder(ctx context.Context, req *catalogv1.GetSkuSnapshotForOrderReq, opts ...grpc.CallOption) (*catalogv1.GetSkuSnapshotForOrderRes, error)
+}
+
+var (
+	newCatalogSnapshotClient = defaultCatalogSnapshotClient
+
+	catalogSnapshotClientOnce sync.Once
+	catalogSnapshotConn       *grpc.ClientConn
+	catalogSnapshotInst       catalogSnapshotClient
+	catalogSnapshotErr        error
+)
 
 // redisCartItem 是 Redis Hash 中单个购物车 SKU 的缓存快照结构。
 type redisCartItem struct {
@@ -155,6 +173,9 @@ func (s *sCart) AddItem(ctx context.Context, req *v1.AddItemReq) (*v1.AddItemRes
 	}
 	// 把最新购物车项放回内存快照，便于后续汇总直接复用。
 	items[skuNo] = item
+	if _, err := s.fillCartItemMetadata(ctx, []*redisCartItem{item}, true); err != nil {
+		return nil, err
+	}
 
 	// 单条回写 Redis 主存，保证加购结果立刻对查询接口可见。
 	if err = s.writeCartItem(ctx, userID, item); err != nil {
@@ -513,6 +534,9 @@ func (s *sCart) PrepareCheckout(ctx context.Context, req *v1.PrepareCheckoutReq)
 	if len(selected) == 0 {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "no cart item selected for checkout")
 	}
+	if err = s.enrichCheckoutItems(ctx, selected); err != nil {
+		return nil, err
+	}
 
 	sort.Slice(selected, func(i, j int) bool {
 		return selected[i].SkuNo < selected[j].SkuNo
@@ -855,7 +879,9 @@ func (s *sCart) syncUserBackup(ctx context.Context, userID uint64) error {
 		if scanErr := tx.Model(dao.CartSyncCheckpoint.Table()).
 			Where(checkpointCols.UserId, userID).
 			Scan(&checkpoint); scanErr != nil {
-			return gerror.Wrap(scanErr, "query cart sync checkpoint failed")
+			if !isCartSyncCheckpointMissError(scanErr) {
+				return gerror.Wrap(scanErr, "query cart sync checkpoint failed")
+			}
 		}
 		// ????????????????????
 		now := gtime.Now()
@@ -943,6 +969,14 @@ func (s *sCart) loadCartItems(ctx context.Context, userID uint64, enableColdRest
 		if parseErr != nil {
 			return nil, false, parseErr
 		}
+		if changed, _ := s.backfillCartItemsFromCatalogSnapshots(ctx, items); changed {
+			for _, item := range items {
+				if writeErr := s.writeCartItem(ctx, userID, item); writeErr != nil {
+					g.Log().Warningf(ctx, "[cart-svc] rewrite enriched cart item failed, sku_no=%s: %+v", item.SkuNo, writeErr)
+				}
+			}
+			_ = s.markDirtyUser(ctx, userID)
+		}
 		return items, false, nil
 	}
 	// ???????Redis miss ???????????
@@ -959,6 +993,8 @@ func (s *sCart) loadCartItems(ctx context.Context, userID uint64, enableColdRest
 	if len(backupItems) == 0 {
 		return map[string]*redisCartItem{}, false, nil
 	}
+
+	_, _ = s.backfillCartItemsFromCatalogSnapshots(ctx, backupItems)
 
 	// ??????????? Redis Hash ??????????
 	redisFields := make(map[string]any, len(backupItems))
@@ -1302,4 +1338,126 @@ func userIDFromMetadata(ctx context.Context, keys ...string) (uint64, bool) {
 	}
 	// ?? key ???????? user_id ??? false?
 	return 0, false
+}
+
+func isCartSyncCheckpointMissError(err error) bool {
+	return err == sql.ErrNoRows
+}
+
+func (s *sCart) enrichCheckoutItems(ctx context.Context, items []*redisCartItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+	client, err := newCatalogSnapshotClient(ctx)
+	if err != nil {
+		return err
+	}
+
+	skuNos := make([]string, 0, len(items))
+	for _, item := range items {
+		if item == nil || strings.TrimSpace(item.SkuNo) == "" {
+			continue
+		}
+		skuNos = append(skuNos, strings.TrimSpace(item.SkuNo))
+	}
+	res, err := client.GetSkuSnapshotForOrder(ctx, &catalogv1.GetSkuSnapshotForOrderReq{SkuNos: skuNos})
+	if err != nil {
+		return gerror.Wrap(err, "get sku snapshot for checkout failed")
+	}
+
+	snapshotMap := make(map[string]*catalogv1.SkuOrderSnapshot, len(res.GetSnapshots()))
+	for _, snapshot := range res.GetSnapshots() {
+		snapshotMap[strings.TrimSpace(snapshot.GetSkuNo())] = snapshot
+	}
+
+	for _, item := range items {
+		snapshot := snapshotMap[strings.TrimSpace(item.SkuNo)]
+		if snapshot == nil {
+			return gerror.NewCodef(gcode.CodeNotFound, "sku snapshot not found, sku_no=%s", item.SkuNo)
+		}
+		saleAttrsBody, marshalErr := json.Marshal(snapshot.GetSaleAttrs())
+		if marshalErr != nil {
+			return gerror.Wrapf(marshalErr, "marshal sku sale attrs failed, sku_no=%s", item.SkuNo)
+		}
+		item.SpuNo = snapshot.GetSpuNo()
+		item.ShopNo = snapshot.GetShopNo()
+		item.SpuTitle = snapshot.GetSpuTitle()
+		item.SkuName = snapshot.GetSkuName()
+		item.SkuImageAssetID = snapshot.GetSkuImageAssetId()
+		item.SalePrice = snapshot.GetSalePrice()
+		item.MarketPrice = snapshot.GetMarketPrice()
+		item.SaleAttrsJSON = nonEmptyJSON(string(saleAttrsBody))
+	}
+	return nil
+}
+
+func needsCartMetadata(item *redisCartItem) bool {
+	if item == nil {
+		return false
+	}
+	if strings.TrimSpace(item.SkuNo) == "" {
+		return false
+	}
+	return item.SkuImageAssetID == 0 ||
+		strings.TrimSpace(item.SpuNo) == "" ||
+		strings.TrimSpace(item.ShopNo) == "" ||
+		strings.TrimSpace(item.SpuTitle) == "" ||
+		strings.TrimSpace(item.SkuName) == "" ||
+		item.SalePrice == 0 ||
+		item.MarketPrice == 0 ||
+		strings.TrimSpace(nonEmptyJSON(item.SaleAttrsJSON)) == "[]"
+}
+
+func (s *sCart) fillCartItemMetadata(ctx context.Context, items []*redisCartItem, required bool) ([]*redisCartItem, error) {
+	targets := make([]*redisCartItem, 0, len(items))
+	for _, item := range items {
+		if needsCartMetadata(item) {
+			targets = append(targets, item)
+		}
+	}
+	if len(targets) == 0 {
+		return nil, nil
+	}
+	if err := s.enrichCheckoutItems(ctx, targets); err != nil {
+		if required {
+			return nil, err
+		}
+		g.Log().Warningf(ctx, "[cart-svc] enrich cart metadata failed: %+v", err)
+		return nil, nil
+	}
+	return targets, nil
+}
+
+func (s *sCart) backfillCartItemsFromCatalogSnapshots(ctx context.Context, items map[string]*redisCartItem) (bool, error) {
+	if len(items) == 0 {
+		return false, nil
+	}
+	targets := make([]*redisCartItem, 0, len(items))
+	for _, item := range items {
+		targets = append(targets, item)
+	}
+	filled, err := s.fillCartItemMetadata(ctx, targets, false)
+	if err != nil {
+		return false, err
+	}
+	return len(filled) > 0, nil
+}
+
+func defaultCatalogSnapshotClient(ctx context.Context) (catalogSnapshotClient, error) {
+	catalogSnapshotClientOnce.Do(func() {
+		addr := strings.TrimSpace(g.Cfg().MustGet(ctx, "upstream.catalogGrpc", "127.0.0.1:9004").String())
+		timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		catalogSnapshotConn, catalogSnapshotErr = grpc.DialContext(timeoutCtx, addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if catalogSnapshotErr != nil {
+			catalogSnapshotErr = gerror.Wrapf(catalogSnapshotErr, "dial catalog-svc failed, addr=%s", addr)
+			return
+		}
+		catalogSnapshotInst = catalogv1.NewInternalCatalogServiceClient(catalogSnapshotConn)
+	})
+	if catalogSnapshotErr != nil {
+		return nil, catalogSnapshotErr
+	}
+	return catalogSnapshotInst, nil
 }

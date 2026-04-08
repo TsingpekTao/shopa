@@ -7,22 +7,27 @@ toolchain go1.24.3
 require (
 	github.com/gogf/gf/contrib/drivers/mysql/v2 v2.10.0
 	github.com/gogf/gf/contrib/nosql/redis/v2 v2.10.0
+	github.com/gogf/gf/contrib/rpc/grpcx/v2 v2.10.0
 	github.com/gogf/gf/v2 v2.10.0
 	golang.org/x/sync v0.19.0
+	google.golang.org/genproto/googleapis/api v0.0.0-20251202230838-ff82c1b0f217
 	google.golang.org/grpc v1.79.3
 )
 
 require (
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/go-sql-driver/mysql v1.7.1 // indirect
+	github.com/gogf/gf/contrib/registry/file/v2 v2.10.0 // indirect
 	github.com/redis/go-redis/v9 v9.12.1 // indirect
 )
 
 require (
 	github.com/BurntSushi/toml v1.5.0 // indirect
+	github.com/TsingpekTao/shopa/aftersale-svc v0.0.0
 	github.com/TsingpekTao/shopa/catalog-svc v0.0.0
 	github.com/TsingpekTao/shopa/iam-svc v0.0.0
 	github.com/TsingpekTao/shopa/inventory-svc v0.0.0
+	github.com/TsingpekTao/shopa/order-svc v0.0.0
 	github.com/TsingpekTao/shopa/points-svc v0.0.0
 	github.com/TsingpekTao/shopa/seller-shop-svc v0.0.0
 	github.com/TsingpekTao/shopa/user-profile-svc v0.0.0
@@ -66,5 +71,9 @@ replace github.com/TsingpekTao/shopa/points-svc => ../points-svc
 replace github.com/TsingpekTao/shopa/catalog-svc => ../catalog-svc
 
 replace github.com/TsingpekTao/shopa/inventory-svc => ../inventory-svc
+
+replace github.com/TsingpekTao/shopa/order-svc => ../order-svc
+
+replace github.com/TsingpekTao/shopa/aftersale-svc => ../aftersale-svc
 
 replace github.com/TsingpekTao/shopa/seller-shop-svc => ../seller-shop-svc

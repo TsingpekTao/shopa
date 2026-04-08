@@ -22,6 +22,8 @@ var (
 		Brief: "start order gRPC and HTTP servers",
 		Func: func(ctx context.Context, parser *gcmd.Parser) (err error) {
 			worker.StartPointsCompensationWorker(ctx)
+			worker.StartUnpaidCloseWorker(ctx)
+			worker.StartAutoReceiveWorker(ctx)
 
 			go func() {
 				c := grpcx.Server.NewConfig()

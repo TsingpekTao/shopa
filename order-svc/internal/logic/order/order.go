@@ -2,17 +2,25 @@ package order
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	cartv1 "github.com/TsingpekTao/shopa/cart-svc/api/v1"
+	catalogv1 "github.com/TsingpekTao/shopa/catalog-svc/api/v1"
+	inventoryv1 "github.com/TsingpekTao/shopa/inventory-svc/api/v1"
 	v1 "github.com/TsingpekTao/shopa/order-svc/api/v1"
 	"github.com/TsingpekTao/shopa/order-svc/internal/dao"
 	"github.com/TsingpekTao/shopa/order-svc/internal/model/do"
 	"github.com/TsingpekTao/shopa/order-svc/internal/model/entity"
 	"github.com/TsingpekTao/shopa/order-svc/internal/service"
+	paymentv1 "github.com/TsingpekTao/shopa/payment-svc/api/v1"
+	userprofilev1 "github.com/TsingpekTao/shopa/user-profile-svc/api/v1"
 	"github.com/gogf/gf/contrib/rpc/grpcx/v2"
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/errors/gcode"
@@ -20,6 +28,10 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 	"github.com/gogf/gf/v2/util/gconv"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -34,12 +46,69 @@ const (
 	idempotencyActionCancelOrder    = "CANCEL_MY_ORDER"
 	idempotencyActionPayCallback    = "PAY_CALLBACK"
 
-	defaultPageSize = 20
-	maxPageSize     = 100
+	defaultPageSize        = 20
+	maxPageSize            = 100
+	defaultOrderPayTimeout = 15 * time.Minute
 )
 
 type sOrder struct {
 }
+
+type buyerPaymentIntentClient interface {
+	CreatePaymentIntent(ctx context.Context, req *paymentv1.CreatePaymentIntentReq, opts ...grpc.CallOption) (*paymentv1.CreatePaymentIntentRes, error)
+}
+
+type buyerAddressSnapshotClient interface {
+	GetAddressSnapshotById(ctx context.Context, req *userprofilev1.GetAddressSnapshotByIdReq, opts ...grpc.CallOption) (*userprofilev1.GetAddressSnapshotByIdRes, error)
+}
+
+type catalogSnapshotClient interface {
+	GetSkuSnapshotForOrder(ctx context.Context, req *catalogv1.GetSkuSnapshotForOrderReq, opts ...grpc.CallOption) (*catalogv1.GetSkuSnapshotForOrderRes, error)
+}
+
+type orderInventoryClient interface {
+	ReserveStock(ctx context.Context, req *inventoryv1.ReserveStockReq, opts ...grpc.CallOption) (*inventoryv1.ReserveStockRes, error)
+	ConfirmReservation(ctx context.Context, req *inventoryv1.ConfirmReservationReq, opts ...grpc.CallOption) (*inventoryv1.ConfirmReservationRes, error)
+	CancelReservation(ctx context.Context, req *inventoryv1.CancelReservationReq, opts ...grpc.CallOption) (*inventoryv1.CancelReservationRes, error)
+}
+
+type requestPayPayload struct {
+	PayURL         string
+	PayPayloadJSON string
+	ExpireAt       *timestamppb.Timestamp
+}
+
+var (
+	newBuyerPaymentClient    = defaultBuyerPaymentClient
+	newBuyerAddressClient    = defaultBuyerAddressClient
+	newCatalogSnapshotClient = defaultCatalogSnapshotClient
+	newOrderInventoryClient  = defaultOrderInventoryClient
+
+	buyerPaymentClientOnce sync.Once
+	buyerPaymentClientConn *grpc.ClientConn
+	buyerPaymentClientInst buyerPaymentIntentClient
+	buyerPaymentClientErr  error
+
+	buyerAddressClientOnce sync.Once
+	buyerAddressClientConn *grpc.ClientConn
+	buyerAddressClientInst buyerAddressSnapshotClient
+	buyerAddressClientErr  error
+
+	catalogSnapshotClientOnce sync.Once
+	catalogSnapshotConn       *grpc.ClientConn
+	catalogSnapshotInst       catalogSnapshotClient
+	catalogSnapshotErr        error
+
+	orderInventoryClientOnce sync.Once
+	orderInventoryConn       *grpc.ClientConn
+	orderInventoryInst       orderInventoryClient
+	orderInventoryErr        error
+
+	buyerCartClientOnce sync.Once
+	buyerCartClientConn *grpc.ClientConn
+	buyerCartClientInst cartv1.BuyerCartServiceClient
+	buyerCartClientErr  error
+)
 
 // New 创建订单领域逻辑实例。
 func New() *sOrder { return &sOrder{} }
@@ -71,6 +140,11 @@ func (s *sOrder) CreateOrderFromCart(ctx context.Context, req *v1.CreateOrderFro
 		}
 		return &v1.CreateOrderFromCartRes{Order: agg, IdempotentReplay: replay}, nil
 	}
+	addressSnapshot, err := s.fetchUserAddressSnapshot(ctx, req.GetAddressId())
+	if err != nil {
+		_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionCreateFromCart, "ADDRESS_SNAPSHOT_FAILED")
+		return nil, err
+	}
 	snap, err := s.consumeCheckoutSnapshot(ctx, req.GetCheckoutToken())
 	if err != nil {
 		_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionCreateFromCart, "TOKEN_CONSUME_FAILED")
@@ -94,16 +168,21 @@ func (s *sOrder) CreateOrderFromCart(ctx context.Context, req *v1.CreateOrderFro
 	}
 	// 组装创建订单所需的关键字段。
 	orderNo := generateBizNo("ORD")
+	if err = hydrateOrderLinesFromCatalog(ctx, lines, false); err != nil {
+		_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionCreateFromCart, "CATALOG_SNAPSHOT_FAILED")
+		return nil, err
+	}
 	createInput := &createOrderInput{
-		OrderNo:        orderNo,
-		UserID:         userID,
-		AddressID:      req.GetAddressId(),
-		BuyerRemark:    req.GetBuyerRemark(),
-		GoodsAmount:    snap.GoodsAmount,
-		FreightAmount:  snap.FreightAmount,
-		DiscountAmount: 0,
-		PayableAmount:  snap.PayableAmount,
-		Lines:          lines,
+		OrderNo:         orderNo,
+		UserID:          userID,
+		AddressID:       req.GetAddressId(),
+		AddressSnapshot: addressSnapshot,
+		BuyerRemark:     req.GetBuyerRemark(),
+		GoodsAmount:     snap.GoodsAmount,
+		FreightAmount:   snap.FreightAmount,
+		DiscountAmount:  0,
+		PayableAmount:   snap.PayableAmount,
+		Lines:           lines,
 	}
 	previewResp, err := s.previewOrderPoints(ctx, createInput, req.GetUsePoints(), req.GetIntentPoints(), req.GetExpectedPointsCashAmount(), req.GetPointsRuleSnapshotDigest(), req.GetSubmitSourceCode())
 	if err != nil {
@@ -180,6 +259,11 @@ func (s *sOrder) CreateOrderBuyNow(ctx context.Context, req *v1.CreateOrderBuyNo
 		}
 		return &v1.CreateOrderBuyNowRes{Order: agg, IdempotentReplay: replay}, nil
 	}
+	addressSnapshot, err := s.fetchUserAddressSnapshot(ctx, req.GetAddressId())
+	if err != nil {
+		_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionCreateBuyNow, "ADDRESS_SNAPSHOT_FAILED")
+		return nil, err
+	}
 	lines := make([]orderLine, 0, len(req.GetItems()))
 	for _, item := range req.GetItems() {
 		if strings.TrimSpace(item.GetSkuNo()) == "" || strings.TrimSpace(item.GetSpuNo()) == "" || strings.TrimSpace(item.GetShopNo()) == "" || item.GetQty() == 0 {
@@ -188,8 +272,12 @@ func (s *sOrder) CreateOrderBuyNow(ctx context.Context, req *v1.CreateOrderBuyNo
 		}
 		lines = append(lines, orderLine{SkuNo: item.GetSkuNo(), SpuNo: item.GetSpuNo(), ShopNo: item.GetShopNo(), Qty: item.GetQty()})
 	}
+	if err = hydrateOrderLinesFromCatalog(ctx, lines, true); err != nil {
+		_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionCreateBuyNow, "CATALOG_SNAPSHOT_FAILED")
+		return nil, err
+	}
 	orderNo := generateBizNo("ORD")
-	createInput := &createOrderInput{OrderNo: orderNo, UserID: userID, AddressID: req.GetAddressId(), BuyerRemark: req.GetBuyerRemark(), Lines: lines}
+	createInput := &createOrderInput{OrderNo: orderNo, UserID: userID, AddressID: req.GetAddressId(), AddressSnapshot: addressSnapshot, BuyerRemark: req.GetBuyerRemark(), Lines: lines}
 	previewResp, err := s.previewOrderPoints(ctx, createInput, req.GetUsePoints(), req.GetIntentPoints(), req.GetExpectedPointsCashAmount(), req.GetPointsRuleSnapshotDigest(), req.GetSubmitSourceCode())
 	if err != nil {
 		_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionCreateBuyNow, "POINTS_PREVIEW_FAILED")
@@ -234,6 +322,74 @@ func (s *sOrder) CreateOrderBuyNow(ctx context.Context, req *v1.CreateOrderBuyNo
 }
 
 // RequestPay 为指定订单发起支付请求。
+// UpdateMyOrderAddress 更新待支付订单的收货地址快照。
+func (s *sOrder) UpdateMyOrderAddress(ctx context.Context, req *v1.UpdateMyOrderAddressReq) (*v1.UpdateMyOrderAddressRes, error) {
+	if req == nil || strings.TrimSpace(req.GetOrderNo()) == "" || req.GetAddressId() == 0 {
+		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "order_no/address_id are required")
+	}
+	userID, err := userIDFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	addressSnapshot, err := s.fetchUserAddressSnapshot(ctx, req.GetAddressId())
+	if err != nil {
+		return nil, err
+	}
+
+	err = dao.OrderMain.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		cols := dao.OrderMain.Columns()
+		var mainRow entity.OrderMain
+		if err := tx.Model(dao.OrderMain.Table()).Where(cols.OrderNo, req.GetOrderNo()).Where(cols.UserId, userID).Scan(&mainRow); err != nil {
+			return gerror.Wrap(err, "query order_main failed")
+		}
+		if mainRow.Id == 0 {
+			return gerror.NewCode(gcode.CodeNotFound, "order not found")
+		}
+		if !canUpdateOrderAddress(&mainRow) {
+			return gerror.NewCode(gcode.CodeBusinessValidationFailed, "order address cannot be changed after payment is completed or order is closed")
+		}
+
+		addressData := buildOrderAddressSnapshotDO(req.GetOrderNo(), addressSnapshot)
+		result, err := tx.Model(dao.OrderAddressSnapshot.Table()).
+			Where(dao.OrderAddressSnapshot.Columns().OrderNo, req.GetOrderNo()).
+			Data(addressData).
+			Update()
+		if err != nil {
+			return gerror.Wrap(err, "update order_address_snapshot failed")
+		}
+		rows, _ := result.RowsAffected()
+		if rows == 0 {
+			if _, err = tx.Model(dao.OrderAddressSnapshot.Table()).Data(addressData).Insert(); err != nil {
+				return gerror.Wrap(err, "insert order_address_snapshot failed")
+			}
+		}
+
+		_, err = tx.Model(dao.OrderMain.Table()).
+			Where(cols.OrderNo, req.GetOrderNo()).
+			Where(cols.UserId, userID).
+			Data(do.OrderMain{Version: gdb.Raw(cols.Version + " + 1")}).
+			Update()
+		if err != nil {
+			return gerror.Wrap(err, "touch order_main version failed")
+		}
+
+		appendOperateLogTx(ctx, tx, req.GetOrderNo(), "", "ORDER_ADDRESS_UPDATE", "", v1.OrderStatus(mainRow.OrderStatus).String(), map[string]any{
+			"source_address_id":      addressSnapshot.GetSourceAddressId(),
+			"source_address_version": addressSnapshot.GetSourceAddressVersion(),
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	agg, err := s.loadOrderAggregate(ctx, req.GetOrderNo())
+	if err != nil {
+		return nil, err
+	}
+	return &v1.UpdateMyOrderAddressRes{Order: agg}, nil
+}
+
 func (s *sOrder) RequestPay(ctx context.Context, req *v1.RequestPayReq) (*v1.RequestPayRes, error) {
 	if req == nil || strings.TrimSpace(req.GetOrderNo()) == "" || strings.TrimSpace(req.GetIdempotencyKey()) == "" || req.GetPayChannel() == v1.PayChannel_PAY_CHANNEL_UNSPECIFIED {
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "order_no/pay_channel/idempotency_key are required")
@@ -261,16 +417,44 @@ func (s *sOrder) RequestPay(ctx context.Context, req *v1.RequestPayReq) (*v1.Req
 		_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionRequestPay, "ORDER_NOT_PAYABLE")
 		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "order not payable")
 	}
-	payNo := generateBizNo("PAY")
-	expireAt := mainRow.PayDeadlineAt
-	if expireAt == nil {
-		expireAt = gtime.NewFromTime(time.Now().Add(15 * time.Minute))
+	if mainRow.PayableAmount == 0 {
+		_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionRequestPay, "ORDER_PAYABLE_AMOUNT_ZERO")
+		return nil, gerror.NewCode(gcode.CodeBusinessValidationFailed, "order payable amount must be greater than 0")
 	}
-	// 事务内同时插入支付记录与更新主单支付状态，保证状态一致。
+	paymentIntent, err := s.createPaymentIntent(ctx, mainRow, userID, req.GetPayChannel(), req.GetIdempotencyKey())
+	if err != nil {
+		_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionRequestPay, "PAYMENT_INTENT_CREATE_FAILED")
+		return nil, err
+	}
+	if paymentIntent.GetIntent() == nil || strings.TrimSpace(paymentIntent.GetIntent().GetPaymentNo()) == "" {
+		_ = s.markIdempotencyFailed(ctx, userID, req.GetIdempotencyKey(), idempotencyActionRequestPay, "PAYMENT_INTENT_INVALID")
+		return nil, gerror.NewCode(gcode.CodeInternalError, "payment intent response missing payment_no")
+	}
+	payNo := paymentIntent.GetIntent().GetPaymentNo()
+	expireAt := paymentIntent.GetIntent().GetGatewayExpireAt()
+	if expireAt == nil {
+		expireAt = toProtoTs(mainRow.PayDeadlineAt)
+	}
+	rawPayload := buildRequestPayPayloadJSON(paymentIntent.GetPayUrl(), paymentIntent.GetPayPayloadJson(), expireAt)
+	// 事务内同步最新支付拉起信息，重复拉起时复用同一 pay_no 记录，避免唯一键冲突。
 	if err = dao.OrderMain.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		_, err = tx.Model(dao.OrderPayment.Table()).Data(do.OrderPayment{OrderNo: req.GetOrderNo(), PayNo: payNo, PaymentEventId: generateBizNo("PEV"), PayChannel: uint(req.GetPayChannel()), PayStatusCode: "PAYING"}).Insert()
+		payCols := dao.OrderPayment.Columns()
+		var existingPay entity.OrderPayment
+		scanErr := tx.Model(dao.OrderPayment.Table()).Where(payCols.PayNo, payNo).Scan(&existingPay)
+		insertPay, err := shouldInsertOrderPayment(&existingPay, scanErr)
 		if err != nil {
-			return gerror.Wrap(err, "insert order_payment failed")
+			return gerror.Wrap(err, "query order_payment by pay_no failed")
+		}
+		if insertPay {
+			_, err = tx.Model(dao.OrderPayment.Table()).Data(do.OrderPayment{OrderNo: req.GetOrderNo(), PayNo: payNo, PaymentEventId: generateBizNo("PEV"), PayChannel: uint(req.GetPayChannel()), PayStatusCode: "PAYING", RawPayload: rawPayload}).Insert()
+			if err != nil {
+				return gerror.Wrap(err, "insert order_payment failed")
+			}
+		} else {
+			_, err = tx.Model(dao.OrderPayment.Table()).Where(payCols.PayNo, payNo).Data(do.OrderPayment{PayChannel: uint(req.GetPayChannel()), PayStatusCode: "PAYING", RawPayload: rawPayload}).Update()
+			if err != nil {
+				return gerror.Wrap(err, "update order_payment replay failed")
+			}
 		}
 		cols := dao.OrderMain.Columns()
 		_, err = tx.Model(dao.OrderMain.Table()).Where(cols.OrderNo, req.GetOrderNo()).Where(cols.OrderStatus, uint(v1.OrderStatus_ORDER_STATUS_PENDING_PAY)).Data(do.OrderMain{PaymentStatus: uint(v1.PaymentStatus_PAYMENT_STATUS_PAYING), Version: gdb.Raw(cols.Version + " + 1")}).Update()
@@ -282,7 +466,20 @@ func (s *sOrder) RequestPay(ctx context.Context, req *v1.RequestPayReq) (*v1.Req
 	if err = s.markIdempotencySuccess(ctx, userID, req.GetIdempotencyKey(), idempotencyActionRequestPay, req.GetOrderNo(), map[string]any{"pay_no": payNo}); err != nil {
 		return nil, err
 	}
-	return &v1.RequestPayRes{OrderNo: req.GetOrderNo(), PayNo: payNo, PaymentStatus: v1.PaymentStatus_PAYMENT_STATUS_PAYING, PayUrl: fmt.Sprintf("https://mock-pay.shopa.local/pay?pay_no=%s", payNo), PayPayloadJson: "{}", ExpireAt: toProtoTs(expireAt)}, nil
+	return &v1.RequestPayRes{OrderNo: req.GetOrderNo(), PayNo: payNo, PaymentStatus: v1.PaymentStatus_PAYMENT_STATUS_PAYING, PayUrl: paymentIntent.GetPayUrl(), PayPayloadJson: paymentIntent.GetPayPayloadJson(), ExpireAt: expireAt}, nil
+}
+
+func shouldInsertOrderPayment(row *entity.OrderPayment, err error) (bool, error) {
+	if err != nil {
+		if isIdempotencyMissError(err) {
+			return true, nil
+		}
+		return false, err
+	}
+	if row == nil || row.Id == 0 {
+		return true, nil
+	}
+	return false, nil
 }
 
 // CancelMyOrder 取消当前买家的订单。
@@ -661,10 +858,11 @@ func (s *sOrder) HandlePayCallback(ctx context.Context, req *v1.HandlePayCallbac
 		mainCols := dao.OrderMain.Columns()
 		payCols := dao.OrderPayment.Columns()
 		var byEvent entity.OrderPayment
-		if err := tx.Model(dao.OrderPayment.Table()).Where(payCols.PaymentEventId, req.GetPaymentEventId()).Scan(&byEvent); err != nil {
+		insertByEvent, err := shouldInsertOrderPayment(&byEvent, tx.Model(dao.OrderPayment.Table()).Where(payCols.PaymentEventId, req.GetPaymentEventId()).Scan(&byEvent))
+		if err != nil {
 			return gerror.Wrap(err, "query payment by event id failed")
 		}
-		if byEvent.Id > 0 {
+		if !insertByEvent {
 			// 已处理过该事件，直接读取当前状态并返回。
 			callbackHit = true
 			mainRow, loadErr := s.getOrderMainByNoTx(ctx, tx, req.GetOrderNo())
@@ -679,10 +877,11 @@ func (s *sOrder) HandlePayCallback(ctx context.Context, req *v1.HandlePayCallbac
 			return nil
 		}
 		var byPayNo entity.OrderPayment
-		if err := tx.Model(dao.OrderPayment.Table()).Where(payCols.PayNo, req.GetPayNo()).Scan(&byPayNo); err != nil {
+		insertByPayNo, err := shouldInsertOrderPayment(&byPayNo, tx.Model(dao.OrderPayment.Table()).Where(payCols.PayNo, req.GetPayNo()).Scan(&byPayNo))
+		if err != nil {
 			return gerror.Wrap(err, "query payment by pay_no failed")
 		}
-		if byPayNo.Id == 0 {
+		if insertByPayNo {
 			_, err := tx.Model(dao.OrderPayment.Table()).Data(do.OrderPayment{OrderNo: req.GetOrderNo(), PayNo: req.GetPayNo(), PaymentEventId: req.GetPaymentEventId(), PayChannel: uint(req.GetPayChannel()), PayStatusCode: payCode, ChannelTradeNo: req.GetChannelTradeNo(), PaidAmount: req.GetPaidAmount(), PaidAt: paidAt, RawPayload: req.GetRawPayload()}).Insert()
 			if err != nil {
 				return gerror.Wrap(err, "insert order_payment failed")
@@ -755,6 +954,20 @@ func (s *sOrder) HandlePayCallback(ctx context.Context, req *v1.HandlePayCallbac
 			return nil, err
 		}
 	}
+	if !refundRequired && orderStatus == v1.OrderStatus_ORDER_STATUS_PAID {
+		if err = s.grantPointsByOrderCompleted(ctx, userID, req.GetOrderNo(), req.GetPaidAmount(), buildPointsGrantIdempotencyKey(req.GetOrderNo())); err != nil {
+			_ = s.markIdempotencyFailed(ctx, 0, idem, idempotencyActionPayCallback, "POINTS_GRANT_FAILED")
+			return nil, err
+		}
+	}
+	if !refundRequired && !callbackHit && orderStatus == v1.OrderStatus_ORDER_STATUS_PAID {
+		agg, loadErr := s.loadOrderAggregate(ctx, req.GetOrderNo())
+		if loadErr != nil {
+			_ = s.markIdempotencyFailed(ctx, 0, idem, idempotencyActionPayCallback, "LOAD_ORDER_AGGREGATE_FAILED")
+			return nil, loadErr
+		}
+		s.removeOrderedCartItemsBestEffort(ctx, userID, collectOrderItemSkuNos(agg))
+	}
 	if err = s.markIdempotencySuccess(ctx, 0, idem, idempotencyActionPayCallback, req.GetOrderNo(), nil); err != nil {
 		return nil, err
 	}
@@ -777,6 +990,7 @@ type createOrderInput struct {
 	OrderNo                  string
 	UserID                   uint64
 	AddressID                uint64
+	AddressSnapshot          *userprofilev1.AddressSnapshot
 	BuyerRemark              string
 	ReservationNo            string
 	PointsReservationNo      string
@@ -840,6 +1054,131 @@ func snapshotToOrderLines(snapshot *checkoutSnapshot) []orderLine {
 	return lines
 }
 
+func collectSnapshotSkuNos(snapshot *checkoutSnapshot) []string {
+	if snapshot == nil || len(snapshot.Items) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(snapshot.Items))
+	skuNos := make([]string, 0, len(snapshot.Items))
+	for _, item := range snapshot.Items {
+		skuNo := strings.TrimSpace(item.SkuNo)
+		if skuNo == "" {
+			continue
+		}
+		if _, ok := seen[skuNo]; ok {
+			continue
+		}
+		seen[skuNo] = struct{}{}
+		skuNos = append(skuNos, skuNo)
+	}
+	return skuNos
+}
+
+func collectOrderItemSkuNos(order *v1.OrderMain) []string {
+	if order == nil || len(order.GetSubOrders()) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	skuNos := make([]string, 0)
+	for _, sub := range order.GetSubOrders() {
+		for _, item := range sub.GetItems() {
+			skuNo := strings.TrimSpace(item.GetSkuNo())
+			if skuNo == "" {
+				continue
+			}
+			if _, ok := seen[skuNo]; ok {
+				continue
+			}
+			seen[skuNo] = struct{}{}
+			skuNos = append(skuNos, skuNo)
+		}
+	}
+	return skuNos
+}
+
+func hydrateOrderLinesFromCatalog(ctx context.Context, lines []orderLine, overwritePrice bool) error {
+	if len(lines) == 0 {
+		return nil
+	}
+	client, err := newCatalogSnapshotClient(ctx)
+	if err != nil {
+		return err
+	}
+	skuNos := make([]string, 0, len(lines))
+	seen := make(map[string]struct{}, len(lines))
+	for _, line := range lines {
+		skuNo := strings.TrimSpace(line.SkuNo)
+		if skuNo == "" {
+			return gerror.NewCode(gcode.CodeInvalidParameter, "order line sku_no is required")
+		}
+		if _, ok := seen[skuNo]; ok {
+			continue
+		}
+		seen[skuNo] = struct{}{}
+		skuNos = append(skuNos, skuNo)
+	}
+	res, err := client.GetSkuSnapshotForOrder(ctx, &catalogv1.GetSkuSnapshotForOrderReq{SkuNos: skuNos})
+	if err != nil {
+		return gerror.Wrap(err, "get sku snapshot for order failed")
+	}
+	snapshots := make(map[string]*catalogv1.SkuOrderSnapshot, len(res.GetSnapshots()))
+	for _, snapshot := range res.GetSnapshots() {
+		snapshots[strings.TrimSpace(snapshot.GetSkuNo())] = snapshot
+	}
+	return hydrateOrderLinesFromSnapshots(lines, snapshots, overwritePrice)
+}
+
+func hydrateOrderLinesFromSnapshots(lines []orderLine, snapshots map[string]*catalogv1.SkuOrderSnapshot, overwritePrice bool) error {
+	for idx := range lines {
+		line := &lines[idx]
+		skuNo := strings.TrimSpace(line.SkuNo)
+		if skuNo == "" {
+			return gerror.NewCode(gcode.CodeInvalidParameter, "order line sku_no is required")
+		}
+		snapshot := snapshots[skuNo]
+		if snapshot == nil {
+			return gerror.NewCodef(gcode.CodeNotFound, "sku snapshot not found, sku_no=%s", skuNo)
+		}
+		saleAttrsJSON, err := marshalSkuSaleAttrsJSON(snapshot.GetSaleAttrs())
+		if err != nil {
+			return gerror.Wrapf(err, "marshal sku sale attrs failed, sku_no=%s", skuNo)
+		}
+		if strings.TrimSpace(line.SpuNo) == "" {
+			line.SpuNo = snapshot.GetSpuNo()
+		}
+		if strings.TrimSpace(line.ShopNo) == "" {
+			line.ShopNo = snapshot.GetShopNo()
+		}
+		if strings.TrimSpace(line.SpuTitle) == "" {
+			line.SpuTitle = snapshot.GetSpuTitle()
+		}
+		if strings.TrimSpace(line.SkuName) == "" {
+			line.SkuName = snapshot.GetSkuName()
+		}
+		if line.SkuImageAssetID == 0 {
+			line.SkuImageAssetID = snapshot.GetSkuImageAssetId()
+		}
+		if strings.TrimSpace(line.SaleAttrsJSON) == "" && saleAttrsJSON != "" {
+			line.SaleAttrsJSON = saleAttrsJSON
+		}
+		if overwritePrice || line.SalePrice == 0 {
+			line.SalePrice = snapshot.GetSalePrice()
+		}
+		if overwritePrice || line.MarketPrice == 0 {
+			line.MarketPrice = snapshot.GetMarketPrice()
+		}
+	}
+	return nil
+}
+
+func marshalSkuSaleAttrsJSON(attrs []*catalogv1.SkuSaleAttr) (string, error) {
+	body, err := json.Marshal(attrs)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(body)), nil
+}
+
 // createOrderAggregate 在事务内落库订单主表、子表与快照。
 func (s *sOrder) createOrderAggregate(ctx context.Context, input *createOrderInput) (*v1.OrderMain, error) {
 	if input == nil || strings.TrimSpace(input.OrderNo) == "" || len(input.Lines) == 0 {
@@ -897,14 +1236,14 @@ func (s *sOrder) createOrderAggregate(ctx context.Context, input *createOrderInp
 			}
 		}
 	}
-	payDeadline := gtime.NewFromTime(time.Now().Add(15 * time.Minute))
+	payDeadline := gtime.NewFromTime(time.Now().Add(defaultOrderPayTimeout))
 	// 事务写入主单、地址快照、子单、明细、库存关联，任何一步失败都会整体回滚。
 	err := dao.OrderMain.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		_, err := tx.Model(dao.OrderMain.Table()).Data(do.OrderMain{OrderNo: input.OrderNo, UserId: input.UserID, OrderStatus: uint(v1.OrderStatus_ORDER_STATUS_PENDING_PAY), PaymentStatus: uint(v1.PaymentStatus_PAYMENT_STATUS_UNPAID), ReservationNo: input.ReservationNo, PointsReservationNo: input.PointsReservationNo, GoodsAmount: mainGoods, FreightAmount: mainFreight, DiscountAmount: mainDiscount, PayableAmount: mainPayable, PaidAmount: uint64(0), PointsUsed: input.PointsUsed, PointsDiscountAmount: input.PointsDiscountAmount, PointsRuleSnapshotJson: input.PointsRuleSnapshotJSON, PointsRuleSnapshotDigest: input.PointsRuleSnapshotDigest, BuyerRemark: input.BuyerRemark, CancelReasonCode: uint(v1.CancelReasonCode_CANCEL_REASON_CODE_UNSPECIFIED), PayDeadlineAt: payDeadline, Version: uint64(1)}).Insert()
+		_, err := tx.Model(dao.OrderMain.Table()).Data(do.OrderMain{OrderNo: input.OrderNo, UserId: input.UserID, OrderStatus: uint(v1.OrderStatus_ORDER_STATUS_PENDING_PAY), PaymentStatus: uint(v1.PaymentStatus_PAYMENT_STATUS_UNPAID), ReservationNo: input.ReservationNo, PointsReservationNo: input.PointsReservationNo, GoodsAmount: mainGoods, FreightAmount: mainFreight, DiscountAmount: mainDiscount, PayableAmount: mainPayable, PaidAmount: uint64(0), PointsUsed: input.PointsUsed, PointsDiscountAmount: input.PointsDiscountAmount, PointsRuleSnapshotJson: normalizeOptionalJSONColumnValue(input.PointsRuleSnapshotJSON), PointsRuleSnapshotDigest: input.PointsRuleSnapshotDigest, BuyerRemark: input.BuyerRemark, CancelReasonCode: uint(v1.CancelReasonCode_CANCEL_REASON_CODE_UNSPECIFIED), PayDeadlineAt: payDeadline, Version: uint64(1)}).Insert()
 		if err != nil {
 			return gerror.Wrap(err, "insert order_main failed")
 		}
-		_, err = tx.Model(dao.OrderAddressSnapshot.Table()).Data(do.OrderAddressSnapshot{OrderNo: input.OrderNo, SourceAddressId: input.AddressID, SourceAddressVersion: uint64(0), ReceiverName: "", ReceiverPhone: "", CountryCode: "", ProvinceCode: "", ProvinceName: "", CityCode: "", CityName: "", DistrictCode: "", DistrictName: "", Street: "", Detail: "", PostalCode: "", Latitude: float64(0), Longitude: float64(0)}).Insert()
+		_, err = tx.Model(dao.OrderAddressSnapshot.Table()).Data(buildOrderAddressSnapshotDO(input.OrderNo, input.AddressSnapshot)).Insert()
 		if err != nil {
 			return gerror.Wrap(err, "insert order_address_snapshot failed")
 		}
@@ -1035,7 +1374,9 @@ func (s *sOrder) getOrCreateIdempotency(ctx context.Context, userID uint64, key,
 	cols := dao.OrderIdempotency.Columns()
 	var row entity.OrderIdempotency
 	if err := dao.OrderIdempotency.Ctx(ctx).Where(cols.UserId, userID).Where(cols.IdempotencyKey, key).Where(cols.ActionCode, action).Scan(&row); err != nil {
-		return false, nil, gerror.Wrap(err, "query idempotency failed")
+		if !isIdempotencyMissError(err) {
+			return false, nil, gerror.Wrap(err, "query idempotency failed")
+		}
 	}
 	if row.Id > 0 {
 		return true, &row, nil
@@ -1055,6 +1396,67 @@ func (s *sOrder) getOrCreateIdempotency(ctx context.Context, userID uint64, key,
 	return false, nil, nil
 }
 
+func isIdempotencyMissError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if gerror.HasCode(err, gcode.CodeNotFound) {
+		return true
+	}
+	if strings.Contains(strings.ToLower(err.Error()), sql.ErrNoRows.Error()) {
+		return true
+	}
+	return false
+}
+
+func decodeCheckoutSnapshotPayload(payload []byte) (*checkoutSnapshot, error) {
+	if len(payload) == 0 {
+		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "checkout snapshot payload is empty")
+	}
+
+	var pbSnapshot cartv1.CheckoutSnapshot
+	if err := protojson.Unmarshal(payload, &pbSnapshot); err != nil {
+		return nil, gerror.Wrap(err, "protojson unmarshal checkout snapshot failed")
+	}
+
+	snapshot := &checkoutSnapshot{
+		CheckoutToken:  pbSnapshot.GetCheckoutToken(),
+		UserID:         pbSnapshot.GetUserId(),
+		GoodsAmount:    pbSnapshot.GetGoodsAmount(),
+		FreightAmount:  pbSnapshot.GetFreightAmount(),
+		PayableAmount:  pbSnapshot.GetPayableAmount(),
+		SnapshotDigest: pbSnapshot.GetSnapshotDigest(),
+	}
+	if len(pbSnapshot.GetItems()) == 0 {
+		return snapshot, nil
+	}
+
+	snapshot.Items = make([]checkoutSnapshotItem, 0, len(pbSnapshot.GetItems()))
+	for _, item := range pbSnapshot.GetItems() {
+		snapshot.Items = append(snapshot.Items, checkoutSnapshotItem{
+			SkuNo:           item.GetSkuNo(),
+			SpuNo:           item.GetSpuNo(),
+			ShopNo:          item.GetShopNo(),
+			Qty:             item.GetQty(),
+			SettlePrice:     item.GetSettlePrice(),
+			MarketPrice:     item.GetMarketPrice(),
+			SpuTitle:        item.GetSpuTitle(),
+			SkuName:         item.GetSkuName(),
+			SkuImageAssetID: item.GetSkuImageAssetId(),
+			SaleAttrsJSON:   item.GetSaleAttrsJson(),
+		})
+	}
+	return snapshot, nil
+}
+
+func normalizeOptionalJSONColumnValue(value string) any {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	return trimmed
+}
+
 // markIdempotencySuccess 将幂等记录标记为成功。
 func (s *sOrder) markIdempotencySuccess(ctx context.Context, userID uint64, key, action, orderNo string, response any) error {
 	resp := ""
@@ -1065,7 +1467,7 @@ func (s *sOrder) markIdempotencySuccess(ctx context.Context, userID uint64, key,
 		}
 		resp = string(b)
 	}
-	_, err := dao.OrderIdempotency.Ctx(ctx).Where(dao.OrderIdempotency.Columns().UserId, userID).Where(dao.OrderIdempotency.Columns().IdempotencyKey, key).Where(dao.OrderIdempotency.Columns().ActionCode, action).Data(do.OrderIdempotency{Status: idempotencyStatusSuccess, OrderNo: orderNo, ResponseJson: resp, ErrorCode: ""}).Update()
+	_, err := dao.OrderIdempotency.Ctx(ctx).Where(dao.OrderIdempotency.Columns().UserId, userID).Where(dao.OrderIdempotency.Columns().IdempotencyKey, key).Where(dao.OrderIdempotency.Columns().ActionCode, action).Data(do.OrderIdempotency{Status: idempotencyStatusSuccess, OrderNo: orderNo, ResponseJson: normalizeOptionalJSONColumnValue(resp), ErrorCode: ""}).Update()
 	return gerror.Wrap(err, "mark idempotency success failed")
 }
 
@@ -1128,7 +1530,8 @@ func (s *sOrder) buildRequestPayReplay(ctx context.Context, orderNo string) (*v1
 		}
 		return &v1.RequestPayRes{OrderNo: orderNo, PaymentStatus: v1.PaymentStatus(mainRow.PaymentStatus), PayPayloadJson: "{}", ExpireAt: toProtoTs(mainRow.PayDeadlineAt)}, nil
 	}
-	return &v1.RequestPayRes{OrderNo: orderNo, PayNo: pay.PayNo, PaymentStatus: paymentStatusFromPayCode(pay.PayStatusCode), PayUrl: fmt.Sprintf("https://mock-pay.shopa.local/pay?pay_no=%s", pay.PayNo), PayPayloadJson: "{}", ExpireAt: toProtoTs(pay.PaidAt)}, nil
+	payload := parseRequestPayPayloadJSON(pay.RawPayload)
+	return &v1.RequestPayRes{OrderNo: orderNo, PayNo: pay.PayNo, PaymentStatus: paymentStatusFromPayCode(pay.PayStatusCode), PayUrl: payload.PayURL, PayPayloadJson: firstNonEmpty(payload.PayPayloadJSON, "{}"), ExpireAt: payload.ExpireAt}, nil
 }
 
 // replayCancel 回放取消订单请求的历史结果。
@@ -1190,21 +1593,51 @@ func (s *sOrder) consumeCheckoutSnapshot(ctx context.Context, checkoutToken stri
 	if v == nil || v.IsNil() {
 		return nil, gerror.NewCode(gcode.CodeNotFound, "checkout token used or expired")
 	}
-	var snap checkoutSnapshot
-	if err = json.Unmarshal([]byte(v.String()), &snap); err != nil {
+	snap, err := decodeCheckoutSnapshotPayload([]byte(v.String()))
+	if err != nil {
 		return nil, gerror.Wrap(err, "unmarshal checkout snapshot failed")
 	}
-	return &snap, nil
+	return snap, nil
 }
 
 // reserveInventory 调用库存服务预留库存。
 func (s *sOrder) reserveInventory(ctx context.Context, orderNo string, userID uint64, lines []orderLine) (string, error) {
-	_ = ctx
-	_ = orderNo
-	_ = userID
-	_ = lines
-	// TODO(order-svc): 接入 inventory-svc 的 ReserveStock RPC。
-	return "", gerror.NewCode(gcode.CodeNotImplemented, "TODO: inventory ReserveStock RPC not integrated yet")
+	client, err := newOrderInventoryClient(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	items := make([]*inventoryv1.ReserveItem, 0, len(lines))
+	for _, line := range lines {
+		items = append(items, &inventoryv1.ReserveItem{
+			SkuNo:  strings.TrimSpace(line.SkuNo),
+			SpuNo:  strings.TrimSpace(line.SpuNo),
+			ShopNo: strings.TrimSpace(line.ShopNo),
+			Qty:    line.Qty,
+		})
+	}
+
+	resp, err := client.ReserveStock(ctx, &inventoryv1.ReserveStockReq{
+		ReservationNo: generateBizNo("RSV"),
+		OrderNo:       strings.TrimSpace(orderNo),
+		UserId:        userID,
+		ExpiredAt:     timestamppb.New(time.Now().Add(defaultOrderPayTimeout)),
+		Items:         items,
+		Mode:          inventoryv1.ReserveMode_RESERVE_MODE_ALL_OR_NOTHING,
+	})
+	if err != nil {
+		return "", gerror.Wrap(err, "reserve inventory failed")
+	}
+	if resp == nil {
+		return "", gerror.NewCode(gcode.CodeBusinessValidationFailed, "inventory reserve returned empty response")
+	}
+	if !resp.GetSuccess() {
+		return "", gerror.NewCode(gcode.CodeBusinessValidationFailed, buildInventoryReserveFailureMessage(resp.GetFailedItems()))
+	}
+	if resp.GetReservation() == nil || strings.TrimSpace(resp.GetReservation().GetReservationNo()) == "" {
+		return "", gerror.NewCode(gcode.CodeBusinessValidationFailed, "inventory reserve missing reservation number")
+	}
+	return resp.GetReservation().GetReservationNo(), nil
 }
 
 // confirmInventoryReservation 确认库存预留结果。
@@ -1212,10 +1645,21 @@ func (s *sOrder) confirmInventoryReservation(ctx context.Context, reservationNo,
 	if strings.TrimSpace(reservationNo) == "" {
 		return nil
 	}
-	_ = ctx
-	_ = orderNo
-	// TODO(order-svc): 接入 inventory-svc 的 ConfirmReservation RPC。
-	return gerror.NewCode(gcode.CodeNotImplemented, "TODO: inventory ConfirmReservation RPC not integrated yet")
+	client, err := newOrderInventoryClient(ctx)
+	if err != nil {
+		return err
+	}
+	resp, err := client.ConfirmReservation(ctx, &inventoryv1.ConfirmReservationReq{
+		ReservationNo: strings.TrimSpace(reservationNo),
+		OrderNo:       strings.TrimSpace(orderNo),
+	})
+	if err != nil {
+		return gerror.Wrap(err, "confirm inventory reservation failed")
+	}
+	if resp == nil || resp.GetReservation() == nil || strings.TrimSpace(resp.GetReservation().GetReservationNo()) == "" {
+		return gerror.NewCode(gcode.CodeBusinessValidationFailed, "inventory confirm missing reservation result")
+	}
+	return nil
 }
 
 // cancelInventoryReservationBestEffort 以最大努力方式取消库存预留。
@@ -1223,9 +1667,53 @@ func (s *sOrder) cancelInventoryReservationBestEffort(ctx context.Context, reser
 	if strings.TrimSpace(reservationNo) == "" {
 		return
 	}
-	_ = orderNo
-	_ = reason
-	g.Log().Warningf(ctx, "TODO: inventory CancelReservation RPC not integrated yet, reservation_no=%s", reservationNo)
+	client, err := newOrderInventoryClient(ctx)
+	if err != nil {
+		g.Log().Warningf(ctx, "cancel inventory reservation skipped: build client failed, reservation_no=%s order_no=%s err=%v", reservationNo, orderNo, err)
+		return
+	}
+	if _, err = client.CancelReservation(ctx, &inventoryv1.CancelReservationReq{
+		ReservationNo: strings.TrimSpace(reservationNo),
+		OrderNo:       strings.TrimSpace(orderNo),
+		ReasonCode:    strings.TrimSpace(reason),
+	}); err != nil {
+		g.Log().Warningf(ctx, "cancel inventory reservation failed, reservation_no=%s order_no=%s reason=%s err=%v", reservationNo, orderNo, reason, err)
+	}
+}
+
+func newBuyerCartClient(ctx context.Context) (cartv1.BuyerCartServiceClient, error) {
+	buyerCartClientOnce.Do(func() {
+		addr := strings.TrimSpace(g.Cfg().MustGet(ctx, "upstream.cartGrpc", "cart-svc:9006").String())
+		timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		buyerCartClientConn, buyerCartClientErr = grpc.DialContext(timeoutCtx, addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if buyerCartClientErr != nil {
+			buyerCartClientErr = gerror.Wrapf(buyerCartClientErr, "dial cart-svc failed, addr=%s", addr)
+			return
+		}
+		buyerCartClientInst = cartv1.NewBuyerCartServiceClient(buyerCartClientConn)
+	})
+	if buyerCartClientErr != nil {
+		return nil, buyerCartClientErr
+	}
+	return buyerCartClientInst, nil
+}
+
+var buyerCartClientFactory = newBuyerCartClient
+
+func (s *sOrder) removeOrderedCartItemsBestEffort(ctx context.Context, userID uint64, skuNos []string) {
+	if userID == 0 || len(skuNos) == 0 {
+		return
+	}
+	client, err := buyerCartClientFactory(ctx)
+	if err != nil {
+		g.Log().Warningf(ctx, "remove ordered cart items skipped: build client failed, user_id=%d err=%v", userID, err)
+		return
+	}
+	mdCtx := metadata.AppendToOutgoingContext(ctx, "x-user-id", strconv.FormatUint(userID, 10))
+	if _, err = client.RemoveItems(mdCtx, &cartv1.RemoveItemsReq{SkuNos: skuNos}); err != nil {
+		g.Log().Warningf(ctx, "remove ordered cart items failed, user_id=%d err=%v", userID, err)
+	}
 }
 
 // userIDFromContext 从上下文中提取当前登录用户 ID。
@@ -1347,4 +1835,225 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func buildOrderAddressSnapshotDO(orderNo string, snapshot *userprofilev1.AddressSnapshot) do.OrderAddressSnapshot {
+	data := do.OrderAddressSnapshot{
+		OrderNo: strings.TrimSpace(orderNo),
+	}
+	if snapshot == nil {
+		return data
+	}
+	data.SourceAddressId = snapshot.GetSourceAddressId()
+	data.SourceAddressVersion = snapshot.GetSourceAddressVersion()
+	data.ReceiverName = snapshot.GetReceiverName()
+	data.ReceiverPhone = snapshot.GetReceiverPhone()
+	data.CountryCode = snapshot.GetCountryCode()
+	data.ProvinceCode = snapshot.GetProvinceCode()
+	data.ProvinceName = snapshot.GetProvinceName()
+	data.CityCode = snapshot.GetCityCode()
+	data.CityName = snapshot.GetCityName()
+	data.DistrictCode = snapshot.GetDistrictCode()
+	data.DistrictName = snapshot.GetDistrictName()
+	data.Street = snapshot.GetStreet()
+	data.Detail = snapshot.GetDetail()
+	data.PostalCode = snapshot.GetPostalCode()
+	data.Latitude = snapshot.GetLatitude()
+	data.Longitude = snapshot.GetLongitude()
+	return data
+}
+
+func canUpdateOrderAddress(mainRow *entity.OrderMain) bool {
+	if mainRow == nil {
+		return false
+	}
+	return v1.OrderStatus(mainRow.OrderStatus) == v1.OrderStatus_ORDER_STATUS_PENDING_PAY &&
+		(v1.PaymentStatus(mainRow.PaymentStatus) == v1.PaymentStatus_PAYMENT_STATUS_UNPAID ||
+			v1.PaymentStatus(mainRow.PaymentStatus) == v1.PaymentStatus_PAYMENT_STATUS_PAYING ||
+			v1.PaymentStatus(mainRow.PaymentStatus) == v1.PaymentStatus_PAYMENT_STATUS_PAY_FAILED)
+}
+
+func (s *sOrder) fetchUserAddressSnapshot(ctx context.Context, addressID uint64) (*userprofilev1.AddressSnapshot, error) {
+	client, err := newBuyerAddressClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.GetAddressSnapshotById(ctx, &userprofilev1.GetAddressSnapshotByIdReq{AddressId: addressID})
+	if err != nil {
+		return nil, gerror.Wrap(err, "fetch address snapshot failed")
+	}
+	if resp.GetSnapshot() == nil || resp.GetSnapshot().GetSourceAddressId() == 0 {
+		return nil, gerror.NewCode(gcode.CodeNotFound, "address snapshot not found")
+	}
+	return resp.GetSnapshot(), nil
+}
+
+func (s *sOrder) createPaymentIntent(ctx context.Context, mainRow *entity.OrderMain, userID uint64, payChannel v1.PayChannel, idempotencyKey string) (*paymentv1.CreatePaymentIntentRes, error) {
+	if mainRow == nil {
+		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "order_main is required")
+	}
+	client, err := newBuyerPaymentClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return client.CreatePaymentIntent(ctx, &paymentv1.CreatePaymentIntentReq{
+		OrderNo:        mainRow.OrderNo,
+		UserId:         userID,
+		PayChannel:     paymentv1.PayChannel(payChannel),
+		PayableAmount:  mainRow.PayableAmount,
+		CurrencyCode:   "CNY",
+		OrderExpireAt:  toProtoTs(mainRow.PayDeadlineAt),
+		Subject:        buildPaymentSubject(mainRow.OrderNo),
+		ReturnUrl:      buildBuyerPaymentReturnURL(ctx, mainRow.OrderNo),
+		IdempotencyKey: fmt.Sprintf("order-request-pay:%s", strings.TrimSpace(idempotencyKey)),
+	})
+}
+
+func defaultCatalogSnapshotClient(ctx context.Context) (catalogSnapshotClient, error) {
+	catalogSnapshotClientOnce.Do(func() {
+		addr := strings.TrimSpace(g.Cfg().MustGet(ctx, "upstream.catalogGrpc", "127.0.0.1:9004").String())
+		timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		catalogSnapshotConn, catalogSnapshotErr = grpc.DialContext(timeoutCtx, addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if catalogSnapshotErr != nil {
+			catalogSnapshotErr = gerror.Wrapf(catalogSnapshotErr, "dial catalog-svc failed, addr=%s", addr)
+			return
+		}
+		catalogSnapshotInst = catalogv1.NewInternalCatalogServiceClient(catalogSnapshotConn)
+	})
+	if catalogSnapshotErr != nil {
+		return nil, catalogSnapshotErr
+	}
+	return catalogSnapshotInst, nil
+}
+
+func defaultBuyerPaymentClient(ctx context.Context) (buyerPaymentIntentClient, error) {
+	buyerPaymentClientOnce.Do(func() {
+		addr := strings.TrimSpace(g.Cfg().MustGet(ctx, "upstream.paymentGrpc", "127.0.0.1:9015").String())
+		timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		buyerPaymentClientConn, buyerPaymentClientErr = grpc.DialContext(timeoutCtx, addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if buyerPaymentClientErr != nil {
+			buyerPaymentClientErr = gerror.Wrapf(buyerPaymentClientErr, "dial payment-svc failed, addr=%s", addr)
+			return
+		}
+		buyerPaymentClientInst = paymentv1.NewBuyerPaymentServiceClient(buyerPaymentClientConn)
+	})
+	if buyerPaymentClientErr != nil {
+		return nil, buyerPaymentClientErr
+	}
+	return buyerPaymentClientInst, nil
+}
+
+func defaultBuyerAddressClient(ctx context.Context) (buyerAddressSnapshotClient, error) {
+	buyerAddressClientOnce.Do(func() {
+		addr := strings.TrimSpace(g.Cfg().MustGet(ctx, "upstream.userProfileGrpc", "127.0.0.1:9003").String())
+		timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		buyerAddressClientConn, buyerAddressClientErr = grpc.DialContext(timeoutCtx, addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if buyerAddressClientErr != nil {
+			buyerAddressClientErr = gerror.Wrapf(buyerAddressClientErr, "dial user-profile-svc failed, addr=%s", addr)
+			return
+		}
+		buyerAddressClientInst = userprofilev1.NewUserProfileServiceClient(buyerAddressClientConn)
+	})
+	if buyerAddressClientErr != nil {
+		return nil, buyerAddressClientErr
+	}
+	return buyerAddressClientInst, nil
+}
+
+func defaultOrderInventoryClient(ctx context.Context) (orderInventoryClient, error) {
+	orderInventoryClientOnce.Do(func() {
+		addr := strings.TrimSpace(g.Cfg().MustGet(ctx, "upstream.inventoryGrpc", "127.0.0.1:9005").String())
+		timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		orderInventoryConn, orderInventoryErr = grpc.DialContext(timeoutCtx, addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if orderInventoryErr != nil {
+			orderInventoryErr = gerror.Wrapf(orderInventoryErr, "dial inventory-svc failed, addr=%s", addr)
+			return
+		}
+		orderInventoryInst = inventoryv1.NewOrderInventoryServiceClient(orderInventoryConn)
+	})
+	if orderInventoryErr != nil {
+		return nil, orderInventoryErr
+	}
+	return orderInventoryInst, nil
+}
+
+func buildPaymentSubject(orderNo string) string {
+	orderNo = strings.TrimSpace(orderNo)
+	if orderNo == "" {
+		return "Shopa Order"
+	}
+	return fmt.Sprintf("Shopa Order %s", orderNo)
+}
+
+func buildBuyerPaymentReturnURL(ctx context.Context, orderNo string) string {
+	baseURL := strings.TrimRight(strings.TrimSpace(g.Cfg().MustGet(ctx, "frontend.mallBaseUrl", "http://localhost:3100").String()), "/")
+	if baseURL == "" {
+		baseURL = "http://localhost:3100"
+	}
+	return fmt.Sprintf("%s/me/orders?order_no=%s", baseURL, url.QueryEscape(strings.TrimSpace(orderNo)))
+}
+
+func buildRequestPayPayloadJSON(payURL, payPayloadJSON string, expireAt *timestamppb.Timestamp) string {
+	payload := map[string]string{
+		"pay_url":          strings.TrimSpace(payURL),
+		"pay_payload_json": strings.TrimSpace(payPayloadJSON),
+	}
+	if expireAt != nil {
+		payload["expire_at"] = expireAt.AsTime().Format(time.RFC3339)
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	return string(body)
+}
+
+func parseRequestPayPayloadJSON(raw string) requestPayPayload {
+	result := requestPayPayload{}
+	if strings.TrimSpace(raw) == "" {
+		return result
+	}
+
+	var payload map[string]string
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return result
+	}
+	result.PayURL = strings.TrimSpace(payload["pay_url"])
+	result.PayPayloadJSON = strings.TrimSpace(payload["pay_payload_json"])
+	if expireAt := strings.TrimSpace(payload["expire_at"]); expireAt != "" {
+		if t, err := time.Parse(time.RFC3339, expireAt); err == nil {
+			result.ExpireAt = timestamppb.New(t)
+		}
+	}
+	return result
+}
+
+func buildInventoryReserveFailureMessage(failedItems []*inventoryv1.ReserveFailedItem) string {
+	if len(failedItems) == 0 {
+		return "inventory reserve failed"
+	}
+
+	item := failedItems[0]
+	var parts []string
+	if skuNo := strings.TrimSpace(item.GetSkuNo()); skuNo != "" {
+		parts = append(parts, fmt.Sprintf("sku=%s", skuNo))
+	}
+	if code := strings.TrimSpace(item.GetErrorCode()); code != "" {
+		parts = append(parts, fmt.Sprintf("code=%s", code))
+	}
+	if message := strings.TrimSpace(item.GetErrorMessage()); message != "" {
+		parts = append(parts, message)
+	}
+	if len(parts) == 0 {
+		return "inventory reserve failed"
+	}
+	return fmt.Sprintf("inventory reserve failed: %s", strings.Join(parts, ", "))
 }

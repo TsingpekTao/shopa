@@ -44,20 +44,51 @@ function toString(value: unknown): string {
   return String(value);
 }
 
-function normalizeImage(raw?: RawProfileImage): ProfileImageRef {
+async function issueAssetReadUrl(assetId: number, ttlSeconds = 900): Promise<string> {
+  if (!assetId || typeof fetch !== "function") {
+    return "";
+  }
+
+  try {
+    const params = new URLSearchParams({
+      assetIds: String(assetId),
+      ttlSeconds: String(ttlSeconds)
+    });
+    const response = await fetch(`/api/media/read-urls?${params.toString()}`, {
+      method: "GET",
+      cache: "no-store"
+    });
+    if (!response.ok) {
+      return "";
+    }
+
+    const payload = (await response.json()) as {
+      items?: Array<{ assetId?: string | number; asset_id?: string | number; url?: string }>;
+    };
+    const item = (payload.items ?? []).find((candidate) => toString(candidate.assetId ?? candidate.asset_id) === String(assetId));
+    return toString(item?.url);
+  } catch {
+    return "";
+  }
+}
+
+async function normalizeImage(raw?: RawProfileImage): Promise<ProfileImageRef> {
+  const assetId = toNumber(raw?.asset_id ?? raw?.assetId);
+  const fallbackUrl = toString(raw?.url);
+  const readableUrl = await issueAssetReadUrl(assetId);
   return {
-    assetId: toNumber(raw?.asset_id ?? raw?.assetId),
-    url: toString(raw?.url)
+    assetId,
+    url: readableUrl || fallbackUrl
   };
 }
 
-function normalizeProfile(raw?: RawProfile): MallProfile | undefined {
+async function normalizeProfile(raw?: RawProfile): Promise<MallProfile | undefined> {
   if (!raw) {
     return undefined;
   }
   return {
     displayName: toString(raw.display_name ?? raw.displayName),
-    avatar: normalizeImage(raw.avatar),
+    avatar: await normalizeImage(raw.avatar),
     profileVersion: toNumber(raw.profile_version ?? raw.profileVersion),
     ext: raw.ext ?? {},
     updatedAt: (raw.updated_at ?? raw.updatedAt) as MallProfile["updatedAt"]
@@ -77,7 +108,7 @@ export async function getMyProfile(includeAddresses = true): Promise<MallProfile
     }
   });
   return {
-    profile: normalizeProfile(response.profile),
+    profile: await normalizeProfile(response.profile),
     addresses: normalizeAddresses(response.addresses)
   };
 }
@@ -113,7 +144,7 @@ export async function updateMyProfile(payload: {
     expected_profile_version: Math.max(1, toNumber(payload.expectedProfileVersion, 1))
   });
 
-  const normalized = normalizeProfile(response.profile);
+  const normalized = await normalizeProfile(response.profile);
   if (!normalized) {
     throw new Error("profile response is empty");
   }

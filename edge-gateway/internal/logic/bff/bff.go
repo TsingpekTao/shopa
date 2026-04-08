@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	aftersalev1 "github.com/TsingpekTao/shopa/aftersale-svc/api/v1"
 	catalogv1 "github.com/TsingpekTao/shopa/catalog-svc/api/v1"
 	adminv1 "github.com/TsingpekTao/shopa/edge-gateway/api/admin/v1"
 	mev1 "github.com/TsingpekTao/shopa/edge-gateway/api/me/v1"
@@ -14,6 +15,7 @@ import (
 	"github.com/TsingpekTao/shopa/edge-gateway/internal/consts"
 	"github.com/TsingpekTao/shopa/edge-gateway/internal/service"
 	inventoryv1 "github.com/TsingpekTao/shopa/inventory-svc/api/v1"
+	orderv1 "github.com/TsingpekTao/shopa/order-svc/api/v1"
 	pointsv1 "github.com/TsingpekTao/shopa/points-svc/api/v1"
 	sellershopv1 "github.com/TsingpekTao/shopa/seller-shop-svc/api/v1"
 	userprofilev1 "github.com/TsingpekTao/shopa/user-profile-svc/api/v1"
@@ -38,6 +40,8 @@ type sBff struct {
 	sellerShopConn  *grpc.ClientConn
 	catalogConn     *grpc.ClientConn
 	inventoryConn   *grpc.ClientConn
+	orderConn       *grpc.ClientConn
+	aftersaleConn   *grpc.ClientConn
 
 	// 下面这些 client 对应具体的下游服务接口，供各个聚合函数直接发起 RPC 调用。
 	userProfileClient userprofilev1.UserProfileServiceClient
@@ -48,6 +52,11 @@ type sBff struct {
 	catalogSeller     catalogv1.SellerProductServiceClient
 	catalogAdmin      catalogv1.AdminProductReviewServiceClient
 	inventoryInternal inventoryv1.InternalInventoryServiceClient
+	orderBuyer        orderv1.BuyerOrderServiceClient
+	orderInternal     orderv1.InternalOrderServiceClient
+	orderSeller       orderv1.SellerOrderServiceClient
+	aftersaleBuyer    aftersalev1.BuyerAfterSaleServiceClient
+	aftersaleSeller   aftersalev1.SellerAfterSaleServiceClient
 
 	// initErr 记录首次初始化下游连接时出现的错误，后续请求会直接复用这次初始化结果。
 	initErr error
@@ -684,7 +693,7 @@ func (s *sBff) ensureClients(ctx context.Context) error {
 			return
 		}
 		// 初始化积分服务连接，供个人概览等场景读取积分余额。
-		s.pointsConn, err = dialUpstream(ctx, "upstream.pointsGrpc", "127.0.0.1:9012")
+		s.pointsConn, err = dialUpstream(ctx, "upstream.pointsGrpc", "127.0.0.1:9021")
 		if err != nil {
 			s.initErr = err
 			return
@@ -707,6 +716,18 @@ func (s *sBff) ensureClients(ctx context.Context) error {
 			s.initErr = err
 			return
 		}
+		// 初始化 order 服务连接，供卖家工作台与销售报表读取订单支付数据。
+		s.orderConn, err = dialUpstream(ctx, "upstream.orderGrpc", "127.0.0.1:9008")
+		if err != nil {
+			s.initErr = err
+			return
+		}
+		// 初始化 aftersale 服务连接，供销售分析聚合退款申请数据。
+		s.aftersaleConn, err = dialUpstream(ctx, "upstream.aftersaleGrpc", "127.0.0.1:9010")
+		if err != nil {
+			s.initErr = err
+			return
+		}
 
 		// 连接建立完成后，统一构造各个服务的 typed client，供业务逻辑直接使用。
 		s.userProfileClient = userprofilev1.NewUserProfileServiceClient(s.userProfileConn)
@@ -717,6 +738,11 @@ func (s *sBff) ensureClients(ctx context.Context) error {
 		s.catalogSeller = catalogv1.NewSellerProductServiceClient(s.catalogConn)
 		s.catalogAdmin = catalogv1.NewAdminProductReviewServiceClient(s.catalogConn)
 		s.inventoryInternal = inventoryv1.NewInternalInventoryServiceClient(s.inventoryConn)
+		s.orderBuyer = orderv1.NewBuyerOrderServiceClient(s.orderConn)
+		s.orderInternal = orderv1.NewInternalOrderServiceClient(s.orderConn)
+		s.orderSeller = orderv1.NewSellerOrderServiceClient(s.orderConn)
+		s.aftersaleBuyer = aftersalev1.NewBuyerAfterSaleServiceClient(s.aftersaleConn)
+		s.aftersaleSeller = aftersalev1.NewSellerAfterSaleServiceClient(s.aftersaleConn)
 	})
 	return s.initErr
 }

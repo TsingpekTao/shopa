@@ -19,7 +19,7 @@ INSERT INTO `media_scene_policy` (
   `ext_json`
 ) VALUES (
   'buyer_avatar',
-  1,
+  2,
   1,
   5242880,
   JSON_ARRAY('image/jpeg', 'image/png', 'image/webp'),

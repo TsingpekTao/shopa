@@ -37,6 +37,22 @@ func (*Controller) ListMyAfterSales(ctx context.Context, req *v1.ListMyAfterSale
 	return service.AfterSale().ListMyAfterSales(ctx, req)
 }
 
+func (*Controller) ApplyRefundBatch(ctx context.Context, req *v1.ApplyRefundBatchReq) (res *v1.ApplyRefundBatchRes, err error) {
+	return service.AfterSale().ApplyRefundBatch(ctx, req)
+}
+
+func (*Controller) ListMyRefundBatches(ctx context.Context, req *v1.ListMyRefundBatchesReq) (res *v1.ListMyRefundBatchesRes, err error) {
+	return service.AfterSale().ListMyRefundBatches(ctx, req)
+}
+
+func (*Controller) GetMyRefundBatchDetail(ctx context.Context, req *v1.GetMyRefundBatchDetailReq) (res *v1.GetMyRefundBatchDetailRes, err error) {
+	return service.AfterSale().GetMyRefundBatchDetail(ctx, req)
+}
+
+func (*Controller) CancelRefundBatch(ctx context.Context, req *v1.CancelRefundBatchReq) (res *v1.CancelRefundBatchRes, err error) {
+	return service.AfterSale().CancelRefundBatch(ctx, req)
+}
+
 func (*Controller) ListShopAfterSales(ctx context.Context, req *v1.ListShopAfterSalesReq) (res *v1.ListShopAfterSalesRes, err error) {
 	return service.AfterSale().ListShopAfterSales(ctx, req)
 }
@@ -51,6 +67,22 @@ func (*Controller) ApproveAfterSale(ctx context.Context, req *v1.ApproveAfterSal
 
 func (*Controller) RejectAfterSale(ctx context.Context, req *v1.RejectAfterSaleReq) (res *v1.RejectAfterSaleRes, err error) {
 	return service.AfterSale().RejectAfterSale(ctx, req)
+}
+
+func (*Controller) ListShopRefundBatches(ctx context.Context, req *v1.ListShopRefundBatchesReq) (res *v1.ListShopRefundBatchesRes, err error) {
+	return service.AfterSale().ListShopRefundBatches(ctx, req)
+}
+
+func (*Controller) GetShopRefundBatchDetail(ctx context.Context, req *v1.GetShopRefundBatchDetailReq) (res *v1.GetShopRefundBatchDetailRes, err error) {
+	return service.AfterSale().GetShopRefundBatchDetail(ctx, req)
+}
+
+func (*Controller) ApproveRefundBatch(ctx context.Context, req *v1.ApproveRefundBatchReq) (res *v1.ApproveRefundBatchRes, err error) {
+	return service.AfterSale().ApproveRefundBatch(ctx, req)
+}
+
+func (*Controller) RejectRefundBatch(ctx context.Context, req *v1.RejectRefundBatchReq) (res *v1.RejectRefundBatchRes, err error) {
+	return service.AfterSale().RejectRefundBatch(ctx, req)
 }
 
 func (*Controller) ExecuteRefundTask(ctx context.Context, req *v1.ExecuteRefundTaskReq) (res *v1.ExecuteRefundTaskRes, err error) {

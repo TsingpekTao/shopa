@@ -1,10 +1,11 @@
 "use client";
 
-import { ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { ReactNode, useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Avatar, Button, ConfigProvider, Dropdown, Layout, Space } from "antd";
 import type { MenuProps } from "antd";
 import "./styles.css";
 import { useI18n } from "./i18n";
+import { buildGlobalSearchHref, normalizeGlobalSearchTab, type GlobalSearchTab } from "./search-form";
 
 type Props = {
   children: ReactNode;
@@ -29,6 +30,8 @@ type ProfileSummaryResponse = {
       display_name?: string;
       displayName?: string;
       avatar?: {
+        asset_id?: number | string;
+        assetId?: number | string;
         url?: string;
       };
       ext?: Record<string, string>;
@@ -38,6 +41,8 @@ type ProfileSummaryResponse = {
     display_name?: string;
     displayName?: string;
     avatar?: {
+      asset_id?: number | string;
+      assetId?: number | string;
       url?: string;
     };
     ext?: Record<string, string>;
@@ -136,6 +141,41 @@ function normalizeDisplayName(raw: string): string {
   return value;
 }
 
+function toString(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return String(value);
+}
+
+async function issueMallAssetReadUrl(assetId: string, ttlSeconds = 900): Promise<string> {
+  if (!assetId) {
+    return "";
+  }
+
+  try {
+    const params = new URLSearchParams({
+      assetIds: assetId,
+      ttlSeconds: String(ttlSeconds)
+    });
+    const response = await fetch(`/api/media/read-urls?${params.toString()}`, {
+      method: "GET",
+      cache: "no-store"
+    });
+    if (!response.ok) {
+      return "";
+    }
+
+    const payload = (await response.json()) as {
+      items?: Array<{ assetId?: string | number; asset_id?: string | number; url?: string }>;
+    };
+    const item = (payload.items ?? []).find((candidate) => toString(candidate.assetId ?? candidate.asset_id) === assetId);
+    return toString(item?.url);
+  } catch {
+    return "";
+  }
+}
+
 async function fetchMallProfileSummary(token: string): Promise<{ displayName: string; avatarUrl: string }> {
   if (!token) {
     return { displayName: "", avatarUrl: "" };
@@ -159,7 +199,8 @@ async function fetchMallProfileSummary(token: string): Promise<{ displayName: st
 
   const profile = payload.data?.profile ?? payload.profile;
   const fromProfile = profile?.display_name ?? profile?.displayName ?? "";
-  const avatarUrl = profile?.avatar?.url?.trim() ?? "";
+  const avatarAssetId = toString(profile?.avatar?.asset_id ?? profile?.avatar?.assetId);
+  const avatarUrl = (await issueMallAssetReadUrl(avatarAssetId)) || profile?.avatar?.url?.trim() || "";
 
   const normalized = normalizeDisplayName(fromProfile);
   if (normalized) {
@@ -206,6 +247,7 @@ export function AppShell({ children, mode = "default", shellState }: Props) {
   const isMallMode = mode === "mall";
   const sellerEntryUrl = "http://127.0.0.1:3100/";
   const [hasHydrated, setHasHydrated] = useState(false);
+  const [searchTab, setSearchTab] = useState<GlobalSearchTab>("item");
   const [mallAuth, setMallAuth] = useState<MallAuthSnapshot>({
     loggedIn: false,
     displayName: "",
@@ -215,6 +257,14 @@ export function AppShell({ children, mode = "default", shellState }: Props) {
 
   useEffect(() => {
     setHasHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+    setSearchTab(normalizeGlobalSearchTab(params.get("tab")));
   }, []);
 
   const refreshMallAuth = useCallback(() => {
@@ -240,7 +290,7 @@ export function AppShell({ children, mode = "default", shellState }: Props) {
   }, [hasHydrated, isMallMode, refreshMallAuth]);
 
   useEffect(() => {
-    if (!hasHydrated || !isMallMode || !mallAuth.loggedIn || (mallAuth.displayName && mallAuth.avatarUrl)) {
+    if (!hasHydrated || !isMallMode || !mallAuth.loggedIn) {
       return;
     }
 
@@ -272,7 +322,7 @@ export function AppShell({ children, mode = "default", shellState }: Props) {
     return () => {
       mounted = false;
     };
-  }, [hasHydrated, isMallMode, mallAuth.avatarUrl, mallAuth.displayName, mallAuth.loggedIn]);
+  }, [hasHydrated, isMallMode, mallAuth.loggedIn]);
 
   const isMallLoggedIn = isMallMode && hasHydrated && mallAuth.loggedIn;
   const mallDisplayName = useMemo(() => {
@@ -292,6 +342,7 @@ export function AppShell({ children, mode = "default", shellState }: Props) {
       { key: "/settings", label: t("settings_center") },
       { key: "/me/address", label: t("settings_address") },
       { key: "/me/orders", label: t("settings_orders") },
+      { key: "/me/points", label: locale === "zh-CN" ? "我的积分" : "My Points" },
       { key: "/me/history", label: t("settings_history") }
     ],
     onClick: ({ key }) => go(String(key))
@@ -301,6 +352,7 @@ export function AppShell({ children, mode = "default", shellState }: Props) {
     items: [
       { key: "/me/profile", label: t("profile_view") },
       { key: "/me/orders", label: t("profile_orders") },
+      { key: "/me/points", label: locale === "zh-CN" ? "我的积分" : "My Points" },
       ...(isMallLoggedIn ? [] : [{ key: "/login", label: t("profile_switch") }])
     ],
     onClick: ({ key }) => go(String(key))
@@ -314,6 +366,15 @@ export function AppShell({ children, mode = "default", shellState }: Props) {
     ],
     onClick: ({ key }) => go(String(key))
   };
+
+  const handleSearchSubmit = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const formData = new FormData(event.currentTarget);
+      go(buildGlobalSearchHref(toString(formData.get("q")), searchTab));
+    },
+    [searchTab]
+  );
 
   return (
     <ConfigProvider
@@ -390,11 +451,30 @@ export function AppShell({ children, mode = "default", shellState }: Props) {
               SHOPA
             </a>
 
-            <form className="tb-search" action="/search" method="get">
+            <form className="tb-search" action="/search" method="get" onSubmit={handleSearchSubmit}>
+              <div className="tb-search-mode" role="tablist" aria-label={locale === "zh-CN" ? "搜索类型" : "Search type"}>
+                <button
+                  type="button"
+                  className={searchTab === "item" ? "tb-search-mode-btn is-active" : "tb-search-mode-btn"}
+                  aria-pressed={searchTab === "item"}
+                  onClick={() => setSearchTab("item")}
+                >
+                  {locale === "zh-CN" ? "商品" : "Items"}
+                </button>
+                <button
+                  type="button"
+                  className={searchTab === "shop" ? "tb-search-mode-btn is-active" : "tb-search-mode-btn"}
+                  aria-pressed={searchTab === "shop"}
+                  onClick={() => setSearchTab("shop")}
+                >
+                  {locale === "zh-CN" ? "店铺" : "Shops"}
+                </button>
+              </div>
+              <input type="hidden" name="tab" value={searchTab} />
               <label htmlFor="global-search" className="tb-sr-only">
                 {t("search_label")}
               </label>
-              <input id="global-search" name="q" placeholder={t("search_placeholder")} autoComplete="off" />
+              <input id="global-search" name="q" className="tb-search-input" placeholder={t("search_placeholder")} autoComplete="off" />
               <button type="submit">{t("search_button")}</button>
             </form>
 

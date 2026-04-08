@@ -1,5 +1,13 @@
-﻿import { apiClient } from "@/lib/api-client";
-import { SellerChatConversation, SellerChatMessage } from "./types";
+import { apiClient } from "@/lib/api-client";
+import type {
+  SellerChatConversation,
+  SellerChatMessage,
+  SellerChatOrderCard,
+  SellerChatProductCard,
+  SellerChatMessageCard,
+  SellerChatMessageType,
+  SellerConversationSceneCode
+} from "./types";
 
 type RawConversation = {
   conversation_no?: string;
@@ -16,6 +24,12 @@ type RawConversation = {
   buyerAvatarUrl?: string;
   shop_avatar_url?: string;
   shopAvatarUrl?: string;
+  scene_code?: string;
+  sceneCode?: string;
+  order_no?: string;
+  orderNo?: string;
+  sub_order_no?: string;
+  subOrderNo?: string;
   anchor_spu_no?: string;
   anchorSpuNo?: string;
   anchor_sku_no?: string;
@@ -100,12 +114,175 @@ function toString(value: unknown): string {
   if (value === null || value === undefined) {
     return "";
   }
-  return String(value);
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (typeof value === "object" && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    const seconds = Number(record.seconds ?? 0);
+    const nanos = Number(record.nanos ?? 0);
+    if (Number.isFinite(seconds) || Number.isFinite(nanos)) {
+      const millis = seconds * 1000 + Math.floor(nanos / 1_000_000);
+      if (millis > 0) {
+        return new Date(millis).toISOString();
+      }
+    }
+    const candidates = [record.text, record.content, record.title, record.name, record.message, record.value];
+    for (const item of candidates) {
+      if (typeof item === "string" && item.trim()) {
+        return item.trim();
+      }
+    }
+  }
+  return "";
 }
 
 function toNumber(value: unknown): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function readText(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  return toString(value).trim();
+}
+
+function parseExtObject(raw: string): Record<string, unknown> {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return {};
+  }
+  return {};
+}
+
+function parseStringList(value: unknown): string[] {
+  if (!value) {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => readText(item)).filter(Boolean);
+  }
+  const text = readText(value);
+  if (!text) {
+    return [];
+  }
+  return text
+    .split(",")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+}
+
+type SellerOrderCardItem = NonNullable<SellerChatOrderCard["items"]>[number];
+
+function parseOrderItems(value: unknown): SellerOrderCardItem[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const items: SellerOrderCardItem[] = [];
+  value.forEach((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return;
+    }
+    const record = entry as Record<string, unknown>;
+    const item: SellerOrderCardItem = {
+      title: readText(record.title) || readText(record.name) || undefined,
+      quantity: readText(record.quantity) || readText(record.qty) || undefined,
+      price: readText(record.price) || readText(record.amount) || undefined,
+      meta: readText(record.meta) || readText(record.detail) || undefined
+    };
+    if (item.title || item.quantity || item.price || item.meta) {
+      items.push(item);
+    }
+  });
+  return items;
+}
+
+function buildSellerProductCard(ext: Record<string, unknown>, fallbackTitle: string): SellerChatProductCard {
+  const tags = parseStringList(ext.tags ?? ext.tagList ?? ext.labels);
+  return {
+    title: readText(ext.title) || readText(ext.productTitle) || readText(ext.product_title) || fallbackTitle,
+    subtitle: readText(ext.subtitle) || readText(ext.subTitle) || readText(ext.sub_title) || undefined,
+    coverImageUrl: readText(ext.imageUrl) || readText(ext.image_url) || undefined,
+    price: readText(ext.priceText) || readText(ext.price_text) || readText(ext.price) || undefined,
+    priceLabel: readText(ext.priceLabel) || readText(ext.price_label) || undefined,
+    skuNo: readText(ext.skuNo) || readText(ext.sku_no) || undefined,
+    spuNo: readText(ext.spuNo) || readText(ext.spu_no) || undefined,
+    tags: tags.length ? tags : undefined,
+    detail: readText(ext.detail) || readText(ext.description) || undefined,
+    link: readText(ext.link) || readText(ext.href) || readText(ext.url) || undefined
+  };
+}
+
+function buildSellerOrderCard(ext: Record<string, unknown>): SellerChatOrderCard {
+  const meta = parseStringList(ext.meta ?? ext.orderMeta ?? ext.metadata ?? ext.order_metadata);
+  const items = parseOrderItems(ext.items ?? ext.orderItems ?? ext.products);
+  return {
+    orderNo: readText(ext.orderNo) || readText(ext.order_no) || undefined,
+    subOrderNo: readText(ext.subOrderNo) || readText(ext.sub_order_no) || undefined,
+    shopNo: readText(ext.shopNo) || readText(ext.shop_no) || undefined,
+    status: readText(ext.status) || readText(ext.orderStatus) || readText(ext.statusCode) || undefined,
+    sceneCode: readText(ext.sceneCode) || readText(ext.scene_code) || undefined,
+    totalAmount: readText(ext.totalAmount) || readText(ext.total_amount) || undefined,
+    currency: readText(ext.currency) || undefined,
+    summary: readText(ext.summary) || readText(ext.description) || undefined,
+    meta: meta.length ? meta : undefined,
+    items: items.length ? items : undefined,
+    link: readText(ext.link) || readText(ext.href) || readText(ext.url) || undefined
+  };
+}
+
+function buildSellerCard(raw: string, messageType: SellerChatMessageType, fallbackTitle: string): SellerChatMessageCard | undefined {
+  if (messageType !== "PRODUCT_CARD") {
+    return undefined;
+  }
+  const ext = parseExtObject(raw);
+  const kindRaw = readText(ext.kind).toLowerCase();
+  const orderNo = readText(ext.orderNo) || readText(ext.order_no);
+  const subOrderNo = readText(ext.subOrderNo) || readText(ext.sub_order_no);
+  const isOrderKind = kindRaw === "order" || Boolean(orderNo) || Boolean(subOrderNo);
+  if (isOrderKind) {
+    const order = buildSellerOrderCard(ext);
+    const hasOrderInfo =
+      Boolean(order.orderNo) ||
+      Boolean(order.subOrderNo) ||
+      Boolean(order.shopNo) ||
+      Boolean(order.status) ||
+      Boolean(order.sceneCode) ||
+      Boolean(order.totalAmount) ||
+      Boolean(order.summary) ||
+      Boolean(order.items?.length) ||
+      Boolean(order.meta?.length);
+    return hasOrderInfo ? { kind: "ORDER_CARD", order } : undefined;
+  }
+  const product = buildSellerProductCard(ext, fallbackTitle);
+  const hasProductInfo =
+    Boolean(product.title) ||
+    Boolean(product.subtitle) ||
+    Boolean(product.coverImageUrl) ||
+    Boolean(product.price) ||
+    Boolean(product.priceLabel) ||
+    Boolean(product.tags?.length) ||
+    Boolean(product.detail);
+  return hasProductInfo ? { kind: "PRODUCT_CARD", product } : undefined;
 }
 
 function mapStatus(value: number): SellerChatConversation["status"] {
@@ -134,7 +311,7 @@ function mapSenderType(value: number): SellerChatMessage["senderType"] {
   }
 }
 
-function mapMessageType(value: number): SellerChatMessage["messageType"] {
+function mapMessageType(value: number): SellerChatMessageType {
   switch (value) {
     case 1:
       return "TEXT";
@@ -149,6 +326,17 @@ function mapMessageType(value: number): SellerChatMessage["messageType"] {
   }
 }
 
+function mapSceneCode(value: unknown): SellerConversationSceneCode {
+  const normalized = toString(value).trim().toUpperCase();
+  if (normalized === "PRE_SALE") {
+    return "PRE_SALE";
+  }
+  if (normalized === "AFTER_SALE") {
+    return "AFTER_SALE";
+  }
+  return "";
+}
+
 function normalizeConversation(raw?: RawConversation): SellerChatConversation {
   const statusCode = toNumber(raw?.conversation_status ?? raw?.conversationStatus);
   return {
@@ -159,6 +347,9 @@ function normalizeConversation(raw?: RawConversation): SellerChatConversation {
     buyerDisplayName: toString(raw?.buyer_display_name ?? raw?.buyerDisplayName),
     buyerAvatarUrl: toString(raw?.buyer_avatar_url ?? raw?.buyerAvatarUrl),
     shopAvatarUrl: toString(raw?.shop_avatar_url ?? raw?.shopAvatarUrl),
+    sceneCode: mapSceneCode(raw?.scene_code ?? raw?.sceneCode),
+    orderNo: toString(raw?.order_no ?? raw?.orderNo),
+    subOrderNo: toString(raw?.sub_order_no ?? raw?.subOrderNo),
     anchorSpuNo: toString(raw?.anchor_spu_no ?? raw?.anchorSpuNo),
     anchorSkuNo: toString(raw?.anchor_sku_no ?? raw?.anchorSkuNo),
     unreadCount: toNumber(raw?.unread_count ?? raw?.unreadCount),
@@ -173,15 +364,19 @@ function normalizeConversation(raw?: RawConversation): SellerChatConversation {
 }
 
 function normalizeMessage(raw?: RawMessage): SellerChatMessage {
+  const messageType = mapMessageType(toNumber(raw?.message_type ?? raw?.messageType));
+  const contentText = toString(raw?.content_text ?? raw?.contentText);
+  const extJson = toString(raw?.ext_json ?? raw?.extJson);
   return {
     messageNo: toString(raw?.message_no ?? raw?.messageNo),
     conversationNo: toString(raw?.conversation_no ?? raw?.conversationNo),
     senderType: mapSenderType(toNumber(raw?.sender_type ?? raw?.senderType)),
     senderUserId: toNumber(raw?.sender_user_id ?? raw?.senderUserId),
-    messageType: mapMessageType(toNumber(raw?.message_type ?? raw?.messageType)),
-    contentText: toString(raw?.content_text ?? raw?.contentText),
+    messageType,
+    contentText,
     mediaAssetId: toNumber(raw?.media_asset_id ?? raw?.mediaAssetId),
-    extJson: toString(raw?.ext_json ?? raw?.extJson),
+    extJson,
+    card: buildSellerCard(extJson, messageType, contentText),
     sentAt: toString(raw?.sent_at ?? raw?.sentAt),
     senderDisplayName: toString(raw?.sender_display_name ?? raw?.senderDisplayName),
     senderAvatarUrl: toString(raw?.sender_avatar_url ?? raw?.senderAvatarUrl),
@@ -195,8 +390,16 @@ export async function listSellerConversations(
   pageSize = 20,
   nextCursor = ""
 ): Promise<SellerChatPageResult<SellerChatConversation>> {
+  const normalizedShopNo = shopNo.trim();
+  if (!normalizedShopNo) {
+    return {
+      list: [],
+      hasMore: false,
+      nextCursor: ""
+    };
+  }
   const response = await apiClient.get<RawListConversationRes>(
-    `/v1/chat/seller/shops/${encodeURIComponent(shopNo)}/conversations`,
+    `/v1/chat/seller/shops/${encodeURIComponent(normalizedShopNo)}/conversations`,
     {
       params: {
         page_size: pageSize,
@@ -217,8 +420,17 @@ export async function listSellerMessages(
   pageSize = 40,
   nextCursor = ""
 ): Promise<SellerChatPageResult<SellerChatMessage>> {
+  const normalizedShopNo = shopNo.trim();
+  const normalizedConversationNo = conversationNo.trim();
+  if (!normalizedShopNo || !normalizedConversationNo) {
+    return {
+      list: [],
+      hasMore: false,
+      nextCursor: ""
+    };
+  }
   const response = await apiClient.get<RawListMessagesRes>(
-    `/v1/chat/seller/shops/${encodeURIComponent(shopNo)}/conversations/${encodeURIComponent(conversationNo)}/messages`,
+    `/v1/chat/seller/shops/${encodeURIComponent(normalizedShopNo)}/conversations/${encodeURIComponent(normalizedConversationNo)}/messages`,
     {
       params: {
         page_size: pageSize,
@@ -236,13 +448,17 @@ export async function listSellerMessages(
 export async function sendSellerMessage(payload: {
   conversationNo: string;
   contentText: string;
+  messageType?: SellerChatMessageType;
+  extJson?: string;
   clientMessageNo?: string;
 }): Promise<{ conversation: SellerChatConversation; message: SellerChatMessage; idempotentReplay: boolean }> {
+  const messageType = payload.messageType === "PRODUCT_CARD" ? 3 : payload.messageType === "SYSTEM_NOTICE" ? 4 : payload.messageType === "IMAGE" ? 2 : 1;
   const response = await apiClient.post<RawSendMessageRes>("/v1/chat/seller/messages:send", {
     conversation_no: payload.conversationNo,
     client_message_no: payload.clientMessageNo ?? `seller_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    message_type: 1,
-    content_text: payload.contentText
+    message_type: messageType,
+    content_text: payload.contentText,
+    ext_json: payload.extJson ?? ""
   });
   return {
     conversation: normalizeConversation(response?.conversation),

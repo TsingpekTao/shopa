@@ -31,6 +31,12 @@ type AfterSaleCase struct {
 	SellerReply          string      `json:"sellerReply"          orm:"seller_reply"            ` //
 	RejectReasonCode     uint        `json:"rejectReasonCode"     orm:"reject_reason_code"      ` //
 	CancelReasonCode     string      `json:"cancelReasonCode"     orm:"cancel_reason_code"      ` //
+	RefundBatchNo        string      `json:"refundBatchNo"        orm:"refund_batch_no"         ` //
+	ScopeCode            string      `json:"scopeCode"            orm:"scope_code"              ` //
+	ReviewDeadlineAt     *gtime.Time `json:"reviewDeadlineAt"     orm:"review_deadline_at"      ` //
+	AutoApprovedAt       *gtime.Time `json:"autoApprovedAt"       orm:"auto_approved_at"        ` //
+	SelectedItemNosJson  string      `json:"selectedItemNosJson"  orm:"selected_item_nos_json"  ` //
+	PaymentNo            string      `json:"paymentNo"            orm:"payment_no"              ` //
 	Version              uint64      `json:"version"              orm:"version"                 ` //
 	ClosedAt             *gtime.Time `json:"closedAt"             orm:"closed_at"               ` //
 	CreatedAt            *gtime.Time `json:"createdAt"            orm:"created_at"              ` //

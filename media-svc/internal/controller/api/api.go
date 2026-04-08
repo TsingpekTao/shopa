@@ -8,13 +8,13 @@ import (
 	"github.com/gogf/gf/contrib/rpc/grpcx/v2"
 )
 
-// Controller 鐎圭偟骞囨禍鍡楊嚠婢舵牔绗岄崘鍛村劥閻ㄥ嫬鐛熸担?RPC 閺堝秴濮熼妴?
+// Controller 负责对外注册媒体相关的 gRPC 服务实现。
 type Controller struct {
 	v1.UnimplementedMediaServiceServer
 	v1.UnimplementedMediaInternalServiceServer
 }
 
-// Register 鐏忓棗鐛熸担?RPC 閺堝秴濮熷▔銊ュ斀閸?gRPC 閺堝秴濮熼崳銊ｂ偓?
+// Register 将媒体服务注册到当前 gRPC 服务器。
 func Register(s *grpcx.GrpcServer) {
 	ctrl := &Controller{}
 	v1.RegisterMediaServiceServer(s.Server, ctrl)

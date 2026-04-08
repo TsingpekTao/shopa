@@ -17,8 +17,10 @@ service BuyerOrderService {
   rpc CreateOrderFromCart(CreateOrderFromCartReq) returns (CreateOrderFromCartRes);
   rpc CreateOrderBuyNow(CreateOrderBuyNowReq) returns (CreateOrderBuyNowRes);
 
+  rpc UpdateMyOrderAddress(UpdateMyOrderAddressReq) returns (UpdateMyOrderAddressRes);
   rpc RequestPay(RequestPayReq) returns (RequestPayRes);
   rpc CancelMyOrder(CancelMyOrderReq) returns (CancelMyOrderRes);
+  rpc ConfirmMyOrderReceived(CompleteOrderReq) returns (CompleteOrderRes);
 
   rpc GetMyOrderDetail(GetMyOrderDetailReq) returns (GetMyOrderDetailRes);
   rpc ListMyOrders(ListMyOrdersReq) returns (ListMyOrdersRes);
@@ -35,6 +37,10 @@ service InternalOrderService {
   rpc HandlePayCallback(HandlePayCallbackReq) returns (HandlePayCallbackRes);
   rpc CompleteOrder(CompleteOrderReq) returns (CompleteOrderRes);
   rpc GetOrderSnapshotByNo(GetOrderSnapshotByNoReq) returns (GetOrderSnapshotByNoRes);
+  rpc PreviewSubOrderRefund(PreviewSubOrderRefundReq) returns (PreviewSubOrderRefundRes);
+  rpc MarkSubOrderRefunding(MarkSubOrderRefundingReq) returns (MarkSubOrderRefundingRes);
+  rpc RejectSubOrderRefund(RejectSubOrderRefundReq) returns (RejectSubOrderRefundRes);
+  rpc FinalizeSubOrderRefund(FinalizeSubOrderRefundReq) returns (FinalizeSubOrderRefundRes);
 }
 
 enum OrderStatus {
@@ -211,6 +217,13 @@ message CreateOrderBuyNowRes {
   bool idempotent_replay = 2;
 }
 
+message UpdateMyOrderAddressReq {
+  string order_no = 1;
+  uint64 address_id = 2;
+}
+
+message UpdateMyOrderAddressRes { OrderMain order = 1; }
+
 message RequestPayReq {
   string order_no = 1;
   PayChannel pay_channel = 2;
@@ -333,3 +346,59 @@ message CompleteOrderRes {
 
 message GetOrderSnapshotByNoReq { string order_no = 1; }
 message GetOrderSnapshotByNoRes { OrderMain order = 1; }
+
+message RefundSubOrderSnapshot {
+  string order_no = 1;
+  string sub_order_no = 2;
+  string item_no = 3;
+  string shop_no = 4;
+  uint64 user_id = 5;
+  SubOrderStatus sub_status = 6;
+  uint64 refundable_amount = 7;
+  uint64 points_return_amount = 8;
+  uint64 points_reverse_amount = 9;
+  string payment_no = 10;
+  repeated OrderItemSnapshot items = 11;
+  OrderStatus order_status = 12;
+  PaymentStatus payment_status = 13;
+}
+
+message PreviewSubOrderRefundReq {
+  string order_no = 1;
+  string sub_order_no = 2;
+  string item_no = 3;
+}
+
+message PreviewSubOrderRefundRes { RefundSubOrderSnapshot snapshot = 1; }
+
+message MarkSubOrderRefundingReq {
+  string order_no = 1;
+  string sub_order_no = 2;
+  string item_no = 3;
+  string refund_no = 4;
+}
+
+message MarkSubOrderRefundingRes { RefundSubOrderSnapshot snapshot = 1; }
+
+message RejectSubOrderRefundReq {
+  string order_no = 1;
+  string sub_order_no = 2;
+  string refund_no = 3;
+}
+
+message RejectSubOrderRefundRes { RefundSubOrderSnapshot snapshot = 1; }
+
+message FinalizeSubOrderRefundReq {
+  string order_no = 1;
+  string sub_order_no = 2;
+  string refund_no = 3;
+  uint64 approved_refund_amount = 4;
+}
+
+message FinalizeSubOrderRefundRes {
+  RefundSubOrderSnapshot snapshot = 1;
+  uint64 points_return_amount = 2;
+  uint64 points_reverse_amount = 3;
+  uint64 points_cash_offset_amount = 4;
+  uint64 account_debt_after = 5;
+}

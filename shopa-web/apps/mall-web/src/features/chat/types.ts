@@ -1,4 +1,5 @@
 export type ConversationStatus = "ACTIVE" | "CLOSED" | "BLOCKED" | "UNKNOWN";
+export type ConversationSceneCode = "" | "PRE_SALE" | "AFTER_SALE";
 
 export type ChatConversation = {
   conversationNo: string;
@@ -8,6 +9,9 @@ export type ChatConversation = {
   buyerDisplayName: string;
   buyerAvatarUrl: string;
   shopAvatarUrl: string;
+  sceneCode: ConversationSceneCode;
+  orderNo: string;
+  subOrderNo: string;
   anchorSpuNo: string;
   anchorSkuNo: string;
   unreadCount: number;
@@ -21,6 +25,32 @@ export type ChatConversation = {
 };
 
 export type ChatMessageType = "TEXT" | "IMAGE" | "PRODUCT_CARD" | "SYSTEM_NOTICE" | "UNKNOWN";
+
+export type ChatProductCardPayload = {
+  kind: "product";
+  shopNo: string;
+  spuNo: string;
+  skuNo: string;
+  title: string;
+  skuName: string;
+  imageUrl: string;
+  priceCents: number;
+  href: string;
+};
+
+export type ChatOrderCardPayload = {
+  kind: "order";
+  orderNo: string;
+  subOrderNo: string;
+  shopNo: string;
+  statusText: string;
+  totalAmountCents: number;
+  itemCount: number;
+  title: string;
+  href: string;
+};
+
+export type ChatCardPayload = ChatProductCardPayload | ChatOrderCardPayload;
 
 export type ChatMessage = {
   messageNo: string;
@@ -37,4 +67,3 @@ export type ChatMessage = {
   peerRead: boolean;
   peerReadAt: string;
 };
-

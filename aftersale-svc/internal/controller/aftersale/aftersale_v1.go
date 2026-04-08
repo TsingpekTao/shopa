@@ -43,6 +43,26 @@ func (c *ControllerV1) ListMyAfterSalesAlias(ctx context.Context, req *aftersale
 	})
 }
 
+func (c *ControllerV1) ApplyRefundBatch(ctx context.Context, req *aftersalev1.ApplyRefundBatchReq) (*aftersalev1.ApplyRefundBatchRes, error) {
+	return c.afterSale.ApplyRefundBatch(ctx, &req.ApplyRefundBatchReq)
+}
+
+func (c *ControllerV1) ListMyRefundBatches(ctx context.Context, req *aftersalev1.ListMyRefundBatchesReq) (*aftersalev1.ListMyRefundBatchesRes, error) {
+	return c.afterSale.ListMyRefundBatches(ctx, &pb.ListMyRefundBatchesReq{
+		PageSize:   req.PageSize,
+		NextCursor: req.NextCursor,
+		Statuses:   req.Statuses,
+	})
+}
+
+func (c *ControllerV1) GetMyRefundBatchDetail(ctx context.Context, req *aftersalev1.GetMyRefundBatchDetailReq) (*aftersalev1.GetMyRefundBatchDetailRes, error) {
+	return c.afterSale.GetMyRefundBatchDetail(ctx, &pb.GetMyRefundBatchDetailReq{RefundBatchNo: req.RefundBatchNo})
+}
+
+func (c *ControllerV1) CancelRefundBatch(ctx context.Context, req *aftersalev1.CancelRefundBatchReq) (*aftersalev1.CancelRefundBatchRes, error) {
+	return c.afterSale.CancelRefundBatch(ctx, &req.CancelRefundBatchReq)
+}
+
 func (c *ControllerV1) ListShopAfterSales(ctx context.Context, req *aftersalev1.ListShopAfterSalesReq) (*aftersalev1.ListShopAfterSalesRes, error) {
 	return c.afterSale.ListShopAfterSales(ctx, &req.ListShopAfterSalesReq)
 }
@@ -78,6 +98,30 @@ func (c *ControllerV1) RejectAfterSale(ctx context.Context, req *aftersalev1.Rej
 
 func (c *ControllerV1) RejectAfterSaleAlias(ctx context.Context, req *aftersalev1.RejectAfterSaleAliasReq) (*aftersalev1.RejectAfterSaleAliasRes, error) {
 	return c.afterSale.RejectAfterSale(ctx, &req.RejectAfterSaleReq)
+}
+
+func (c *ControllerV1) ListShopRefundBatches(ctx context.Context, req *aftersalev1.ListShopRefundBatchesReq) (*aftersalev1.ListShopRefundBatchesRes, error) {
+	return c.afterSale.ListShopRefundBatches(ctx, &pb.ListShopRefundBatchesReq{
+		ShopNo:     req.ShopNo,
+		PageSize:   req.PageSize,
+		NextCursor: req.NextCursor,
+		Statuses:   req.Statuses,
+	})
+}
+
+func (c *ControllerV1) GetShopRefundBatchDetail(ctx context.Context, req *aftersalev1.GetShopRefundBatchDetailReq) (*aftersalev1.GetShopRefundBatchDetailRes, error) {
+	return c.afterSale.GetShopRefundBatchDetail(ctx, &pb.GetShopRefundBatchDetailReq{
+		RefundBatchNo: req.RefundBatchNo,
+		ShopNo:        req.ShopNo,
+	})
+}
+
+func (c *ControllerV1) ApproveRefundBatch(ctx context.Context, req *aftersalev1.ApproveRefundBatchReq) (*aftersalev1.ApproveRefundBatchRes, error) {
+	return c.afterSale.ApproveRefundBatch(ctx, &req.ApproveRefundBatchReq)
+}
+
+func (c *ControllerV1) RejectRefundBatch(ctx context.Context, req *aftersalev1.RejectRefundBatchReq) (*aftersalev1.RejectRefundBatchRes, error) {
+	return c.afterSale.RejectRefundBatch(ctx, &req.RejectRefundBatchReq)
 }
 
 func (c *ControllerV1) ExecuteRefundTask(ctx context.Context, req *aftersalev1.ExecuteRefundTaskReq) (*aftersalev1.ExecuteRefundTaskRes, error) {

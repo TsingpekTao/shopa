@@ -10,25 +10,12 @@ import {
   SellerProductStoreCategoryBinding,
   SellerStoreCategory,
   SellerStoreCategorySortItem,
-  SellerWorkbenchResponse,
   ShopDashboardResponse,
   SubmitApplicationPayload,
   UpdateSellerStoreCategoryPayload,
-  UpdateApplicationDraftPayload
+  UpdateApplicationDraftPayload,
+  SellerWorkbenchResponse
 } from "./types";
-
-const mockWorkbench: SellerWorkbenchResponse = {
-  userId: 0,
-  shops: [],
-  shopsTotal: 0,
-  shopsTruncated: false,
-  latestApplications: [],
-  applicationsTotal: 0,
-  applicationsTruncated: false,
-  productSummary: { total: 0, onShelf: 0, offShelf: 0, reviewing: 0, draft: 0, rejected: 0 },
-  partial: true,
-  degradedFields: ["seller_shops"]
-};
 
 function pickString(...values: unknown[]): string {
   for (const value of values) {
@@ -218,12 +205,7 @@ function normalizeApplicationItem(raw: any): SellerApplicationListItem {
 }
 
 export async function fetchSellerWorkbench(): Promise<SellerWorkbenchResponse> {
-  try {
-    return await apiClient.get<SellerWorkbenchResponse>("/v1/seller/workbench");
-  } catch (error) {
-    console.warn("workbench fallback", error);
-    return mockWorkbench;
-  }
+  return apiClient.get<SellerWorkbenchResponse>("/v1/seller/workbench");
 }
 
 export async function fetchShopDashboard(shopNo: string): Promise<ShopDashboardResponse> {

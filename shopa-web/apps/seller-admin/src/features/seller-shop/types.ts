@@ -30,6 +30,39 @@ export interface ShopDashboardResponse {
   degradedFields?: string[];
 }
 
+export type SellerSalesRange = "7D" | "14D" | "30D" | "8W";
+
+export interface SellerSalesSummary {
+  gmv: number;
+  paidOrderCount: number;
+  paidBuyerCount: number;
+  refundAmount: number;
+  refundRate: number;
+  avgOrderValue: number;
+}
+
+export interface SellerSalesBucket {
+  bucketKey: string;
+  bucketLabel: string;
+  gmv: number;
+  paidOrderCount: number;
+  paidBuyerCount: number;
+  refundAmount: number;
+  refundRate: number;
+}
+
+export interface SellerSalesAnalyticsParams {
+  shopNo?: string;
+  range: SellerSalesRange;
+}
+
+export interface SellerSalesAnalyticsResponse {
+  summary: SellerSalesSummary;
+  series: SellerSalesBucket[];
+  partial?: boolean;
+  degradedFields?: string[];
+}
+
 export interface SellerEntityProfileInput {
   merchantTypeCode?: string;
   entityName: string;

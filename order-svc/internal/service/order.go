@@ -15,8 +15,10 @@ type (
 	IOrder interface {
 		CreateOrderFromCart(ctx context.Context, req *v1.CreateOrderFromCartReq) (*v1.CreateOrderFromCartRes, error)
 		CreateOrderBuyNow(ctx context.Context, req *v1.CreateOrderBuyNowReq) (*v1.CreateOrderBuyNowRes, error)
+		UpdateMyOrderAddress(ctx context.Context, req *v1.UpdateMyOrderAddressReq) (*v1.UpdateMyOrderAddressRes, error)
 		RequestPay(ctx context.Context, req *v1.RequestPayReq) (*v1.RequestPayRes, error)
 		CancelMyOrder(ctx context.Context, req *v1.CancelMyOrderReq) (*v1.CancelMyOrderRes, error)
+		ConfirmMyOrderReceived(ctx context.Context, req *v1.CompleteOrderReq) (*v1.CompleteOrderRes, error)
 		GetMyOrderDetail(ctx context.Context, req *v1.GetMyOrderDetailReq) (*v1.GetMyOrderDetailRes, error)
 		ListMyOrders(ctx context.Context, req *v1.ListMyOrdersReq) (*v1.ListMyOrdersRes, error)
 		ListShopOrders(ctx context.Context, req *v1.ListShopOrdersReq) (*v1.ListShopOrdersRes, error)
@@ -26,6 +28,10 @@ type (
 		HandlePayCallback(ctx context.Context, req *v1.HandlePayCallbackReq) (*v1.HandlePayCallbackRes, error)
 		CompleteOrder(ctx context.Context, req *v1.CompleteOrderReq) (*v1.CompleteOrderRes, error)
 		GetOrderSnapshotByNo(ctx context.Context, req *v1.GetOrderSnapshotByNoReq) (*v1.GetOrderSnapshotByNoRes, error)
+		PreviewSubOrderRefund(ctx context.Context, req *v1.PreviewSubOrderRefundReq) (*v1.PreviewSubOrderRefundRes, error)
+		MarkSubOrderRefunding(ctx context.Context, req *v1.MarkSubOrderRefundingReq) (*v1.MarkSubOrderRefundingRes, error)
+		RejectSubOrderRefund(ctx context.Context, req *v1.RejectSubOrderRefundReq) (*v1.RejectSubOrderRefundRes, error)
+		FinalizeSubOrderRefund(ctx context.Context, req *v1.FinalizeSubOrderRefundReq) (*v1.FinalizeSubOrderRefundRes, error)
 	}
 )
 
