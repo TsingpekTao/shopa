@@ -33,6 +33,12 @@ type AfterSaleCase struct {
 	SellerReply          any         //
 	RejectReasonCode     any         //
 	CancelReasonCode     any         //
+	RefundBatchNo        any         //
+	ScopeCode            any         //
+	ReviewDeadlineAt     *gtime.Time //
+	AutoApprovedAt       *gtime.Time //
+	SelectedItemNosJson  any         //
+	PaymentNo            any         //
 	Version              any         //
 	ClosedAt             *gtime.Time //
 	CreatedAt            *gtime.Time //

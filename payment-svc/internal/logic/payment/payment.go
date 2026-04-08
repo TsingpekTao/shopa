@@ -2,11 +2,24 @@ package payment
 
 import (
 	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"database/sql"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"net/url"
+	"os"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
+	orderv1 "github.com/TsingpekTao/shopa/order-svc/api/v1"
 	v1 "github.com/TsingpekTao/shopa/payment-svc/api/v1"
 	"github.com/TsingpekTao/shopa/payment-svc/internal/dao"
 	"github.com/TsingpekTao/shopa/payment-svc/internal/model/do"
@@ -18,11 +31,32 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 	"github.com/gogf/gf/v2/util/gconv"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // sPayment 定义支付领域逻辑实现。
 type sPayment struct{}
+
+type paymentLaunch struct {
+	PayURL         string
+	PayPayloadJSON string
+}
+
+type internalOrderCallbackClient interface {
+	HandlePayCallback(ctx context.Context, req *orderv1.HandlePayCallbackReq, opts ...grpc.CallOption) (*orderv1.HandlePayCallbackRes, error)
+}
+
+type alipayConfig struct {
+	GatewayURL    string
+	AppID         string
+	PrivateKey    string
+	PublicKey     string
+	ReturnURL     string
+	NotifyURL     string
+	SubjectPrefix string
+}
 
 const (
 	// actionCreateIntent 标记“创建支付意图”的幂等动作。
@@ -35,6 +69,15 @@ const (
 	actionExecuteRefund = "EXECUTE_REFUND_TASK"
 	// actionRunRecon 标记“发起日对账”的幂等动作。
 	actionRunRecon = "RUN_DAILY_RECONCILIATION"
+)
+
+var (
+	newInternalOrderClient = defaultInternalOrderClient
+
+	internalOrderClientMu   sync.Mutex
+	internalOrderClientAddr string
+	internalOrderClientConn *grpc.ClientConn
+	internalOrderClientInst internalOrderCallbackClient
 )
 
 // New 创建支付逻辑实例。
@@ -71,7 +114,11 @@ func (s *sPayment) CreatePaymentIntent(ctx context.Context, req *v1.CreatePaymen
 				return nil, getErr
 			}
 			// 返回幂等回放结果，避免重复创建支付单。
-			return &v1.CreatePaymentIntentRes{Intent: intent, PayUrl: fmt.Sprintf("mock://pay/%s", paymentNo), PayPayloadJson: "{}", IdempotentReplay: true}, nil
+			launch, launchErr := s.buildPaymentLaunch(ctx, req, intent)
+			if launchErr != nil {
+				return nil, launchErr
+			}
+			return &v1.CreatePaymentIntentRes{Intent: intent, PayUrl: launch.PayURL, PayPayloadJson: launch.PayPayloadJSON, IdempotentReplay: true}, nil
 		}
 	}
 
@@ -88,6 +135,54 @@ func (s *sPayment) CreatePaymentIntent(ctx context.Context, req *v1.CreatePaymen
 		// 同步写回订单过期时间，保持两者一致。
 		orderExpireAt = gatewayExpireAt
 	}
+	if existing, err := s.getIntentEntityByOrderNo(ctx, req.GetOrderNo()); err != nil {
+		if !isIdempotencyMissError(err) {
+			return nil, err
+		}
+	} else {
+		if canReuseExistingIntentForCreate(existing) {
+			if err := s.refreshExistingIntentForCreate(ctx, existing, req, orderExpireAt, gatewayExpireAt); err != nil {
+				return nil, err
+			}
+			intent, err := s.getIntentByOrderNo(ctx, req.GetOrderNo())
+			if err != nil {
+				return nil, err
+			}
+			launch, err := s.buildPaymentLaunch(ctx, req, intent)
+			if err != nil {
+				return nil, err
+			}
+			if err = s.saveIdempotency(ctx, req.GetIdempotencyKey(), actionCreateIntent, intent.GetPaymentNo(), map[string]any{
+				"payment_no":       intent.GetPaymentNo(),
+				"pay_url":          launch.PayURL,
+				"pay_payload_json": launch.PayPayloadJSON,
+			}); err != nil {
+				g.Log().Warningf(ctx, "save idempotency failed: %v", err)
+			}
+			return &v1.CreatePaymentIntentRes{Intent: intent, PayUrl: launch.PayURL, PayPayloadJson: launch.PayPayloadJSON, IdempotentReplay: false}, nil
+		}
+		if v1.PaymentIntentStatus(existing.Status) == v1.PaymentIntentStatus_PAYMENT_INTENT_STATUS_PAID {
+			return nil, gerror.NewCode(gcode.CodeBusinessValidationFailed, "payment already completed")
+		}
+		return nil, gerror.NewCodef(gcode.CodeBusinessValidationFailed, "payment intent not reusable, status=%s", v1.PaymentIntentStatus(existing.Status).String())
+	}
+	intent := &v1.PaymentIntent{
+		PaymentNo:       paymentNo,
+		OrderNo:         req.GetOrderNo(),
+		UserId:          req.GetUserId(),
+		PayChannel:      req.GetPayChannel(),
+		Status:          v1.PaymentIntentStatus_PAYMENT_INTENT_STATUS_PAYING,
+		PayableAmount:   req.GetPayableAmount(),
+		RefundedAmount:  0,
+		CurrencyCode:    safeCurrency(req.GetCurrencyCode()),
+		OrderExpireAt:   gtimeToPB(orderExpireAt),
+		GatewayExpireAt: gtimeToPB(gatewayExpireAt),
+		Version:         1,
+	}
+	launch, err := s.buildPaymentLaunch(ctx, req, intent)
+	if err != nil {
+		return nil, err
+	}
 
 	// 组装 payment_intent 入库数据。
 	data := do.PaymentIntent{
@@ -100,7 +195,7 @@ func (s *sPayment) CreatePaymentIntent(ctx context.Context, req *v1.CreatePaymen
 		// 写入支付渠道枚举值。
 		PayChannel: uint(req.GetPayChannel()),
 		// 初始化状态为 CREATED。
-		Status: uint(v1.PaymentIntentStatus_PAYMENT_INTENT_STATUS_CREATED),
+		Status: uint(v1.PaymentIntentStatus_PAYMENT_INTENT_STATUS_PAYING),
 		// 写入应付金额（分）。
 		PayableAmount: req.GetPayableAmount(),
 		// 初始化已退款金额为 0。
@@ -121,18 +216,18 @@ func (s *sPayment) CreatePaymentIntent(ctx context.Context, req *v1.CreatePaymen
 	}
 
 	// 查询刚创建的支付意图用于回包。
-	intent, err := s.getIntentByPaymentNo(ctx, paymentNo)
+	intent, err = s.getIntentByPaymentNo(ctx, paymentNo)
 	// 查询失败时返回错误。
 	if err != nil {
 		return nil, err
 	}
 	// 记录幂等快照用于客户端重试回放。
-	if err = s.saveIdempotency(ctx, req.GetIdempotencyKey(), actionCreateIntent, paymentNo, map[string]any{"payment_no": paymentNo}); err != nil {
+	if err = s.saveIdempotency(ctx, req.GetIdempotencyKey(), actionCreateIntent, paymentNo, map[string]any{"payment_no": paymentNo, "pay_url": launch.PayURL, "pay_payload_json": launch.PayPayloadJSON}); err != nil {
 		// 幂等快照失败不影响主流程，只记录告警。
 		g.Log().Warningf(ctx, "save idempotency failed: %v", err)
 	}
 	// 返回创建结果与 mock 支付链接。
-	return &v1.CreatePaymentIntentRes{Intent: intent, PayUrl: fmt.Sprintf("mock://pay/%s", paymentNo), PayPayloadJson: "{}", IdempotentReplay: false}, nil
+	return &v1.CreatePaymentIntentRes{Intent: intent, PayUrl: launch.PayURL, PayPayloadJson: launch.PayPayloadJSON, IdempotentReplay: false}, nil
 }
 
 // QueryPaymentIntent 查询支付意图快照。
@@ -242,6 +337,9 @@ func (s *sPayment) HandleGatewayCallback(ctx context.Context, req *v1.HandleGate
 		if err != nil {
 			return nil, err
 		}
+	}
+	if err := s.notifyOrderPayCallback(ctx, req, intent); err != nil {
+		return nil, err
 	}
 	// 返回回调处理结果。
 	return &v1.HandleGatewayCallbackRes{Intent: intent, CallbackIdempotentHit: idempotentHit}, nil
@@ -682,6 +780,9 @@ func (s *sPayment) replayIdempotency(ctx context.Context, idemKey string, action
 	var row entity.PaymentIdempotency
 	// 按幂等键+动作码读取唯一快照。
 	if err := dao.PaymentIdempotency.Ctx(ctx).Where(do.PaymentIdempotency{IdemKey: idemKey, BizCode: actionCode}).Scan(&row); err != nil {
+		if isIdempotencyMissError(err) {
+			return false, nil, nil
+		}
 		// 查询失败时返回错误。
 		return false, nil, gerror.Wrap(err, "query idempotency failed")
 	}
@@ -702,6 +803,16 @@ func (s *sPayment) replayIdempotency(ctx context.Context, idemKey string, action
 	}
 	// 返回幂等命中与快照内容。
 	return true, payload, nil
+}
+
+func isIdempotencyMissError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if gerror.HasCode(err, gcode.CodeNotFound) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), sql.ErrNoRows.Error())
 }
 
 // saveIdempotency 写入幂等快照。
@@ -735,6 +846,50 @@ func (s *sPayment) getIntentByReq(ctx context.Context, paymentNo string, orderNo
 }
 
 // getIntentByPaymentNo 按支付单号查询支付意图。
+func (s *sPayment) getIntentEntityByOrderNo(ctx context.Context, orderNo string) (*entity.PaymentIntent, error) {
+	var row entity.PaymentIntent
+	if err := dao.PaymentIntent.Ctx(ctx).Where(dao.PaymentIntent.Columns().OrderNo, orderNo).Scan(&row); err != nil {
+		return nil, gerror.Wrap(err, "query payment_intent entity by order_no failed")
+	}
+	if row.Id == 0 {
+		return nil, gerror.NewCode(gcode.CodeNotFound, "payment intent not found")
+	}
+	return &row, nil
+}
+
+func canReuseExistingIntentForCreate(row *entity.PaymentIntent) bool {
+	if row == nil {
+		return false
+	}
+	switch v1.PaymentIntentStatus(row.Status) {
+	case v1.PaymentIntentStatus_PAYMENT_INTENT_STATUS_CREATED, v1.PaymentIntentStatus_PAYMENT_INTENT_STATUS_PAYING:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *sPayment) refreshExistingIntentForCreate(ctx context.Context, row *entity.PaymentIntent, req *v1.CreatePaymentIntentReq, orderExpireAt, gatewayExpireAt *gtime.Time) error {
+	if row == nil || row.Id == 0 {
+		return gerror.NewCode(gcode.CodeInvalidParameter, "payment intent row is required")
+	}
+	cols := dao.PaymentIntent.Columns()
+	_, err := dao.PaymentIntent.Ctx(ctx).
+		Where(cols.Id, row.Id).
+		Where(cols.OrderNo, row.OrderNo).
+		Data(do.PaymentIntent{
+			PayChannel:      uint(req.GetPayChannel()),
+			Status:          uint(v1.PaymentIntentStatus_PAYMENT_INTENT_STATUS_PAYING),
+			PayableAmount:   req.GetPayableAmount(),
+			CurrencyCode:    safeCurrency(req.GetCurrencyCode()),
+			OrderExpireAt:   orderExpireAt,
+			GatewayExpireAt: gatewayExpireAt,
+			Version:         gdb.Raw(cols.Version + " + 1"),
+		}).
+		Update()
+	return gerror.Wrap(err, "refresh existing payment_intent failed")
+}
+
 func (s *sPayment) getIntentByPaymentNo(ctx context.Context, paymentNo string) (*v1.PaymentIntent, error) {
 	// 查询数据库实体。
 	var row entity.PaymentIntent
@@ -771,6 +926,67 @@ func (s *sPayment) getIntentByOrderNo(ctx context.Context, orderNo string) (*v1.
 }
 
 // toPBIntent 把数据库实体转换为 protobuf 响应。
+func buildOrderPayCallbackRequest(req *v1.HandleGatewayCallbackReq, intent *v1.PaymentIntent) *orderv1.HandlePayCallbackReq {
+	if req == nil || intent == nil {
+		return nil
+	}
+	return &orderv1.HandlePayCallbackReq{
+		PaymentEventId: firstNonEmptyString(req.GetCallbackEventId(), fmt.Sprintf("payment-callback-%s", intent.GetPaymentNo())),
+		PayNo:          firstNonEmptyString(req.GetPaymentNo(), intent.GetPaymentNo()),
+		OrderNo:        firstNonEmptyString(req.GetOrderNo(), intent.GetOrderNo()),
+		PayChannel:     orderv1.PayChannel(req.GetPayChannel()),
+		PayStatusCode:  strings.ToUpper(strings.TrimSpace(req.GetGatewayStatusCode())),
+		ChannelTradeNo: strings.TrimSpace(req.GetExternalTradeNo()),
+		PaidAmount:     req.GetPaidAmount(),
+		PaidAt:         req.GetPaidAt(),
+		RawPayload:     req.GetRawPayload(),
+		IdempotencyKey: fmt.Sprintf("payment-callback:%s", firstNonEmptyString(req.GetCallbackEventId(), intent.GetPaymentNo())),
+	}
+}
+
+func (s *sPayment) notifyOrderPayCallback(ctx context.Context, req *v1.HandleGatewayCallbackReq, intent *v1.PaymentIntent) error {
+	callbackReq := buildOrderPayCallbackRequest(req, intent)
+	if callbackReq == nil {
+		return gerror.NewCode(gcode.CodeInvalidParameter, "order callback request is required")
+	}
+	client, err := newInternalOrderClient(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = client.HandlePayCallback(ctx, callbackReq)
+	return gerror.Wrap(err, "notify order pay callback failed")
+}
+
+func defaultInternalOrderClient(ctx context.Context) (internalOrderCallbackClient, error) {
+	addr := strings.TrimSpace(g.Cfg().MustGet(ctx, "upstream.orderGrpc", "127.0.0.1:9008").String())
+	if addr == "" {
+		addr = "127.0.0.1:9008"
+	}
+
+	internalOrderClientMu.Lock()
+	defer internalOrderClientMu.Unlock()
+
+	if internalOrderClientInst != nil && internalOrderClientConn != nil && internalOrderClientAddr == addr {
+		return internalOrderClientInst, nil
+	}
+
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, err := grpc.DialContext(timeoutCtx, addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, gerror.Wrapf(err, "dial order-svc failed, addr=%s", addr)
+	}
+
+	if internalOrderClientConn != nil {
+		_ = internalOrderClientConn.Close()
+	}
+	internalOrderClientConn = conn
+	internalOrderClientAddr = addr
+	internalOrderClientInst = orderv1.NewInternalOrderServiceClient(conn)
+	return internalOrderClientInst, nil
+}
+
 func toPBIntent(row *entity.PaymentIntent) *v1.PaymentIntent {
 	// 保护性判空避免空指针。
 	if row == nil {
@@ -831,6 +1047,170 @@ func safeCurrency(input string) string {
 	}
 	// 把币种统一转成大写。
 	return strings.ToUpper(ccy)
+}
+
+func (s *sPayment) buildPaymentLaunch(ctx context.Context, req *v1.CreatePaymentIntentReq, intent *v1.PaymentIntent) (*paymentLaunch, error) {
+	if intent == nil {
+		return nil, gerror.NewCode(gcode.CodeInvalidParameter, "payment intent is required")
+	}
+	switch intent.GetPayChannel() {
+	case v1.PayChannel_PAY_CHANNEL_MOCK:
+		return &paymentLaunch{
+			PayURL:         fmt.Sprintf("mock://pay/%s", intent.GetPaymentNo()),
+			PayPayloadJSON: `{"gateway":"mock"}`,
+		}, nil
+	case v1.PayChannel_PAY_CHANNEL_ALIPAY:
+		return buildAlipayPagePaymentLaunch(loadAlipayConfig(ctx), req, intent)
+	default:
+		return nil, gerror.NewCodef(gcode.CodeNotSupported, "pay channel %s not supported yet", intent.GetPayChannel().String())
+	}
+}
+
+func loadAlipayConfig(ctx context.Context) alipayConfig {
+	return alipayConfig{
+		GatewayURL:    cfgEnvString(ctx, "payment.alipay.gatewayUrl", "https://openapi.alipay.com/gateway.do", "SHOPA_ALIPAY_GATEWAY_URL", "ALIPAY_GATEWAY_URL"),
+		AppID:         cfgEnvString(ctx, "payment.alipay.appId", "", "SHOPA_ALIPAY_APP_ID", "ALIPAY_APP_ID"),
+		PrivateKey:    cfgEnvString(ctx, "payment.alipay.privateKey", "", "SHOPA_ALIPAY_PRIVATE_KEY", "ALIPAY_PRIVATE_KEY"),
+		PublicKey:     cfgEnvString(ctx, "payment.alipay.publicKey", "", "SHOPA_ALIPAY_PUBLIC_KEY", "ALIPAY_PUBLIC_KEY"),
+		ReturnURL:     cfgEnvString(ctx, "payment.alipay.returnUrl", "", "SHOPA_ALIPAY_RETURN_URL", "ALIPAY_RETURN_URL"),
+		NotifyURL:     cfgEnvString(ctx, "payment.alipay.notifyUrl", "", "SHOPA_ALIPAY_NOTIFY_URL", "ALIPAY_NOTIFY_URL"),
+		SubjectPrefix: cfgEnvString(ctx, "payment.alipay.subjectPrefix", "Shopa", "SHOPA_ALIPAY_SUBJECT_PREFIX", "ALIPAY_SUBJECT_PREFIX"),
+	}
+}
+
+func cfgEnvString(ctx context.Context, cfgKey, defaultValue string, envKeys ...string) string {
+	for _, envKey := range envKeys {
+		if value := strings.TrimSpace(os.Getenv(envKey)); value != "" {
+			return value
+		}
+	}
+	return strings.TrimSpace(g.Cfg().MustGet(ctx, cfgKey, defaultValue).String())
+}
+
+func buildAlipayPagePaymentLaunch(cfg alipayConfig, req *v1.CreatePaymentIntentReq, intent *v1.PaymentIntent) (*paymentLaunch, error) {
+	if strings.TrimSpace(cfg.AppID) == "" || strings.TrimSpace(cfg.PrivateKey) == "" {
+		return nil, gerror.NewCode(gcode.CodeInternalError, "alipay config missing payment.alipay.appId/payment.alipay.privateKey")
+	}
+
+	now := time.Now().In(alipayTimeLocation())
+	subject := firstNonEmptyString(strings.TrimSpace(req.GetSubject()), fmt.Sprintf("%s %s", firstNonEmptyString(cfg.SubjectPrefix, "Shopa"), strings.TrimSpace(intent.GetOrderNo())))
+	returnURL := firstNonEmptyString(strings.TrimSpace(req.GetReturnUrl()), cfg.ReturnURL)
+	notifyURL := firstNonEmptyString(strings.TrimSpace(req.GetNotifyUrl()), cfg.NotifyURL)
+
+	bizContentBody, err := json.Marshal(map[string]string{
+		"out_trade_no": strings.TrimSpace(intent.GetPaymentNo()),
+		"product_code": "FAST_INSTANT_TRADE_PAY",
+		"subject":      subject,
+		"total_amount": amountFenToYuanString(intent.GetPayableAmount()),
+		"time_expire":  formatAlipayTimestamp(intent.GetGatewayExpireAt()),
+	})
+	if err != nil {
+		return nil, gerror.Wrap(err, "marshal alipay biz_content failed")
+	}
+
+	params := map[string]string{
+		"app_id":      cfg.AppID,
+		"biz_content": string(bizContentBody),
+		"charset":     "utf-8",
+		"format":      "JSON",
+		"method":      "alipay.trade.page.pay",
+		"notify_url":  notifyURL,
+		"return_url":  returnURL,
+		"sign_type":   "RSA2",
+		"timestamp":   now.Format("2006-01-02 15:04:05"),
+		"version":     "1.0",
+	}
+	sign, err := signAlipayParams(params, cfg.PrivateKey)
+	if err != nil {
+		return nil, err
+	}
+	params["sign"] = sign
+
+	values := url.Values{}
+	for key, value := range params {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		values.Set(key, value)
+	}
+	payURL := strings.TrimRight(cfg.GatewayURL, "?") + "?" + values.Encode()
+
+	payloadBody, err := json.Marshal(map[string]string{
+		"gateway": "alipay",
+		"method":  "GET",
+		"url":     payURL,
+	})
+	if err != nil {
+		return nil, gerror.Wrap(err, "marshal alipay payload failed")
+	}
+	return &paymentLaunch{
+		PayURL:         payURL,
+		PayPayloadJSON: string(payloadBody),
+	}, nil
+}
+
+func signAlipayParams(params map[string]string, privateKeyPEM string) (string, error) {
+	block, _ := pem.Decode([]byte(privateKeyPEM))
+	if block == nil {
+		return "", gerror.NewCode(gcode.CodeInternalError, "invalid alipay private key pem")
+	}
+	keyAny, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return "", gerror.Wrap(err, "parse alipay private key failed")
+	}
+	privateKey, ok := keyAny.(*rsa.PrivateKey)
+	if !ok {
+		return "", gerror.NewCode(gcode.CodeInternalError, "alipay private key is not rsa")
+	}
+	signContent := buildAlipaySignContent(params)
+	hash := sha256.Sum256([]byte(signContent))
+	signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA256, hash[:])
+	if err != nil {
+		return "", gerror.Wrap(err, "sign alipay params failed")
+	}
+	return base64.StdEncoding.EncodeToString(signature), nil
+}
+
+func buildAlipaySignContent(params map[string]string) string {
+	keys := make([]string, 0, len(params))
+	for key, value := range params {
+		if key == "sign" || strings.TrimSpace(value) == "" {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%s", key, params[key]))
+	}
+	return strings.Join(parts, "&")
+}
+
+func amountFenToYuanString(amount uint64) string {
+	return fmt.Sprintf("%.2f", float64(amount)/100)
+}
+
+func formatAlipayTimestamp(ts *timestamppb.Timestamp) string {
+	if ts == nil {
+		return ""
+	}
+	return ts.AsTime().In(alipayTimeLocation()).Format("2006-01-02 15:04:05")
+}
+
+func alipayTimeLocation() *time.Location {
+	return time.FixedZone("CST", 8*3600)
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // newBizNo 生成简单业务单号。

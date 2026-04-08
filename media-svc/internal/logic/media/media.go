@@ -276,6 +276,22 @@ func (s *sMedia) IssueReadUrl(ctx context.Context, req *v1.IssueReadUrlReq) (*v1
 	if err != nil {
 		return nil, err
 	}
+	if shouldPreferSignedReadURL(asset) {
+		ttl := int(req.GetTtlSeconds())
+		if ttl <= 0 {
+			ttl = consts.DefaultIssueReadTTLSeconds
+		}
+		if ttl > consts.MaxIssueReadTTLSeconds {
+			ttl = consts.MaxIssueReadTTLSeconds
+		}
+		expireAt := time.Now().Add(time.Duration(ttl) * time.Second)
+		return &v1.IssueReadUrlRes{
+			AssetId:   asset.AssetId,
+			Url:       buildSignedReadURL(ctx, asset, expireAt.Unix()),
+			IsPublic:  false,
+			ExpiredAt: timestamppb.New(expireAt),
+		}, nil
+	}
 
 	// 公有读路径：
 	// 1) 优先复用库里已保存的 public_url（避免配置变更引起抖动）；
@@ -785,26 +801,33 @@ func (s *sMedia) getScenePolicy(ctx context.Context, sceneCode string) (*entity.
 		row = entity.MediaScenePolicy{}
 	}
 	if row.Id == 0 {
-		if strings.EqualFold(strings.TrimSpace(sceneCode), "buyer_avatar") {
-			return &entity.MediaScenePolicy{
-				SceneCode:           "buyer_avatar",
-				AclType:             consts.ACLTypePublicRead,
-				MaxCount:            1,
-				MaxSizeBytes:        5 * 1024 * 1024,
-				AllowMimeJson:       `["image/jpeg","image/png","image/webp"]`,
-				AllowExtJson:        `[".jpg",".jpeg",".png",".webp"]`,
-				RetentionDays:       3650,
-				GcGraceHours:        24,
-				RiskLevel:           1,
-				RiskAsyncEnabled:    1,
-				ProcessAsyncEnabled: 0,
-				Status:              consts.ScenePolicyStatusEnabled,
-				Remark:              "buyer avatar upload fallback policy",
-			}, nil
+		if policy, ok := defaultScenePolicyForMissingScene(sceneCode); ok {
+			return policy, nil
 		}
 		return nil, gerror.NewCode(gcode.CodeNotFound, "scene policy not found or disabled")
 	}
 	return &row, nil
+}
+
+func defaultScenePolicyForMissingScene(sceneCode string) (*entity.MediaScenePolicy, bool) {
+	if !strings.EqualFold(strings.TrimSpace(sceneCode), "buyer_avatar") {
+		return nil, false
+	}
+	return &entity.MediaScenePolicy{
+		SceneCode:           "buyer_avatar",
+		AclType:             consts.ACLTypePrivate,
+		MaxCount:            1,
+		MaxSizeBytes:        5 * 1024 * 1024,
+		AllowMimeJson:       `["image/jpeg","image/png","image/webp"]`,
+		AllowExtJson:        `[".jpg",".jpeg",".png",".webp"]`,
+		RetentionDays:       3650,
+		GcGraceHours:        24,
+		RiskLevel:           1,
+		RiskAsyncEnabled:    1,
+		ProcessAsyncEnabled: 0,
+		Status:              consts.ScenePolicyStatusEnabled,
+		Remark:              "buyer avatar upload fallback policy",
+	}, true
 }
 
 func (s *sMedia) getAssetByID(ctx context.Context, assetID uint64) (*entity.MediaAsset, error) {
@@ -1217,6 +1240,21 @@ func isOSSProvider(provider string) bool {
 	}
 }
 
+func shouldPreferSignedReadURL(asset *entity.MediaAsset) bool {
+	if asset == nil {
+		return false
+	}
+	if asset.AclType != consts.ACLTypePublicRead {
+		return false
+	}
+	if !isOSSProvider(asset.StorageProvider) {
+		return false
+	}
+	// seller_media assets are currently stored in a private OSS bucket in local/dev,
+	// so a plain public URL will 403 even if historical rows were marked public-read.
+	return strings.EqualFold(strings.TrimSpace(asset.SceneCode), "seller_media")
+}
+
 func buildOSSPublicURL(endpoint string, bucket string, objectKey string) string {
 	endpoint = normalizeStorageEndpoint(endpoint)
 	if endpoint == "" {
@@ -1234,7 +1272,7 @@ func buildOSSPublicURL(endpoint string, bucket string, objectKey string) string 
 	if host == "" {
 		return ""
 	}
-	key := strings.TrimLeft(objectKey, "/")
+	key := encodeObjectKeyPath(objectKey)
 	if key == "" {
 		return ""
 	}
@@ -1246,6 +1284,18 @@ func buildOSSPublicURL(endpoint string, bucket string, objectKey string) string 
 		return fmt.Sprintf("%s://%s/%s", scheme, host, key)
 	}
 	return fmt.Sprintf("%s://%s.%s/%s", scheme, bucket, host, key)
+}
+
+func encodeObjectKeyPath(objectKey string) string {
+	key := strings.TrimLeft(strings.TrimSpace(objectKey), "/")
+	if key == "" {
+		return ""
+	}
+	parts := strings.Split(key, "/")
+	for idx, part := range parts {
+		parts[idx] = url.PathEscape(part)
+	}
+	return strings.Join(parts, "/")
 }
 
 func normalizeStorageEndpoint(raw string) string {

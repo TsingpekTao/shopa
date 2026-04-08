@@ -6,14 +6,14 @@ import (
 )
 
 type CreatePaymentIntentReq struct {
-	g.Meta `path:"/v1/payments/intents" method:"post" tags:"Payment" summary:"Create payment intent"`
+	g.Meta `path:"/v1/payment/buyer/payment-intents:create" method:"post" tags:"Payment" summary:"Create payment intent"`
 	pb.CreatePaymentIntentReq
 }
 
 type CreatePaymentIntentRes = pb.CreatePaymentIntentRes
 
 type QueryPaymentIntentReq struct {
-	g.Meta    `path:"/v1/payments/intents/query" method:"get" tags:"Payment" summary:"Query payment intent"`
+	g.Meta    `path:"/v1/payment/buyer/payment-intents:query" method:"get" tags:"Payment" summary:"Query payment intent"`
 	PaymentNo string `json:"paymentNo" in:"query"`
 	OrderNo   string `json:"orderNo" in:"query"`
 }
@@ -21,7 +21,7 @@ type QueryPaymentIntentReq struct {
 type QueryPaymentIntentRes = pb.QueryPaymentIntentRes
 
 type HandleGatewayCallbackReq struct {
-	g.Meta `path:"/v1/internal/payments/callback" method:"post" tags:"PaymentInternal" summary:"Handle payment gateway callback"`
+	g.Meta `path:"/v1/payment/internal/gateway:callback" method:"post" tags:"PaymentInternal" summary:"Handle payment gateway callback"`
 	pb.HandleGatewayCallbackReq
 }
 

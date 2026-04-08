@@ -8,6 +8,7 @@ package service
 import (
 	"context"
 
+	aftersalev1 "github.com/TsingpekTao/shopa/aftersale-svc/api/v1"
 	adminv1 "github.com/TsingpekTao/shopa/edge-gateway/api/admin/v1"
 	mev1 "github.com/TsingpekTao/shopa/edge-gateway/api/me/v1"
 	sellerv1 "github.com/TsingpekTao/shopa/edge-gateway/api/seller/v1"
@@ -26,6 +27,16 @@ type (
 		BuildAdminConversationList(ctx context.Context, accessToken string) (*adminv1.ListConversationsRes, error)
 		BuildSellerWorkbench(ctx context.Context, accessToken string) (*sellerv1.GetWorkbenchRes, error)
 		BuildSellerShopDashboard(ctx context.Context, accessToken string, shopNo string) (*sellerv1.GetShopDashboardRes, error)
+		BuildSellerSalesAnalytics(ctx context.Context, accessToken string, shopNo string, rangeCode string) (*sellerv1.GetSalesAnalyticsRes, error)
+		BuildBuyerRefundPreview(ctx context.Context, accessToken string, req *mev1.PreviewRefundReq) (*mev1.PreviewRefundRes, error)
+		ApplyBuyerRefundBatch(ctx context.Context, accessToken string, req *aftersalev1.ApplyRefundBatchReq) (*aftersalev1.ApplyRefundBatchRes, error)
+		ListBuyerRefundBatches(ctx context.Context, accessToken string, req *mev1.ListRefundBatchesReq) (*aftersalev1.ListMyRefundBatchesRes, error)
+		GetBuyerRefundBatchDetail(ctx context.Context, accessToken string, req *mev1.GetRefundBatchDetailReq) (*aftersalev1.GetMyRefundBatchDetailRes, error)
+		CancelBuyerRefundBatch(ctx context.Context, accessToken string, req *aftersalev1.CancelRefundBatchReq) (*aftersalev1.CancelRefundBatchRes, error)
+		ListSellerRefundBatches(ctx context.Context, accessToken string, req *sellerv1.ListRefundBatchesReq) (*aftersalev1.ListShopRefundBatchesRes, error)
+		GetSellerRefundBatchDetail(ctx context.Context, accessToken string, req *sellerv1.GetRefundBatchDetailReq) (*aftersalev1.GetShopRefundBatchDetailRes, error)
+		ApproveSellerRefundBatch(ctx context.Context, accessToken string, req *aftersalev1.ApproveRefundBatchReq) (*aftersalev1.ApproveRefundBatchRes, error)
+		RejectSellerRefundBatch(ctx context.Context, accessToken string, req *aftersalev1.RejectRefundBatchReq) (*aftersalev1.RejectRefundBatchRes, error)
 	}
 )
 

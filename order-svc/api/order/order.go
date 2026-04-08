@@ -9,8 +9,10 @@ import (
 type IOrderV1 interface {
 	CreateOrderFromCart(ctx context.Context, req *v1.CreateOrderFromCartReq) (res *v1.CreateOrderFromCartRes, err error)
 	CreateOrderBuyNow(ctx context.Context, req *v1.CreateOrderBuyNowReq) (res *v1.CreateOrderBuyNowRes, err error)
+	UpdateMyOrderAddress(ctx context.Context, req *v1.UpdateMyOrderAddressReq) (res *v1.UpdateMyOrderAddressRes, err error)
 	RequestPay(ctx context.Context, req *v1.RequestPayReq) (res *v1.RequestPayRes, err error)
 	CancelMyOrder(ctx context.Context, req *v1.CancelMyOrderReq) (res *v1.CancelMyOrderRes, err error)
+	ConfirmMyOrderReceived(ctx context.Context, req *v1.ConfirmMyOrderReceivedReq) (res *v1.ConfirmMyOrderReceivedRes, err error)
 	GetMyOrderDetail(ctx context.Context, req *v1.GetMyOrderDetailReq) (res *v1.GetMyOrderDetailRes, err error)
 	ListMyOrders(ctx context.Context, req *v1.ListMyOrdersReq) (res *v1.ListMyOrdersRes, err error)
 	ListShopOrders(ctx context.Context, req *v1.ListShopOrdersReq) (res *v1.ListShopOrdersRes, err error)

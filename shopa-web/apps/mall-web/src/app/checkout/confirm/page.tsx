@@ -12,6 +12,8 @@ import { getBuyerProductDetail } from "@/features/catalog/api";
 import { listMyAddresses } from "@/features/address/api";
 import { UserAddress } from "@/features/address/types";
 import { buildIdempotencyKey, createOrderBuyNow, createOrderFromCart } from "@/features/order/api";
+import { buildCheckoutPointsSummary, POINTS_PER_YUAN } from "@/features/order/checkout-points";
+import { getMyOverview } from "@/features/overview/api";
 import { getCartItemHints } from "@/lib/cart-hints";
 import { getDemoSalePriceCents } from "@/lib/demo-pricing";
 import { formatCnyFromCents } from "@/lib/price";
@@ -65,6 +67,7 @@ export default function CheckoutConfirmPage() {
 
   const [buyerRemark, setBuyerRemark] = useState("");
   const [selectedAddressId, setSelectedAddressId] = useState<number>(() => getDefaultAddressId(searchParams.get("address_id")));
+  const [usePoints, setUsePoints] = useState(false);
 
   const addressQuery = useQuery({
     queryKey: ["checkout-addresses"],
@@ -73,7 +76,14 @@ export default function CheckoutConfirmPage() {
     refetchOnWindowFocus: false
   });
 
-  const addresses = addressQuery.data?.addresses ?? [];
+  const addresses = useMemo(() => addressQuery.data?.addresses ?? [], [addressQuery.data?.addresses]);
+
+  const overviewQuery = useQuery({
+    queryKey: ["mall-me-overview", "checkout-confirm"],
+    queryFn: getMyOverview,
+    staleTime: 20_000,
+    refetchOnWindowFocus: false
+  });
 
   useEffect(() => {
     if (addresses.length === 0) {
@@ -160,6 +170,27 @@ export default function CheckoutConfirmPage() {
   );
 
   const payableAmount = mode === "cart" ? snapshot?.payableAmount || computedPayableAmount : computedPayableAmount;
+  const availablePoints = overviewQuery.data?.points ?? 0;
+  const pointsSummary = useMemo(
+    () =>
+      buildCheckoutPointsSummary({
+        payableAmount,
+        availablePoints,
+        usePoints
+      }),
+    [availablePoints, payableAmount, usePoints]
+  );
+  const maxPointsDiscountAmount = pointsSummary.maxDiscountAmount;
+  const maxUsablePoints = pointsSummary.maxUsablePoints;
+  const selectedPoints = pointsSummary.selectedPoints;
+  const selectedPointsDiscountAmount = pointsSummary.selectedDiscountAmount;
+  const finalPayableAmount = pointsSummary.finalPayableAmount;
+
+  useEffect(() => {
+    if (usePoints && maxUsablePoints === 0) {
+      setUsePoints(false);
+    }
+  }, [maxUsablePoints, usePoints]);
 
   const selectedAddress = useMemo(
     () => addresses.find((item) => item.addressId === selectedAddressId) ?? null,
@@ -194,6 +225,10 @@ export default function CheckoutConfirmPage() {
           qty,
           addressId: selectedAddressId,
           buyerRemark,
+          submitSourceCode: "mall-web",
+          usePoints,
+          intentPoints: selectedPoints,
+          expectedPointsCashAmount: selectedPointsDiscountAmount,
           idempotencyKey: buildIdempotencyKey("buy_now")
         });
       }
@@ -206,13 +241,22 @@ export default function CheckoutConfirmPage() {
         checkoutToken: snapshot.checkoutToken,
         addressId: selectedAddressId,
         buyerRemark,
+        submitSourceCode: "mall-web",
+        usePoints,
+        intentPoints: selectedPoints,
+        expectedPointsCashAmount: selectedPointsDiscountAmount,
         expectedSnapshotDigest: snapshot.snapshotDigest,
         idempotencyKey: buildIdempotencyKey("from_cart")
       });
     },
     onSuccess: (result) => {
-      messageApi.success(isZh ? `下单成功：${result.orderNo}` : `Order created: ${result.orderNo}`);
-      router.push(`/me/orders?order_no=${encodeURIComponent(result.orderNo)}`);
+      if (!result.orderNo) {
+        messageApi.error(isZh ? "下单成功但缺少订单号，请到订单页刷新查看" : "Order created but order number is missing");
+        router.push("/me/orders");
+        return;
+      }
+      messageApi.success(isZh ? `订单已创建：${result.orderNo}` : `Order created: ${result.orderNo}`);
+      router.push(`/checkout/pay?order_no=${encodeURIComponent(result.orderNo)}&address_id=${selectedAddressId}`);
     },
     onError: (err) => {
       console.error(err);
@@ -293,20 +337,79 @@ export default function CheckoutConfirmPage() {
         {loadFailed && <p>{isZh ? "结算信息加载失败，请返回购物车重试。" : "Failed to load checkout data."}</p>}
       </section>
 
+      <section className="tb-checkout-points">
+        <div className="tb-checkout-points-head">
+          <div>
+            <h2>{isZh ? "积分抵扣" : "Points"}</h2>
+            <small>{isZh ? "100 积分可抵 1 元，最多抵订单金额的 5%" : "Use points for up to 5% off this order."}</small>
+          </div>
+          <button
+            type="button"
+            className={`tb-checkout-points-toggle ${usePoints ? "is-active" : ""}`}
+            aria-pressed={usePoints}
+            disabled={!pointsSummary.canToggle}
+            onClick={() => setUsePoints((current) => !current)}
+          >
+            <span>{isZh ? "使用积分抵扣" : "Apply Points"}</span>
+            <strong>
+              {pointsSummary.canToggle
+                ? `${maxUsablePoints} ${isZh ? "积分" : "pts"}`
+                : isZh
+                  ? "暂无可用积分"
+                  : "No Points Available"}
+            </strong>
+          </button>
+        </div>
+        <div className="tb-checkout-points-grid">
+          <div>
+            <span>{isZh ? "当前积分" : "Available"}</span>
+            <strong>{availablePoints}</strong>
+          </div>
+          <div>
+            <span>{isZh ? "本单最多可抵" : "Max Discount"}</span>
+            <strong>{`CNY ${formatCnyFromCents(maxPointsDiscountAmount)}`}</strong>
+          </div>
+          <div>
+            <span>{isZh ? "本次抵扣" : "Selected"}</span>
+            <strong>{usePoints ? `${selectedPoints} / CNY ${formatCnyFromCents(selectedPointsDiscountAmount)}` : isZh ? "未使用" : "Not Used"}</strong>
+          </div>
+        </div>
+        <p className="tb-checkout-points-tip">
+          {isZh
+            ? `当前按照 ${POINTS_PER_YUAN} 积分抵 1 元计算，确认下单后会锁定本次抵扣。`
+            : `Points are redeemed at ${POINTS_PER_YUAN} points per CNY 1 and will be reserved after order submission.`}
+        </p>
+      </section>
+
       <section className="tb-checkout-submit">
-        <p>
-          {isZh ? "买家留言：" : "Buyer Remark:"}
-          <input
-            value={buyerRemark}
-            onChange={(event) => setBuyerRemark(event.target.value)}
-            placeholder={isZh ? "选填，给商家留言" : "Optional note to seller"}
-            style={{ marginLeft: 8, width: 280, maxWidth: "70vw", height: 34, borderRadius: 6, border: "1px solid #ddd", padding: "0 10px" }}
-          />
-        </p>
-        <p>
-          {isZh ? "应付：" : "Payable: "}
-          <strong>{`CNY ${formatCnyFromCents(payableAmount)}`}</strong>
-        </p>
+        <div className="tb-checkout-submit-form">
+          <p>
+            {isZh ? "买家留言：" : "Buyer Remark:"}
+            <input
+              value={buyerRemark}
+              onChange={(event) => setBuyerRemark(event.target.value)}
+              placeholder={isZh ? "选填，给商家留言" : "Optional note to seller"}
+              style={{ marginLeft: 8, width: 280, maxWidth: "70vw", height: 34, borderRadius: 6, border: "1px solid #ddd", padding: "0 10px" }}
+            />
+          </p>
+          <div className="tb-checkout-price-stack">
+            <p className="tb-checkout-submit-note">
+              {isZh ? "订单金额：" : "Order Amount: "}
+              <span>{`CNY ${formatCnyFromCents(payableAmount)}`}</span>
+            </p>
+            <p className="tb-checkout-submit-note">
+              {isZh ? "积分抵扣：" : "Points Discount: "}
+              <span>{usePoints ? `- CNY ${formatCnyFromCents(selectedPointsDiscountAmount)}` : isZh ? "未使用" : "Not Used"}</span>
+            </p>
+          </div>
+        </div>
+        <div className="tb-checkout-payable">
+          {usePoints ? <small>{`CNY ${formatCnyFromCents(payableAmount)}`}</small> : null}
+          <p>
+            {isZh ? "应付：" : "Payable: "}
+            <strong>{`CNY ${formatCnyFromCents(finalPayableAmount)}`}</strong>
+          </p>
+        </div>
         <button type="button" disabled={!canSubmit || createOrderMutation.isLoading} onClick={() => createOrderMutation.mutate()}>
           {createOrderMutation.isLoading ? (isZh ? "提交中..." : "Submitting...") : isZh ? "提交订单" : "Submit Order"}
         </button>

@@ -211,7 +211,16 @@ func (s *sPoints) loadRule(ctx context.Context) (*entity.PointsRuleConfig, *rule
 		return nil, nil, "", "", gerror.Wrap(err, "query points_rule_config failed")
 	}
 	if row.RuleCode == "" {
-		row = entity.PointsRuleConfig{RuleCode: "DEFAULT_RULE", RuleName: "Default points rule", StatusCode: accountStatusActive, MinOrderAmountCent: 100, MaxDeductionRateBps: 3000, DeductPointsPerCent: 1, GrantPointsPerCent: 1, RefundGraceDays: 7}
+		row = entity.PointsRuleConfig{
+			RuleCode:            "DEFAULT_RULE",
+			RuleName:            "Default points rule",
+			StatusCode:          accountStatusActive,
+			MinOrderAmountCent:  100,
+			MaxDeductionRateBps: 500,
+			DeductPointsPerCent: 1,
+			GrantPointsPerCent:  1,
+			RefundGraceDays:     7,
+		}
 	}
 	snapshot := &ruleSnapshot{RuleCode: row.RuleCode, RuleName: row.RuleName, MinOrderAmountCent: row.MinOrderAmountCent, MaxDeductionRateBps: uint32(row.MaxDeductionRateBps), DeductPointsPerCent: row.DeductPointsPerCent, GrantPointsPerCent: row.GrantPointsPerCent, RefundGraceDays: uint32(row.RefundGraceDays)}
 	payload, err := json.Marshal(snapshot)
@@ -226,7 +235,7 @@ func (s *sPoints) insertLedgerTx(ctx context.Context, tx gdb.TX, in *ledgerInput
 	if in == nil {
 		return "", nil
 	}
-	extraJSON := ""
+	extraJSON := "null"
 	if len(in.Extra) > 0 {
 		if encoded, err := json.Marshal(in.Extra); err == nil {
 			extraJSON = string(encoded)

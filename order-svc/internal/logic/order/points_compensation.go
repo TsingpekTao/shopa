@@ -50,6 +50,35 @@ func (s *sOrder) enqueuePointsCancelCompensationTask(ctx context.Context, userID
 	return gerror.Wrap(err, "insert order_points_compensation_task failed")
 }
 
+// enqueuePointsGrantCompensationTask 写入待重试的赠积分补偿任务。
+func (s *sOrder) enqueuePointsGrantCompensationTask(ctx context.Context, userID uint64, orderNo, lastError string) error {
+	now := gtime.Now()
+	_, err := dao.OrderPointsCompensationTask.Ctx(ctx).Data(do.OrderPointsCompensationTask{
+		TaskNo:              generateBizNo("OPC"),
+		OrderNo:             orderNo,
+		UserId:              userID,
+		PointsReservationNo: "",
+		ActionCode:          pointsCompensationActionGrant,
+		TaskStatus:          pointsCompTaskStatusPending,
+		RetryCount:          0,
+		NextRetryAt:         now,
+		LastError:           trimForColumn(lastError, 1000),
+	}).Insert()
+	return gerror.Wrap(err, "insert points grant compensation task failed")
+}
+
+// compensateGrantPointsAfterOrderCompleted 订单完成后，若赠积分失败则降级为补偿任务。
+func (s *sOrder) compensateGrantPointsAfterOrderCompleted(ctx context.Context, userID uint64, orderNo string, causeErr error) {
+	if userID == 0 || strings.TrimSpace(orderNo) == "" {
+		return
+	}
+	if enqueueErr := s.enqueuePointsGrantCompensationTask(ctx, userID, orderNo, causeErr.Error()); enqueueErr != nil {
+		g.Log().Errorf(ctx, "enqueue grant points compensation failed, order_no=%s err=%+v", orderNo, enqueueErr)
+		return
+	}
+	g.Log().Warningf(ctx, "grant points failed, fallback compensation task inserted, order_no=%s err=%+v", orderNo, causeErr)
+}
+
 // compensateLockedPointsAfterCreateFailure 在下单失败后补偿释放已锁积分。
 func (s *sOrder) compensateLockedPointsAfterCreateFailure(ctx context.Context, userID uint64, orderNo, reservationNo string, causeErr error) error {
 	if strings.TrimSpace(reservationNo) == "" {
@@ -122,6 +151,18 @@ func (s *sOrder) handlePointsCompensationTask(ctx context.Context, row *entity.O
 		// 当前仅支持取消 reservation；后续若新增赠分补偿，可在此分支扩展。
 		err := s.cancelLockedPoints(ctx, row.UserId, row.OrderNo, row.PointsReservationNo, "SYSTEM_COMPENSATION", buildPointsCancelIdempotencyKey(row.OrderNo, "SYSTEM_COMPENSATION"))
 		return s.finishPointsCompensationTask(ctx, row, err)
+	case pointsCompensationActionGrant:
+		mainRow, err := s.getOrderMainByNo(ctx, row.OrderNo)
+		if err != nil {
+			return s.finishPointsCompensationTask(ctx, row, err)
+		}
+		if mainRow == nil || strings.TrimSpace(mainRow.OrderNo) == "" {
+			return s.finishPointsCompensationTask(ctx, row, gerror.New("order not found"))
+		}
+		if err := s.grantPointsByOrderCompleted(ctx, row.UserId, row.OrderNo, mainRow.PaidAmount, buildPointsGrantIdempotencyKey(row.OrderNo)); err != nil {
+			return s.finishPointsCompensationTask(ctx, row, err)
+		}
+		return s.finishPointsCompensationTask(ctx, row, nil)
 	default:
 		return s.finishPointsCompensationTask(ctx, row, gerror.Newf("unsupported compensation action: %s", row.ActionCode))
 	}

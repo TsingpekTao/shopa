@@ -585,7 +585,7 @@ export default function PublishPage() {
               <Button type="primary" size="large" onClick={openCreateModal} style={{ borderRadius: 14, background: "#ff7a1a", minWidth: 136 }}>
                 发布商品
               </Button>
-              <Link href="/seller/products">
+              <Link href="/seller/products?scope=drafts">
                 <Button size="large" icon={<FolderOpenOutlined />} style={{ borderRadius: 14, minWidth: 136 }}>
                   查看草稿箱
                 </Button>
@@ -755,7 +755,7 @@ export default function PublishPage() {
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                 <Space wrap>
                   {step > 0 ? <Button size="large" onClick={() => setStep((prev) => Math.max(0, prev - 1))} style={{ borderRadius: 12 }}>上一步</Button> : null}
-                  <Link href="/seller/products"><Button size="large" style={{ borderRadius: 12 }}>查看草稿箱</Button></Link>
+                  <Link href="/seller/products?scope=drafts"><Button size="large" style={{ borderRadius: 12 }}>查看草稿箱</Button></Link>
                 </Space>
                 <Space wrap>
                   {step === 0 ? <><Button size="large" loading={saving} onClick={() => void saveDraft()} style={{ borderRadius: 12 }}>保存草稿</Button><Button type="primary" size="large" loading={saving} disabled={saving || uploading} onClick={() => void next()} style={{ borderRadius: 12, background: "#ff7a1a" }}>下一步</Button></> : null}

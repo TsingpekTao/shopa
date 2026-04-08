@@ -29,12 +29,20 @@ func (*Controller) CreateOrderBuyNow(ctx context.Context, req *v1.CreateOrderBuy
 	return service.Order().CreateOrderBuyNow(ctx, req)
 }
 
+func (*Controller) UpdateMyOrderAddress(ctx context.Context, req *v1.UpdateMyOrderAddressReq) (*v1.UpdateMyOrderAddressRes, error) {
+	return service.Order().UpdateMyOrderAddress(ctx, req)
+}
+
 func (*Controller) RequestPay(ctx context.Context, req *v1.RequestPayReq) (*v1.RequestPayRes, error) {
 	return service.Order().RequestPay(ctx, req)
 }
 
 func (*Controller) CancelMyOrder(ctx context.Context, req *v1.CancelMyOrderReq) (*v1.CancelMyOrderRes, error) {
 	return service.Order().CancelMyOrder(ctx, req)
+}
+
+func (*Controller) ConfirmMyOrderReceived(ctx context.Context, req *v1.CompleteOrderReq) (*v1.CompleteOrderRes, error) {
+	return service.Order().ConfirmMyOrderReceived(ctx, req)
 }
 
 func (*Controller) GetMyOrderDetail(ctx context.Context, req *v1.GetMyOrderDetailReq) (*v1.GetMyOrderDetailRes, error) {
@@ -71,4 +79,20 @@ func (*Controller) CompleteOrder(ctx context.Context, req *v1.CompleteOrderReq) 
 
 func (*Controller) GetOrderSnapshotByNo(ctx context.Context, req *v1.GetOrderSnapshotByNoReq) (*v1.GetOrderSnapshotByNoRes, error) {
 	return service.Order().GetOrderSnapshotByNo(ctx, req)
+}
+
+func (*Controller) PreviewSubOrderRefund(ctx context.Context, req *v1.PreviewSubOrderRefundReq) (*v1.PreviewSubOrderRefundRes, error) {
+	return service.Order().PreviewSubOrderRefund(ctx, req)
+}
+
+func (*Controller) MarkSubOrderRefunding(ctx context.Context, req *v1.MarkSubOrderRefundingReq) (*v1.MarkSubOrderRefundingRes, error) {
+	return service.Order().MarkSubOrderRefunding(ctx, req)
+}
+
+func (*Controller) RejectSubOrderRefund(ctx context.Context, req *v1.RejectSubOrderRefundReq) (*v1.RejectSubOrderRefundRes, error) {
+	return service.Order().RejectSubOrderRefund(ctx, req)
+}
+
+func (*Controller) FinalizeSubOrderRefund(ctx context.Context, req *v1.FinalizeSubOrderRefundReq) (*v1.FinalizeSubOrderRefundRes, error) {
+	return service.Order().FinalizeSubOrderRefund(ctx, req)
 }

@@ -142,3 +142,65 @@ type GetAfterSaleSnapshotByNoReq struct {
 }
 
 type GetAfterSaleSnapshotByNoRes = pb.GetAfterSaleSnapshotByNoRes
+
+type ApplyRefundBatchReq struct {
+	g.Meta `path:"/v1/aftersale/buyer/refunds:apply" method:"post" tags:"AfterSale-Buyer" summary:"Apply refund batch"`
+	pb.ApplyRefundBatchReq
+}
+
+type ApplyRefundBatchRes = pb.ApplyRefundBatchRes
+
+type ListMyRefundBatchesReq struct {
+	g.Meta `path:"/v1/aftersale/buyer/refund-batches" method:"get" tags:"AfterSale-Buyer" summary:"List my refund batches"`
+	PageSize   int32                `json:"page_size"`
+	NextCursor string               `json:"next_cursor"`
+	Statuses   []pb.AfterSaleStatus `json:"statuses"`
+}
+
+type ListMyRefundBatchesRes = pb.ListMyRefundBatchesRes
+
+type GetMyRefundBatchDetailReq struct {
+	g.Meta        `path:"/v1/aftersale/buyer/refund-batches/{refund_batch_no}" method:"get" tags:"AfterSale-Buyer" summary:"Get my refund batch detail"`
+	RefundBatchNo string `json:"refund_batch_no" v:"required#refund_batch_no is required"`
+}
+
+type GetMyRefundBatchDetailRes = pb.GetMyRefundBatchDetailRes
+
+type CancelRefundBatchReq struct {
+	g.Meta `path:"/v1/aftersale/buyer/refund-batches:cancel" method:"post" tags:"AfterSale-Buyer" summary:"Cancel refund batch"`
+	pb.CancelRefundBatchReq
+}
+
+type CancelRefundBatchRes = pb.CancelRefundBatchRes
+
+type ListShopRefundBatchesReq struct {
+	g.Meta     `path:"/v1/aftersale/seller/shops/{shop_no}/refund-batches" method:"get" tags:"AfterSale-Seller" summary:"List shop refund batches"`
+	ShopNo     string               `json:"shop_no" v:"required#shop_no is required"`
+	PageSize   int32                `json:"page_size"`
+	NextCursor string               `json:"next_cursor"`
+	Statuses   []pb.AfterSaleStatus `json:"statuses"`
+}
+
+type ListShopRefundBatchesRes = pb.ListShopRefundBatchesRes
+
+type GetShopRefundBatchDetailReq struct {
+	g.Meta        `path:"/v1/aftersale/seller/refund-batches/{refund_batch_no}" method:"get" tags:"AfterSale-Seller" summary:"Get shop refund batch detail"`
+	RefundBatchNo string `json:"refund_batch_no" v:"required#refund_batch_no is required"`
+	ShopNo        string `json:"shop_no"`
+}
+
+type GetShopRefundBatchDetailRes = pb.GetShopRefundBatchDetailRes
+
+type ApproveRefundBatchReq struct {
+	g.Meta `path:"/v1/aftersale/seller/refund-batches:approve" method:"post" tags:"AfterSale-Seller" summary:"Approve refund batch"`
+	pb.ApproveRefundBatchReq
+}
+
+type ApproveRefundBatchRes = pb.ApproveRefundBatchRes
+
+type RejectRefundBatchReq struct {
+	g.Meta `path:"/v1/aftersale/seller/refund-batches:reject" method:"post" tags:"AfterSale-Seller" summary:"Reject refund batch"`
+	pb.RejectRefundBatchReq
+}
+
+type RejectRefundBatchRes = pb.RejectRefundBatchRes

@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useI18n } from "@shopa/ui";
 import { useAuth } from "@/features/iam/useAuth";
 import { uploadBuyerAvatar } from "@/features/media/api";
+import { getMyOverview } from "@/features/overview/api";
 import { getMyProfile, updateMyProfile } from "@/features/profile/api";
 import { MallProfile, MallProfileBundle } from "@/features/profile/types";
 
@@ -217,6 +218,13 @@ export default function ProfilePage() {
     staleTime: 60_000,
     retry: 1
   });
+  const overviewQuery = useQuery({
+    queryKey: ["mall-me-overview"],
+    queryFn: getMyOverview,
+    enabled: isLoggedIn,
+    staleTime: 30_000,
+    retry: 1
+  });
 
   const profile = profileQuery.data?.profile;
 
@@ -318,6 +326,8 @@ export default function ProfilePage() {
   const hasDefaultAddress = Boolean(profileQuery.data?.addresses?.some((item) => item.isDefault));
   const addressCount = profileQuery.data?.addresses?.length ?? 0;
   const updatedAt = formatTime(profile?.updatedAt, locale);
+  const pointsUnavailable = Boolean(overviewQuery.data?.partial && overviewQuery.data?.degradedFields?.includes("points"));
+  const pointsBalance = pointsUnavailable ? null : (overviewQuery.data?.points ?? 0);
 
   useEffect(() => {
     if (!displayName || typeof window === "undefined") {
@@ -386,6 +396,7 @@ export default function ProfilePage() {
           <div className="tb-profile-hero-actions">
             <Link href="/me/orders">{isZh ? "\u67e5\u770b\u8ba2\u5355" : "My Orders"}</Link>
             <Link href="/me/address">{isZh ? "\u5730\u5740\u7ba1\u7406" : "Addresses"}</Link>
+            <Link href="/me/points">{isZh ? "\u6211\u7684\u79ef\u5206" : "My Points"}</Link>
             <button type="button" onClick={() => avatarInputRef.current?.click()} disabled={avatarMutation.isPending}>
               {avatarMutation.isPending ? (isZh ? "\u4e0a\u4f20\u5934\u50cf\u4e2d\u2026" : "Uploading avatar\u2026") : isZh ? "\u66f4\u6362\u5934\u50cf" : "Change Avatar"}
             </button>
@@ -420,11 +431,16 @@ export default function ProfilePage() {
           <span>{isZh ? "\u9ed8\u8ba4\u5730\u5740" : "Default Address"}</span>
         </article>
         <article>
+          <strong>{pointsBalance ?? "--"}</strong>
+          <span>{isZh ? "\u5f53\u524d\u79ef\u5206" : "Points"}</span>
+        </article>
+        <article>
           <strong>{updatedAt}</strong>
           <span>{isZh ? "\u6700\u8fd1\u66f4\u65b0" : "Last Updated"}</span>
         </article>
       </div>
 
+      {pointsUnavailable ? <p className="tb-profile-tip is-error">{isZh ? "积分服务暂时不可用，稍后会自动刷新。" : "Points are temporarily unavailable and will refresh later."}</p> : null}
       <div className="tb-profile-grid">
         <article className="tb-profile-card">
           <header>
@@ -502,6 +518,10 @@ export default function ProfilePage() {
             <li>
               <span>{isZh ? "\u8ba2\u5355\u4e2d\u5fc3" : "Order Center"}</span>
               <Link href="/me/orders">{isZh ? "\u67e5\u770b\u8ba2\u5355" : "Open"}</Link>
+            </li>
+            <li>
+              <span>{isZh ? "\u79ef\u5206\u4f59\u989d" : "Points Balance"}</span>
+              <Link href="/me/points">{isZh ? "\u67e5\u770b\u79ef\u5206" : "View"}</Link>
             </li>
           </ul>
         </article>

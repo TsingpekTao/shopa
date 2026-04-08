@@ -107,7 +107,13 @@ function toString(value: unknown): string {
   if (value === null || value === undefined) {
     return "";
   }
-  return String(value);
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  return "";
 }
 
 function normalizeCard(raw: RawBuyerProductCard): BuyerProductCard {
@@ -196,29 +202,32 @@ export async function listBuyerAssetReadUrls(assetIds: string[], ttlSeconds = 90
     return {};
   }
 
-  const params = new URLSearchParams({
-    assetIds: normalized.join(","),
-    ttlSeconds: String(ttlSeconds)
-  });
-  const response = await fetch(`/api/media/read-urls?${params.toString()}`, {
-    method: "GET",
-    cache: "no-store"
-  });
-  if (!response.ok) {
-    return {};
-  }
+  const results = await Promise.all(
+    normalized.map(async (assetId) => {
+      try {
+        const response = await apiClient.get<{ url?: string }>(`/v1/media/assets/${encodeURIComponent(assetId)}/read-url`, {
+          params: {
+            ttl_seconds: ttlSeconds
+          }
+        });
+        return {
+          assetId,
+          url: toString(response?.url)
+        };
+      } catch {
+        return {
+          assetId,
+          url: ""
+        };
+      }
+    })
+  );
 
-  const payload = (await response.json()) as {
-    items?: Array<{ assetId?: string; asset_id?: string; url?: string }>;
-  };
-
-  return (payload.items ?? []).reduce<Record<string, string>>((acc, item) => {
-    const assetId = toString(item.assetId ?? item.asset_id);
-    const url = toString(item.url);
-    if (!assetId || !url || acc[assetId]) {
+  return results.reduce<Record<string, string>>((acc, item) => {
+    if (!item.assetId || !item.url || acc[item.assetId]) {
       return acc;
     }
-    acc[assetId] = url;
+    acc[item.assetId] = item.url;
     return acc;
   }, {});
 }

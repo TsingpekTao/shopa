@@ -93,29 +93,16 @@ func (s *sPoints) previewOrderHTTP(ctx context.Context, req *httpv1.PreviewOrder
 		available = uint64(account.AvailableBalance)
 	}
 	// 请求积分为 0 或超出可用余额时，统一收敛到真实可用积分。
-	requested := req.IntentPoints
-	if requested == 0 || requested > available {
-		requested = available
-	}
-
-	maxCashByRule := uint64(payableAmount) * uint64(snapshot.MaxDeductionRateBps) / 10000
-	if maxCashByRule == 0 || maxCashByRule > uint64(payableAmount) {
-		maxCashByRule = uint64(payableAmount)
-	}
+	pointsUsed, cashDiscount := calculatePointsDeduction(
+		uint64(payableAmount),
+		available,
+		req.IntentPoints,
+		snapshot.MaxDeductionRateBps,
+		snapshot.DeductPointsPerCent,
+	)
 
 	// 规则里未配置换算比例时，退化为 1 分 = 1 分现金单位，避免除 0。
-	pointsPerCent := snapshot.DeductPointsPerCent
-	if pointsPerCent == 0 {
-		pointsPerCent = 1
-	}
 
-	maxPointsByRule := maxCashByRule * pointsPerCent
-	pointsUsed := requested
-	if pointsUsed > maxPointsByRule {
-		pointsUsed = maxPointsByRule
-	}
-
-	cashDiscount := pointsUsed / pointsPerCent
 	// 子单分摊遵循前 N-1 比例、最后一项兜底，保证总分摊和原值一致。
 	allocations := allocateByShop(req.OrderDraft.SubOrders, pointsUsed, cashDiscount)
 
@@ -480,7 +467,10 @@ func (s *sPoints) grantOrderHTTP(ctx context.Context, req *httpv1.GrantOrderReq)
 		return nil, err
 	}
 
-	grantedPoints := req.PaidAmount * snapshot.GrantPointsPerCent
+	grantedPoints := calculateGrantedPoints(req.PaidAmount, snapshot.GrantPointsPerCent)
+	if grantedPoints == 0 {
+		return &httpv1.SimpleAckRes{Success: true}, nil
+	}
 	err = dao.PointsAccount.Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
 		account, innerErr := s.getAccountTx(ctx, tx, req.UserID)
 		if innerErr != nil {

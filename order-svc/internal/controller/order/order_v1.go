@@ -15,12 +15,23 @@ func (c *ControllerV1) CreateOrderBuyNow(ctx context.Context, req *httpv1.Create
 	return c.order.CreateOrderBuyNow(ctx, &req.CreateOrderBuyNowReq)
 }
 
+func (c *ControllerV1) UpdateMyOrderAddress(ctx context.Context, req *httpv1.UpdateMyOrderAddressReq) (*httpv1.UpdateMyOrderAddressRes, error) {
+	return c.order.UpdateMyOrderAddress(ctx, &pb.UpdateMyOrderAddressReq{
+		OrderNo:   req.OrderNo,
+		AddressId: req.AddressId,
+	})
+}
+
 func (c *ControllerV1) RequestPay(ctx context.Context, req *httpv1.RequestPayReq) (*httpv1.RequestPayRes, error) {
 	return c.order.RequestPay(ctx, &req.RequestPayReq)
 }
 
 func (c *ControllerV1) CancelMyOrder(ctx context.Context, req *httpv1.CancelMyOrderReq) (*httpv1.CancelMyOrderRes, error) {
 	return c.order.CancelMyOrder(ctx, &req.CancelMyOrderReq)
+}
+
+func (c *ControllerV1) ConfirmMyOrderReceived(ctx context.Context, req *httpv1.ConfirmMyOrderReceivedReq) (*httpv1.ConfirmMyOrderReceivedRes, error) {
+	return c.order.ConfirmMyOrderReceived(ctx, &req.CompleteOrderReq)
 }
 
 func (c *ControllerV1) GetMyOrderDetail(ctx context.Context, req *httpv1.GetMyOrderDetailReq) (*httpv1.GetMyOrderDetailRes, error) {

@@ -608,6 +608,7 @@ func (s *sChat) sendMessage(ctx context.Context, conversationNo string, senderTy
 
 // markRead 更新读取偏移，记录当前读者已看到的最新消息。
 func (s *sChat) markRead(ctx context.Context, conversationNo string, readerType int, readerUserID uint64, readToMessageNo string) (string, uint64, error) {
+	readerUserID = normalizeReaderUserID(readerType, readerUserID)
 	var readMsg entity.ChatMessage
 	// 优先使用客户端指定的消息号，否则后面会取最新消息作为阅读范围。
 	if strings.TrimSpace(readToMessageNo) != "" {
@@ -681,6 +682,7 @@ func (s *sChat) markRead(ctx context.Context, conversationNo string, readerType 
 
 // countUnread 统计指定阅读者在会话内未读的消息数量。
 func (s *sChat) countUnread(ctx context.Context, conversationNo string, readerType int, readerUserID uint64) (uint32, error) {
+	readerUserID = normalizeReaderUserID(readerType, readerUserID)
 	var offset entity.ChatReadOffset
 	_ = dao.ChatReadOffset.Ctx(ctx).
 		Where(dao.ChatReadOffset.Columns().ConversationNo, conversationNo).
@@ -703,6 +705,13 @@ func (s *sChat) countUnread(ctx context.Context, conversationNo string, readerTy
 		return 0, gerror.Wrap(err, "count unread failed")
 	}
 	return uint32(count), nil
+}
+
+func normalizeReaderUserID(readerType int, userID uint64) uint64 {
+	if readerType == readerTypeSeller {
+		return 0
+	}
+	return userID
 }
 
 // toConversationWithUnread 拷贝会话实体并附加未读计数。

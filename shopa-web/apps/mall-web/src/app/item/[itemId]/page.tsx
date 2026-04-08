@@ -196,11 +196,27 @@ export default function ItemDetailPage({ params }: { params: { itemId: string } 
   }
 
   function buildConsultHref(): string {
-    const query = new URLSearchParams({
-      shop_no: resolvedShopNo,
-      spu_no: resolvedSpuNo,
-      sku_no: resolvedSkuNo
-    });
+    const query = new URLSearchParams();
+    query.set("shop_no", resolvedShopNo);
+    query.set("spu_no", resolvedSpuNo);
+    query.set("sku_no", resolvedSkuNo);
+    query.set("scene_code", "PRE_SALE");
+    query.set("mode", "pre-sale");
+    const productTitle = detailQuery.data?.title || (isZh ? `商品 #${params.itemId}` : `Product #${params.itemId}`);
+    const productSubTitle = detailQuery.data?.subTitle || "";
+    const productPrice = `CNY ${formatCnyFromCents(currentPrice)}`;
+    if (productTitle.trim()) {
+      query.set("product_title", productTitle.trim());
+    }
+    if (productSubTitle.trim()) {
+      query.set("product_subtitle", productSubTitle.trim());
+    }
+    if (productPrice.trim()) {
+      query.set("product_price", productPrice.trim());
+    }
+    if (mainImage.trim()) {
+      query.set("product_image", mainImage.trim());
+    }
     return `/me/messages?${query.toString()}`;
   }
 

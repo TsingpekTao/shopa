@@ -11,6 +11,10 @@ service BuyerAfterSaleService {
   rpc CancelAfterSale(CancelAfterSaleReq) returns (CancelAfterSaleRes);
   rpc GetMyAfterSaleDetail(GetMyAfterSaleDetailReq) returns (GetMyAfterSaleDetailRes);
   rpc ListMyAfterSales(ListMyAfterSalesReq) returns (ListMyAfterSalesRes);
+  rpc ApplyRefundBatch(ApplyRefundBatchReq) returns (ApplyRefundBatchRes);
+  rpc ListMyRefundBatches(ListMyRefundBatchesReq) returns (ListMyRefundBatchesRes);
+  rpc GetMyRefundBatchDetail(GetMyRefundBatchDetailReq) returns (GetMyRefundBatchDetailRes);
+  rpc CancelRefundBatch(CancelRefundBatchReq) returns (CancelRefundBatchRes);
 }
 
 service SellerAfterSaleService {
@@ -18,6 +22,10 @@ service SellerAfterSaleService {
   rpc GetShopAfterSaleDetail(GetShopAfterSaleDetailReq) returns (GetShopAfterSaleDetailRes);
   rpc ApproveAfterSale(ApproveAfterSaleReq) returns (ApproveAfterSaleRes);
   rpc RejectAfterSale(RejectAfterSaleReq) returns (RejectAfterSaleRes);
+  rpc ListShopRefundBatches(ListShopRefundBatchesReq) returns (ListShopRefundBatchesRes);
+  rpc GetShopRefundBatchDetail(GetShopRefundBatchDetailReq) returns (GetShopRefundBatchDetailRes);
+  rpc ApproveRefundBatch(ApproveRefundBatchReq) returns (ApproveRefundBatchRes);
+  rpc RejectRefundBatch(RejectRefundBatchReq) returns (RejectRefundBatchRes);
 }
 
 service InternalAfterSaleService {
@@ -85,6 +93,12 @@ message AfterSaleCase {
   google.protobuf.Timestamp updated_at = 22;
   google.protobuf.Timestamp closed_at = 23;
   string cancel_reason_code = 24;
+  string refund_batch_no = 25;
+  string scope_code = 26;
+  google.protobuf.Timestamp review_deadline_at = 27;
+  google.protobuf.Timestamp auto_approved_at = 28;
+  repeated string selected_item_nos = 29;
+  string payment_no = 30;
 }
 
 message RefundTask {
@@ -227,3 +241,108 @@ message GetAfterSaleSnapshotByNoRes {
   AfterSaleCase after_sale = 1;
   RefundTask refund_task = 2;
 }
+
+message ApplyRefundTarget {
+  string order_no = 1;
+  string sub_order_no = 2;
+  string item_no = 3;
+  repeated string selected_item_nos = 4;
+}
+
+message RefundBatch {
+  string refund_batch_no = 1;
+  string order_no = 2;
+  uint64 user_id = 3;
+  string shop_no = 4;
+  AfterSaleStatus batch_status = 5;
+  uint64 apply_refund_amount = 6;
+  uint64 approved_refund_amount = 7;
+  uint32 case_count = 8;
+  repeated string sub_order_nos = 9;
+  google.protobuf.Timestamp review_deadline_at = 10;
+  google.protobuf.Timestamp auto_approved_at = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+}
+
+message RefundBatchDetail {
+  RefundBatch batch = 1;
+  repeated AfterSaleCase cases = 2;
+  repeated RefundTask refund_tasks = 3;
+}
+
+message ApplyRefundBatchReq {
+  repeated ApplyRefundTarget targets = 1;
+  string reason_code = 2;
+  string reason_desc = 3;
+  repeated uint64 evidence_asset_ids = 4;
+  string buyer_remark = 5;
+  string idempotency_key = 99;
+}
+
+message ApplyRefundBatchRes { RefundBatchDetail detail = 1; }
+
+message ListMyRefundBatchesReq {
+  int32 page_size = 1;
+  string next_cursor = 2;
+  repeated AfterSaleStatus statuses = 3;
+}
+
+message ListMyRefundBatchesRes {
+  repeated RefundBatch list = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+}
+
+message GetMyRefundBatchDetailReq { string refund_batch_no = 1; }
+
+message GetMyRefundBatchDetailRes { RefundBatchDetail detail = 1; }
+
+message CancelRefundBatchReq {
+  string refund_batch_no = 1;
+  string idempotency_key = 99;
+}
+
+message CancelRefundBatchRes {
+  string refund_batch_no = 1;
+  AfterSaleStatus batch_status = 2;
+}
+
+message ListShopRefundBatchesReq {
+  string shop_no = 1;
+  int32 page_size = 2;
+  string next_cursor = 3;
+  repeated AfterSaleStatus statuses = 4;
+}
+
+message ListShopRefundBatchesRes {
+  repeated RefundBatch list = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+}
+
+message GetShopRefundBatchDetailReq {
+  string refund_batch_no = 1;
+  string shop_no = 2;
+}
+
+message GetShopRefundBatchDetailRes { RefundBatchDetail detail = 1; }
+
+message ApproveRefundBatchReq {
+  string refund_batch_no = 1;
+  string shop_no = 2;
+  string seller_reply = 3;
+  string idempotency_key = 99;
+}
+
+message ApproveRefundBatchRes { RefundBatchDetail detail = 1; }
+
+message RejectRefundBatchReq {
+  string refund_batch_no = 1;
+  string shop_no = 2;
+  RejectReasonCode reject_reason_code = 3;
+  string seller_reply = 4;
+  string idempotency_key = 99;
+}
+
+message RejectRefundBatchRes { RefundBatchDetail detail = 1; }

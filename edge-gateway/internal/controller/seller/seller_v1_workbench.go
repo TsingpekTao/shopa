@@ -15,3 +15,12 @@ func (c *ControllerV1) GetWorkbench(ctx context.Context, req *v1.GetWorkbenchReq
 func (c *ControllerV1) GetShopDashboard(ctx context.Context, req *v1.GetShopDashboardReq) (*v1.GetShopDashboardRes, error) {
 	return service.Bff().BuildSellerShopDashboard(ctx, extractAccessTokenFromRequest(g.RequestFromCtx(ctx)), req.ShopNo)
 }
+
+func (c *ControllerV1) GetSalesAnalytics(ctx context.Context, req *v1.GetSalesAnalyticsReq) (*v1.GetSalesAnalyticsRes, error) {
+	return service.Bff().BuildSellerSalesAnalytics(
+		ctx,
+		extractAccessTokenFromRequest(g.RequestFromCtx(ctx)),
+		req.ShopNo,
+		req.Range,
+	)
+}

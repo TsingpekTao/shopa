@@ -17,7 +17,10 @@ import (
 
 const (
 	pointsCompensationActionCancel = "CANCEL_POINTS_RESERVATION"
+	pointsCompensationActionGrant  = "GRANT_COMPLETION_POINTS"
 )
+
+const defaultPointsBaseURL = "http://points-svc:8021"
 
 type pointsIntegrationConf struct {
 	Enabled     bool
@@ -137,13 +140,18 @@ type gfHTTPEnvelope struct {
 }
 
 // loadPointsIntegrationConf 读取 order 对 points 的集成配置。
-func loadPointsIntegrationConf(ctx context.Context) pointsIntegrationConf {
+var loadPointsIntegrationConf = defaultLoadPointsIntegrationConf
+
+func defaultLoadPointsIntegrationConf(ctx context.Context) pointsIntegrationConf {
 	var (
-		baseURL   = strings.TrimRight(strings.TrimSpace(g.Cfg().MustGet(ctx, "upstream.points.baseUrl", "").String()), "/")
+		baseURL   = strings.TrimRight(strings.TrimSpace(g.Cfg().MustGet(ctx, "upstream.points.baseUrl", defaultPointsBaseURL).String()), "/")
 		timeoutMs = g.Cfg().MustGet(ctx, "upstream.points.timeoutMs", 3000).Int()
 	)
 	if timeoutMs <= 0 {
 		timeoutMs = 3000
+	}
+	if baseURL == "" {
+		baseURL = defaultPointsBaseURL
 	}
 	// 若未配置 BaseURL，则默认视为未启用，避免误调用产生长时间等待。
 	return pointsIntegrationConf{
@@ -164,11 +172,13 @@ func buildPointsOrderDraft(input *createOrderInput) *pointsOrderDraft {
 		return nil
 	}
 	var (
-		subMap = make(map[string]*pointsSubDraft)
-		lines  = make([]pointsItemDraft, 0, len(input.Lines))
+		subMap             = make(map[string]*pointsSubDraft)
+		lines              = make([]pointsItemDraft, 0, len(input.Lines))
+		derivedGoodsAmount uint64
 	)
 	for _, line := range input.Lines {
 		lineAmount := line.SalePrice * uint64(line.Qty)
+		derivedGoodsAmount += lineAmount
 		// 逐条累加行金额，同时构建提交给 points 的行列表。
 		lines = append(lines, pointsItemDraft{
 			ShopNo:      line.ShopNo,
@@ -201,13 +211,24 @@ func buildPointsOrderDraft(input *createOrderInput) *pointsOrderDraft {
 	for _, subDraft := range subMap {
 		subOrders = append(subOrders, *subDraft)
 	}
+	goodsAmount := input.GoodsAmount
+	if goodsAmount == 0 {
+		goodsAmount = derivedGoodsAmount
+	}
+	payableAmount := input.PayableAmount
+	if payableAmount == 0 {
+		totalDiscount := input.DiscountAmount + input.PointsDiscountAmount
+		if goodsAmount+input.FreightAmount >= totalDiscount {
+			payableAmount = goodsAmount + input.FreightAmount - totalDiscount
+		}
+	}
 	return &pointsOrderDraft{
 		OrderNo:        input.OrderNo,
 		UserID:         input.UserID,
-		GoodsAmount:    input.GoodsAmount,
+		GoodsAmount:    goodsAmount,
 		FreightAmount:  input.FreightAmount,
 		DiscountAmount: input.DiscountAmount,
-		PayableAmount:  input.PayableAmount,
+		PayableAmount:  payableAmount,
 		SubOrders:      subOrders,
 		Lines:          lines,
 		Metadata: map[string]string{
@@ -341,8 +362,10 @@ func (s *sOrder) grantPointsByOrderCompleted(ctx context.Context, userID uint64,
 	}, new(pointsSimpleAck))
 }
 
-// doPointsJSONRequest 向 points 服务发送统一的 JSON 请求。
-func doPointsJSONRequest(ctx context.Context, conf pointsIntegrationConf, path string, reqBody any, respBody any) error {
+var doPointsJSONRequest = defaultDoPointsJSONRequest
+
+// defaultDoPointsJSONRequest 向 points 服务发送统一的 JSON 请求。
+func defaultDoPointsJSONRequest(ctx context.Context, conf pointsIntegrationConf, path string, reqBody any, respBody any) error {
 	payload, err := json.Marshal(reqBody)
 	if err != nil {
 		return gerror.Wrap(err, "marshal points request failed")
@@ -407,4 +430,8 @@ func pointsAllocationsToMap(in []pointsSubAllocation) map[string]pointsSubAlloca
 // buildPointsCancelIdempotencyKey 构造取消积分锁定时使用的幂等键。
 func buildPointsCancelIdempotencyKey(orderNo, action string) string {
 	return fmt.Sprintf("%s:%s", action, orderNo)
+}
+
+func buildPointsGrantIdempotencyKey(orderNo string) string {
+	return fmt.Sprintf("%s:%s", pointsCompensationActionGrant, orderNo)
 }

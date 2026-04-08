@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -6,8 +6,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Avatar, message } from "antd";
 import { useI18n } from "@shopa/ui";
+import { getBuyerProductDetail, listBuyerProductImages } from "@/features/catalog/api";
 import { createOrGetConversation, listBuyerConversations, listMessages, markConversationRead, sendBuyerMessage } from "@/features/chat/api";
-import { ChatConversation, ChatMessage } from "@/features/chat/types";
+import { ChatCardPayload, ChatConversation, ChatMessage } from "@/features/chat/types";
+import { getMyOrderDetail } from "@/features/order/api";
+import { formatCnyFromCents } from "@/lib/price";
+import { pickProductImageBySpuNo } from "@/lib/product-images";
 
 const SHELL_UNREAD_QUERY_KEY = ["shell", "unread"] as const;
 const BUYER_CONVERSATIONS_QUERY_KEY = ["chat-buyer-conversations"] as const;
@@ -25,9 +29,7 @@ function readMallAccessToken(): string {
     if (!raw) {
       return "";
     }
-    const parsed = JSON.parse(raw) as {
-      state?: { tokenPair?: { accessToken?: string } };
-    };
+    const parsed = JSON.parse(raw) as { state?: { tokenPair?: { accessToken?: string } } };
     return parsed?.state?.tokenPair?.accessToken?.trim() ?? "";
   } catch {
     return "";
@@ -38,11 +40,11 @@ function formatListTime(raw: string, locale: string): string {
   if (!raw) {
     return "";
   }
-  const dt = new Date(raw);
-  if (Number.isNaN(dt.getTime())) {
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) {
     return raw;
   }
-  return dt.toLocaleString(locale === "zh-CN" ? "zh-CN" : "en-US", {
+  return date.toLocaleString(locale === "zh-CN" ? "zh-CN" : "en-US", {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -59,16 +61,36 @@ function sortMessages(list: ChatMessage[]): ChatMessage[] {
 }
 
 function conversationTitle(conversation: ChatConversation | undefined, isZh: boolean): string {
-  return conversation?.shopName?.trim() || (isZh ? "\u5e97\u94fa\u5ba2\u670d" : "Shop Support");
+  return conversation?.shopName?.trim() || (isZh ? "店铺客服" : "Shop Support");
+}
+
+function conversationSceneText(conversation: ChatConversation | undefined, isZh: boolean, routeOrderNo: string): string {
+  if (routeOrderNo) {
+    return isZh ? `订单 ${routeOrderNo}` : `Order ${routeOrderNo}`;
+  }
+  if (!conversation) {
+    return isZh ? "请选择会话" : "Select a conversation";
+  }
+  if (conversation.sceneCode === "AFTER_SALE" && conversation.orderNo) {
+    return isZh ? `售后订单 ${conversation.orderNo}` : `After-sale order ${conversation.orderNo}`;
+  }
+  if (conversation.anchorSpuNo) {
+    return isZh ? "商品咨询" : "Product consultation";
+  }
+  return isZh ? "店铺会话" : "Shop conversation";
 }
 
 function conversationSubtitle(conversation: ChatConversation, isZh: boolean): string {
   if (conversation.lastMessagePreview.trim()) {
     return conversation.lastMessagePreview.trim();
   }
-  return isZh
-    ? "\u70b9\u51fb\u8fdb\u5165\u540e\u5c31\u53ef\u4ee5\u76f4\u63a5\u5f00\u59cb\u54a8\u8be2\u5546\u54c1\u7ec6\u8282\u3002"
-    : "Open the thread to start chatting about this product.";
+  if (conversation.orderNo) {
+    return isZh ? `订单 ${conversation.orderNo}` : `Order ${conversation.orderNo}`;
+  }
+  if (conversation.anchorSpuNo) {
+    return isZh ? `商品 ${conversation.anchorSpuNo}` : `Product ${conversation.anchorSpuNo}`;
+  }
+  return isZh ? "继续沟通" : "Continue chatting";
 }
 
 function senderTitle(messageRow: ChatMessage, conversation: ChatConversation | undefined, isZh: boolean): string {
@@ -76,27 +98,104 @@ function senderTitle(messageRow: ChatMessage, conversation: ChatConversation | u
     return messageRow.senderDisplayName.trim();
   }
   if (messageRow.senderType === "BUYER") {
-    return isZh ? "\u6211" : "Me";
+    return isZh ? "我" : "Me";
   }
   if (messageRow.senderType === "SELLER") {
     return conversationTitle(conversation, isZh);
   }
-  return isZh ? "\u7cfb\u7edf\u901a\u77e5" : "System";
+  return isZh ? "系统通知" : "System";
 }
 
 function messageAvatarLabel(messageRow: ChatMessage, conversation: ChatConversation | undefined, isZh: boolean): string {
-  const title = senderTitle(messageRow, conversation, isZh);
-  return title.slice(0, 1).toUpperCase();
+  return senderTitle(messageRow, conversation, isZh).slice(0, 1).toUpperCase();
 }
 
 function peerReadText(messageRow: ChatMessage, isZh: boolean): string {
   if (messageRow.senderType !== "BUYER") {
     return "";
   }
-  if (messageRow.peerRead) {
-    return isZh ? "\u5546\u5bb6\u5df2\u8bfb" : "Read by seller";
+  return messageRow.peerRead ? (isZh ? "商家已读" : "Read by seller") : isZh ? "未读" : "Unread";
+}
+
+function parseCardPayload(messageRow: ChatMessage): ChatCardPayload | null {
+  if (messageRow.messageType !== "PRODUCT_CARD" || !messageRow.extJson.trim()) {
+    return null;
   }
-  return isZh ? "\u672a\u8bfb" : "Unread";
+  try {
+    const parsed = JSON.parse(messageRow.extJson) as ChatCardPayload;
+    if (parsed && (parsed.kind === "product" || parsed.kind === "order")) {
+      return parsed;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function renderCardPayload(card: ChatCardPayload, isZh: boolean) {
+  if (card.kind === "product") {
+    return (
+      <div className="tb-chat-card">
+        <div className="tb-chat-card-head">{isZh ? "商品详情" : "Product Detail"}</div>
+        <div className="tb-chat-card-body">
+          <div className="tb-chat-card-thumb" style={card.imageUrl ? { backgroundImage: `url("${card.imageUrl}")`, backgroundSize: "cover" } : undefined} />
+          <div className="tb-chat-card-main">
+            <strong>{card.title}</strong>
+            <span>{card.skuName || card.skuNo}</span>
+            <small>{`CNY ${formatCnyFromCents(card.priceCents)}`}</small>
+            <Link href={card.href}>{isZh ? "查看商品" : "View Product"}</Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="tb-chat-card">
+      <div className="tb-chat-card-head">{isZh ? "订单详情" : "Order Detail"}</div>
+      <div className="tb-chat-card-body">
+        <div className="tb-chat-card-main">
+          <strong>{card.title}</strong>
+          <span>
+            {isZh ? "订单号：" : "Order No: "}
+            {card.orderNo}
+          </span>
+          <span>{card.statusText}</span>
+          <small>{`${isZh ? "金额：" : "Amount: "}CNY ${formatCnyFromCents(card.totalAmountCents)}`}</small>
+          <Link href={card.href}>{isZh ? "查看订单" : "View Order"}</Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function mergedConversationList(conversations: ChatConversation[]): ChatConversation[] {
+  const groups = new Map<string, ChatConversation[]>();
+  conversations.forEach((conversation) => {
+    const key = conversation.shopNo || conversation.conversationNo;
+    const bucket = groups.get(key) ?? [];
+    bucket.push(conversation);
+    groups.set(key, bucket);
+  });
+
+  return Array.from(groups.values())
+    .map((bucket) => {
+      const sorted = [...bucket].sort((a, b) => {
+        const av = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+        const bv = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+        return bv - av;
+      });
+      const latest = sorted[0];
+      return {
+        ...latest,
+        unreadCount: bucket.reduce((sum, item) => sum + item.unreadCount, 0)
+      };
+    })
+    .sort((a, b) => {
+      const av = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+      const bv = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+      return bv - av;
+    });
 }
 
 export default function MallMessagesPage() {
@@ -112,13 +211,15 @@ export default function MallMessagesPage() {
   const defaultShopNo = searchParams.get("shop_no") ?? "";
   const defaultSpuNo = searchParams.get("spu_no") ?? "";
   const defaultSkuNo = searchParams.get("sku_no") ?? "";
-  const fromOrderNo = searchParams.get("order_no") ?? "";
+  const defaultOrderNo = searchParams.get("order_no") ?? "";
+  const defaultSubOrderNo = searchParams.get("sub_order_no") ?? "";
   const mallAccessToken = readMallAccessToken();
 
   const [currentConversationNo, setCurrentConversationNo] = useState("");
   const [draft, setDraft] = useState("");
+  const [plusMenuOpen, setPlusMenuOpen] = useState(false);
 
-  const autoCreateKey = defaultShopNo ? [defaultShopNo, defaultSpuNo, defaultSkuNo].join("::") : "";
+  const autoCreateKey = defaultShopNo ? [defaultShopNo, defaultOrderNo, defaultSubOrderNo, defaultSpuNo, defaultSkuNo].join("::") : "";
 
   const conversationsQuery = useQuery({
     queryKey: BUYER_CONVERSATIONS_QUERY_KEY,
@@ -129,10 +230,37 @@ export default function MallMessagesPage() {
     refetchOnWindowFocus: false
   });
 
+  const productDetailQuery = useQuery({
+    queryKey: ["buyer-chat-product", defaultSpuNo],
+    queryFn: () => getBuyerProductDetail(defaultSpuNo),
+    enabled: Boolean(defaultSpuNo),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false
+  });
+
+  const productImagesQuery = useQuery({
+    queryKey: ["buyer-chat-product-images", defaultSpuNo],
+    queryFn: () => listBuyerProductImages([defaultSpuNo]),
+    enabled: Boolean(defaultSpuNo),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false
+  });
+
+  const orderDetailQuery = useQuery({
+    queryKey: ["buyer-chat-order", defaultOrderNo],
+    queryFn: () => getMyOrderDetail(defaultOrderNo),
+    enabled: Boolean(defaultOrderNo),
+    staleTime: 30_000,
+    refetchOnWindowFocus: false
+  });
+
   const createConversationMutation = useMutation({
     mutationFn: () =>
       createOrGetConversation({
         shopNo: defaultShopNo,
+        sceneCode: defaultOrderNo ? "AFTER_SALE" : "PRE_SALE",
+        orderNo: defaultOrderNo,
+        subOrderNo: defaultSubOrderNo,
         anchorSpuNo: defaultSpuNo,
         anchorSkuNo: defaultSkuNo
       }),
@@ -144,32 +272,39 @@ export default function MallMessagesPage() {
       void queryClient.invalidateQueries({ queryKey: SHELL_UNREAD_QUERY_KEY });
     },
     onError: () => {
-      messageApi.error(isZh ? "\u521b\u5efa\u4f1a\u8bdd\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5" : "Failed to create conversation");
+      messageApi.error(isZh ? "创建会话失败，请稍后重试" : "Failed to create conversation");
     }
   });
+
+  const rawConversations = useMemo(() => conversationsQuery.data?.list ?? [], [conversationsQuery.data?.list]);
+  const conversations = useMemo(() => mergedConversationList(rawConversations), [rawConversations]);
 
   useEffect(() => {
     if (!defaultShopNo) {
       return;
     }
     if (!mallAccessToken) {
-      messageApi.info(isZh ? "\u8bf7\u5148\u767b\u5f55\u540e\u518d\u54a8\u8be2\u5546\u5bb6" : "Please sign in before chatting with the seller");
+      messageApi.info(isZh ? "请先登录后再联系商家" : "Please sign in before chatting with the seller");
       router.replace("/login");
       return;
     }
-    if (createConversationMutation.isPending) {
+
+    const existingShopConversation = conversations.find((item) => item.shopNo === defaultShopNo);
+    if (existingShopConversation) {
+      setCurrentConversationNo(existingShopConversation.conversationNo);
+      autoCreateKeyRef.current = autoCreateKey;
       return;
     }
-    if (autoCreateKeyRef.current === autoCreateKey) {
+
+    if (createConversationMutation.isLoading || autoCreateKeyRef.current === autoCreateKey) {
       return;
     }
+
     autoCreateKeyRef.current = autoCreateKey;
     setCurrentConversationNo("");
     createConversationMutation.reset();
     createConversationMutation.mutate();
-  }, [autoCreateKey, createConversationMutation, defaultShopNo, isZh, mallAccessToken, messageApi, router]);
-
-  const conversations = conversationsQuery.data?.list ?? [];
+  }, [autoCreateKey, conversations, createConversationMutation, defaultShopNo, isZh, mallAccessToken, messageApi, router]);
 
   useEffect(() => {
     if (currentConversationNo) {
@@ -183,6 +318,7 @@ export default function MallMessagesPage() {
 
   useEffect(() => {
     lastMarkedReadRef.current = "";
+    setPlusMenuOpen(false);
   }, [currentConversationNo]);
 
   const currentConversation = useMemo<ChatConversation | undefined>(() => {
@@ -227,13 +363,10 @@ export default function MallMessagesPage() {
   }, [conversationMessages, currentConversationNo, queryClient]);
 
   const sendMutation = useMutation({
-    mutationFn: async () =>
-      sendBuyerMessage({
-        conversationNo: currentConversationNo,
-        contentText: draft.trim()
-      }),
+    mutationFn: sendBuyerMessage,
     onSuccess: async () => {
       setDraft("");
+      setPlusMenuOpen(false);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["chat-buyer-messages", currentConversationNo] }),
         queryClient.invalidateQueries({ queryKey: BUYER_CONVERSATIONS_QUERY_KEY }),
@@ -241,28 +374,105 @@ export default function MallMessagesPage() {
       ]);
     },
     onError: () => {
-      messageApi.error(isZh ? "\u53d1\u9001\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5" : "Send failed");
+      messageApi.error(isZh ? "发送失败，请稍后重试" : "Send failed");
     }
   });
 
   const emptyHint = defaultShopNo
     ? isZh
-      ? "\u6b63\u5728\u4e3a\u4f60\u8fde\u63a5\u5546\u5bb6\u4f1a\u8bdd..."
-      : "Connecting you to the shop conversation\u2026"
+      ? "正在为你连接商家会话..."
+      : "Connecting you to the shop conversation..."
     : isZh
-      ? "\u5f53\u524d\u8fd8\u6ca1\u6709\u4f1a\u8bdd\uff0c\u53bb\u5546\u54c1\u8be6\u60c5\u9875\u70b9\u51fb\u201c\u54a8\u8be2\u5546\u5bb6\u201d\u5c31\u80fd\u53d1\u8d77\u65b0\u5bf9\u8bdd\u3002"
+      ? "还没有会话，去商品页发起咨询吧。"
       : "No conversation yet. Open a product page and click 'Consult Seller'.";
+
+  const quickProductCard = useMemo<Extract<ChatCardPayload, { kind: "product" }> | null>(() => {
+    if (!defaultShopNo || !defaultSpuNo) {
+      return null;
+    }
+    const detail = productDetailQuery.data;
+    const sku = detail?.skus?.find((item) => item.skuNo === defaultSkuNo) ?? detail?.skus?.[0];
+    const imageUrl = productImagesQuery.data?.[defaultSpuNo] || pickProductImageBySpuNo(defaultSpuNo);
+    return {
+      kind: "product",
+      shopNo: defaultShopNo,
+      spuNo: defaultSpuNo,
+      skuNo: defaultSkuNo || sku?.skuNo || "",
+      title: detail?.title || (isZh ? `商品 ${defaultSpuNo}` : `Product ${defaultSpuNo}`),
+      skuName: sku?.skuName || defaultSkuNo,
+      imageUrl,
+      priceCents: Number(sku?.salePrice ?? detail?.minSalePrice ?? 0),
+      href: `/item/${encodeURIComponent(defaultSpuNo)}`
+    };
+  }, [defaultShopNo, defaultSkuNo, defaultSpuNo, isZh, productDetailQuery.data, productImagesQuery.data]);
+
+  const quickOrderCard = useMemo<Extract<ChatCardPayload, { kind: "order" }> | null>(() => {
+    if (!defaultOrderNo) {
+      return null;
+    }
+    const order = orderDetailQuery.data;
+    if (!order) {
+      return {
+        kind: "order",
+        orderNo: defaultOrderNo,
+        subOrderNo: defaultSubOrderNo,
+        shopNo: defaultShopNo,
+        statusText: isZh ? "售后沟通中" : "After-sale conversation",
+        totalAmountCents: 0,
+        itemCount: 0,
+        title: isZh ? `订单 ${defaultOrderNo}` : `Order ${defaultOrderNo}`,
+        href: `/me/orders?order_no=${encodeURIComponent(defaultOrderNo)}`
+      };
+    }
+    const items = order.subOrders.flatMap((sub) => sub.items);
+    const firstItem = items[0];
+    return {
+      kind: "order",
+      orderNo: order.orderNo,
+      subOrderNo: defaultSubOrderNo || firstItem?.subOrderNo || "",
+      shopNo: firstItem?.shopNo || defaultShopNo,
+      statusText: isZh ? "售后订单沟通" : "After-sale order conversation",
+      totalAmountCents: order.amount.payableAmount,
+      itemCount: items.reduce((sum, item) => sum + item.qty, 0),
+      title: firstItem?.spuTitle || (isZh ? `订单 ${order.orderNo}` : `Order ${order.orderNo}`),
+      href: `/me/orders?order_no=${encodeURIComponent(order.orderNo)}`
+    };
+  }, [defaultOrderNo, defaultShopNo, defaultSubOrderNo, isZh, orderDetailQuery.data]);
+
+  function sendCard(card: ChatCardPayload) {
+    if (!currentConversationNo) {
+      messageApi.warning(isZh ? "请先选择一个会话" : "Please select a conversation first");
+      return;
+    }
+    const contentText =
+      card.kind === "product"
+        ? isZh
+          ? `商品详情：${card.title}`
+          : `Product detail: ${card.title}`
+        : isZh
+          ? `订单详情：${card.orderNo}`
+          : `Order detail: ${card.orderNo}`;
+    sendMutation.mutate({
+      conversationNo: currentConversationNo,
+      contentText,
+      messageType: "PRODUCT_CARD",
+      extJson: JSON.stringify(card)
+    });
+  }
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (!currentConversationNo) {
-      messageApi.warning(isZh ? "\u8bf7\u5148\u9009\u62e9\u4e00\u4e2a\u4f1a\u8bdd" : "Please select a conversation first");
+      messageApi.warning(isZh ? "请先选择一个会话" : "Please select a conversation first");
       return;
     }
     if (!draft.trim()) {
       return;
     }
-    sendMutation.mutate();
+    sendMutation.mutate({
+      conversationNo: currentConversationNo,
+      contentText: draft.trim()
+    });
   }
 
   return (
@@ -271,23 +481,14 @@ export default function MallMessagesPage() {
 
       <header className="tb-chat-header">
         <div>
-          <h1>{isZh ? "\u6d88\u606f\u4e2d\u5fc3" : "Message Center"}</h1>
-          <p>
-            {fromOrderNo
-              ? isZh
-                ? `\u5f53\u524d\u6b63\u5728\u5904\u7406\u8ba2\u5355 ${fromOrderNo} \u7684\u6c9f\u901a\u6d88\u606f`
-                : `Currently chatting about order ${fromOrderNo}`
-              : isZh
-                ? "\u50cf\u804a\u5929\u5de5\u5177\u4e00\u6837\u76f4\u63a5\u548c\u5e97\u94fa\u6c9f\u901a\uff0c\u672a\u8bfb\u6570\u548c\u5df2\u8bfb\u72b6\u6001\u4f1a\u5b9e\u65f6\u540c\u6b65\u3002"
-                : "Chat with shops in a messenger-style layout with live unread and read states."}
-          </p>
+          <h1>{isZh ? "消息中心" : "Message Center"}</h1>
         </div>
-        <Link href="/">{isZh ? "\u8fd4\u56de\u9996\u9875" : "Back Home"}</Link>
+        <Link href="/">{isZh ? "返回首页" : "Back Home"}</Link>
       </header>
 
       <div className="tb-chat-layout">
         <aside className="tb-chat-sidebar">
-          <h2>{isZh ? "\u4f1a\u8bdd\u5217\u8868" : "Conversations"}</h2>
+          <h2>{isZh ? "会话列表" : "Conversations"}</h2>
           {conversations.length === 0 && !conversationsQuery.isLoading ? <p className="tb-chat-empty">{emptyHint}</p> : null}
 
           <div className="tb-chat-conv-list">
@@ -331,8 +532,8 @@ export default function MallMessagesPage() {
                 {conversationTitle(currentConversation, isZh).slice(0, 1).toUpperCase()}
               </Avatar>
               <div>
-                <h2>{currentConversation ? conversationTitle(currentConversation, isZh) : isZh ? "\u8bf7\u9009\u62e9\u4f1a\u8bdd" : "Select Conversation"}</h2>
-                <span>{fromOrderNo ? (isZh ? "\u8ba2\u5355\u6c9f\u901a\u4e2d" : "Order conversation") : isZh ? "\u5546\u54c1\u54a8\u8be2\u4f1a\u8bdd" : "Product consultation"}</span>
+                <h2>{currentConversation ? conversationTitle(currentConversation, isZh) : isZh ? "请选择会话" : "Select Conversation"}</h2>
+                <span>{conversationSceneText(currentConversation, isZh, defaultOrderNo)}</span>
               </div>
             </div>
           </div>
@@ -341,6 +542,7 @@ export default function MallMessagesPage() {
             {conversationMessages.map((msg) => {
               const self = msg.senderType === "BUYER";
               const avatarSrc = self ? msg.senderAvatarUrl : currentConversation?.shopAvatarUrl || msg.senderAvatarUrl;
+              const cardPayload = parseCardPayload(msg);
               return (
                 <article key={msg.messageNo} className={`tb-chat-msg ${self ? "is-self" : ""}`}>
                   {!self ? (
@@ -351,10 +553,10 @@ export default function MallMessagesPage() {
 
                   <div className="tb-chat-bubble">
                     <div className="tb-chat-bubble-head">{senderTitle(msg, currentConversation, isZh)}</div>
-                    <p>{msg.contentText || (isZh ? "\u6682\u4e0d\u652f\u6301\u8be5\u6d88\u606f\u7c7b\u578b\u9884\u89c8" : "Unsupported message type")}</p>
+                    {cardPayload ? renderCardPayload(cardPayload, isZh) : <p>{msg.contentText || (isZh ? "暂不支持该消息类型" : "Unsupported message type")}</p>}
                     <small>
                       {formatListTime(msg.sentAt, locale)}
-                      {peerReadText(msg, isZh) ? ` · ${peerReadText(msg, isZh)}` : ""}
+                      {peerReadText(msg, isZh) ? ` / ${peerReadText(msg, isZh)}` : ""}
                     </small>
                   </div>
 
@@ -367,23 +569,45 @@ export default function MallMessagesPage() {
               );
             })}
 
-            {messagesQuery.isLoading ? <p className="tb-chat-empty">{isZh ? "\u6b63\u5728\u52a0\u8f7d\u6d88\u606f..." : "Loading messages\u2026"}</p> : null}
+            {messagesQuery.isLoading ? <p className="tb-chat-empty">{isZh ? "正在加载消息..." : "Loading messages..."}</p> : null}
           </div>
 
           <form className="tb-chat-composer" onSubmit={handleSubmit}>
-            <textarea
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              placeholder={isZh ? "\u8f93\u5165\u4f60\u60f3\u54a8\u8be2\u7684\u95ee\u9898..." : "Type your message\u2026"}
-              rows={3}
-            />
-            <button type="submit" disabled={!currentConversationNo || sendMutation.isPending || !draft.trim()}>
-              {sendMutation.isPending ? (isZh ? "\u53d1\u9001\u4e2d..." : "Sending\u2026") : isZh ? "\u53d1\u9001" : "Send"}
-            </button>
+            <textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={isZh ? "输入消息..." : "Type your message..."} rows={3} />
+
+            <div className="tb-chat-composer-actions">
+              <div className="tb-chat-plus-wrap">
+                <button
+                  type="button"
+                  className="tb-chat-plus-btn"
+                  onClick={() => setPlusMenuOpen((value) => !value)}
+                  disabled={!currentConversationNo || sendMutation.isLoading || (!quickProductCard && !quickOrderCard)}
+                >
+                  +
+                </button>
+                {plusMenuOpen ? (
+                  <div className="tb-chat-plus-menu">
+                    {quickProductCard ? (
+                      <button type="button" onClick={() => sendCard(quickProductCard)}>
+                        {isZh ? "发送商品详情" : "Send Product Detail"}
+                      </button>
+                    ) : null}
+                    {quickOrderCard ? (
+                      <button type="button" onClick={() => sendCard(quickOrderCard)}>
+                        {isZh ? "发送订单详情" : "Send Order Detail"}
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+
+              <button type="submit" disabled={!currentConversationNo || sendMutation.isLoading || !draft.trim()}>
+                {sendMutation.isLoading ? (isZh ? "发送中..." : "Sending...") : isZh ? "发送" : "Send"}
+              </button>
+            </div>
           </form>
         </div>
       </div>
     </section>
   );
 }
-

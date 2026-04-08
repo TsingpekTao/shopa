@@ -133,6 +133,12 @@ func (s *sPoints) GrantPointsForCompletedOrder(ctx context.Context, req *pb.Gran
 		}
 	}
 
+	_, snapshot, _, _, err := s.loadRule(ctx)
+	if err != nil {
+		return nil, err
+	}
+	grantedPoints := calculateGrantedPoints(paidAmount, snapshot.GrantPointsPerCent)
+
 	if _, err := s.grantOrderHTTP(ctx, &httpv1.GrantOrderReq{
 		OrderNo:        req.GetOrderNo(),
 		UserID:         req.GetUserId(),
@@ -148,7 +154,7 @@ func (s *sPoints) GrantPointsForCompletedOrder(ctx context.Context, req *pb.Gran
 	}
 
 	return &pb.GrantPointsForCompletedOrderRes{
-		GrantedPoints:         paidAmount,
+		GrantedPoints:         grantedPoints,
 		AccountAvailableAfter: account.AvailableBalance,
 		DebtPointsAfter:       debtFromAvailable(account.AvailableBalance),
 	}, nil

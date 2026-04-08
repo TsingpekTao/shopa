@@ -42,6 +42,12 @@ type AfterSaleCaseColumns struct {
 	SellerReply          string //
 	RejectReasonCode     string //
 	CancelReasonCode     string //
+	RefundBatchNo        string //
+	ScopeCode            string //
+	ReviewDeadlineAt     string //
+	AutoApprovedAt       string //
+	SelectedItemNosJson  string //
+	PaymentNo            string //
 	Version              string //
 	ClosedAt             string //
 	CreatedAt            string //
@@ -72,6 +78,12 @@ var afterSaleCaseColumns = AfterSaleCaseColumns{
 	SellerReply:          "seller_reply",
 	RejectReasonCode:     "reject_reason_code",
 	CancelReasonCode:     "cancel_reason_code",
+	RefundBatchNo:        "refund_batch_no",
+	ScopeCode:            "scope_code",
+	ReviewDeadlineAt:     "review_deadline_at",
+	AutoApprovedAt:       "auto_approved_at",
+	SelectedItemNosJson:  "selected_item_nos_json",
+	PaymentNo:            "payment_no",
 	Version:              "version",
 	ClosedAt:             "closed_at",
 	CreatedAt:            "created_at",
