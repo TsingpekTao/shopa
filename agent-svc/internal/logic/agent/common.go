@@ -60,7 +60,15 @@ type sAgent struct {
 
 func New() *sAgent {
 	// 执行当前业务语句，把本步骤产出的状态或数据继续传递给后续流程。
-	svc := &sAgent{runner: agentruntime.NewRunner()}
+	svc := &sAgent{runner: agentruntime.NewRunnerWithOptions(agentruntime.RunnerOptions{
+			OrderRepository: newBuyerOrderSnapshotHTTPRepository(func() string {
+				value, err := g.Cfg().Get(context.Background(), "services.orderHttp", "")
+				if err != nil || value == nil {
+					return ""
+				}
+				return value.String()
+			}(), nil),
+	})}
 	// 启动后台维护协程，定期清理卡死 Run，避免僵尸执行长期占据会话状态。
 	svc.startRuntimeMaintenance()
 	// 在当前分支完成收口并返回结果，避免后续逻辑继续执行造成状态污染。
@@ -97,6 +105,24 @@ func (s *sAgent) processRun(ctx context.Context, conv *entity.AgentConversation,
 		return nil, nil, err
 	}
 	// 执行当前业务语句，把本步骤产出的状态或数据继续传递给后续流程。
+	// 回溯上一轮 Run 的任务会话，为当前轮多轮售后对话恢复上下文。
+	previousRun, err := s.getPreviousRun(ctx, run)
+	// 如果上一轮查询失败，就直接终止，避免带着不完整上下文继续推理。
+	if err != nil {
+		return nil, nil, err
+	}
+	// 先准备当前轮要传给 runtime 的上一轮任务会话。
+	var previousSession agentruntime.TaskSessionState
+	// 如果上一轮存在图快照，就从 graph_state_json 中恢复任务会话。
+	if previousTaskSession := agentruntime.ParseGraphTaskSession(firstNonEmpty(func() string {
+		if previousRun == nil {
+			return ""
+		}
+		return previousRun.GraphStateJson
+	}(), "")); previousTaskSession != nil {
+		previousSession = *previousTaskSession
+	}
+	// 把运行时输入扩展成带消息、锚点和安全身份的新模型。
 	out, err := s.runner.Run(ctx, agentruntime.RunInput{
 		SecurityPrompt: g.Cfg().MustGet(ctx, "agent.securityPrompt", "").String(),
 		SceneCode:      conv.SceneCode,
@@ -104,6 +130,23 @@ func (s *sAgent) processRun(ctx context.Context, conv *entity.AgentConversation,
 		Messages:       rowsToMessages(recentRows),
 		UserQuery:      strings.TrimSpace(userMsg.ContentText),
 		RequestID:      requestIDFromContext(ctx),
+		Message: agentruntime.UserMessage{
+			ContentText:     strings.TrimSpace(userMsg.ContentText),
+			MessageTypeCode: strings.TrimSpace(userMsg.MessageTypeCode),
+			AssetIDs:        parseUint64Slice(userMsg.AssetIdsJson),
+		},
+		PreviousSession: previousSession,
+		Conversation: agentruntime.ConversationAnchors{
+			OrderNo:    strings.TrimSpace(conv.OrderNo),
+			SubOrderNo: strings.TrimSpace(conv.SubOrderNo),
+		},
+		Security: agentruntime.SecurityContext{
+			UserID:         conv.UserId,
+			ShopNo:         strings.TrimSpace(conv.ShopNo),
+			RequestID:      requestIDFromContext(ctx),
+			ConversationNo: conv.ConversationNo,
+			RunNo:          run.RunNo,
+		},
 		CheckpointHook: func(innerCtx context.Context, cp agentruntime.GraphCheckpointSnapshot) error {
 			// 把当前图执行节点和状态持久化到 Run 真相源，避免 Pod 抖动后前端长期卡在生成中。
 			return s.updateRunCheckpoint(innerCtx, run.RunNo, cp)
@@ -319,6 +362,31 @@ func (s *sAgent) getLatestRun(ctx context.Context, conversationNo string) (*enti
 	return &row, nil
 }
 
+func (s *sAgent) getPreviousRun(ctx context.Context, currentRun *entity.AgentRun) (*entity.AgentRun, error) {
+	// 如果当前 Run 不存在，就没有可追溯的上一轮运行状态。
+	if currentRun == nil || currentRun.Id == 0 {
+		return nil, nil
+	}
+	// 先集中声明查询结果变量，便于统一做空值判断和收口。
+	var row entity.AgentRun
+	// 按当前 Run 的主键回溯上一条同会话运行记录，供多轮任务会话复用。
+	if err := dao.AgentRun.Ctx(ctx).
+		Where(dao.AgentRun.Columns().ConversationNo, currentRun.ConversationNo).
+		WhereLT(dao.AgentRun.Columns().Id, currentRun.Id).
+		OrderDesc(dao.AgentRun.Columns().Id).
+		Limit(1).
+		Scan(&row); err != nil {
+		// 查询失败时继续向上返回统一错误，避免拿不到上一轮状态却静默降级。
+		return nil, gerror.Wrap(err, "query previous run failed")
+	}
+	// 如果数据库里没有更早的 Run，就返回空值表示当前是首轮。
+	if row.Id == 0 {
+		return nil, nil
+	}
+	// 返回上一轮 Run 真相源，供当前轮恢复任务会话。
+	return &row, nil
+}
+
 func (s *sAgent) getRunByNo(ctx context.Context, runNo string) (*entity.AgentRun, error) {
 	// 先集中声明这一段流程会复用的变量，便于后续按顺序填充和统一收口。
 	var row entity.AgentRun
@@ -484,6 +552,93 @@ func parseAnswerSources(run *entity.AgentRun) []*agentv1.AnswerSource {
 	return out
 }
 
+func parseReplyPayload(run *entity.AgentRun) *agentv1.AssistantReplyPayload {
+	// 如果当前 Run 不存在，就直接返回空 payload。
+	if run == nil || strings.TrimSpace(run.GraphStateJson) == "" {
+		return nil
+	}
+	// 从运行图快照里提取结构化回复载荷，避免再维护一份重复存储。
+	payload := agentruntime.ParseGraphReplyPayload(run.GraphStateJson)
+	// 如果快照里没有 reply payload，就维持空值返回。
+	if payload == nil {
+		return nil
+	}
+	// 先把内部 data card 映射成对外 proto 结构，供前端直接渲染。
+	dataCards := make([]*agentv1.AssistantDataCard, 0, len(payload.DataCards))
+	// 逐项复制卡片内容，避免直接暴露内部运行时结构。
+	for _, card := range payload.DataCards {
+		dataCards = append(dataCards, &agentv1.AssistantDataCard{
+			OrderSnapshotCard:     toProtoOrderSnapshotCard(card.OrderSnapshotCard),
+			AfterSaleDecisionCard: toProtoAfterSaleDecisionCard(card.AfterSaleDecisionCard),
+		})
+	}
+	// 继续把建议动作映射成稳定的协议对象。
+	actions := make([]*agentv1.SuggestedAction, 0, len(payload.SuggestedActions))
+	// 逐项复制动作信息，供前端控制按钮状态和禁用原因。
+	for _, action := range payload.SuggestedActions {
+		actions = append(actions, &agentv1.SuggestedAction{
+			ActionCode:       action.ActionCode,
+			Label:            action.Label,
+			Enabled:          action.Enabled,
+			ReasonIfDisabled: action.ReasonIfDisabled,
+		})
+	}
+	// 也把缺槽信息映射出来，方便前端渲染追问提示。
+	missingSlots := make([]*agentv1.MissingSlot, 0, len(payload.MissingSlots))
+	// 逐项复制缺槽定义，确保 required 标记和 prompt 一并透出。
+	for _, slot := range payload.MissingSlots {
+		missingSlots = append(missingSlots, &agentv1.MissingSlot{
+			SlotCode:   slot.SlotCode,
+			PromptText: slot.PromptText,
+			Required:   slot.Required,
+		})
+	}
+	// 返回完整的结构化 reply payload，供 Run/Status/Send 接口复用。
+	return &agentv1.AssistantReplyPayload{
+		ReplyText:          payload.ReplyText,
+		IntentCode:         payload.IntentCode,
+		GuardResultCode:    payload.GuardResultCode,
+		Confidence:         payload.Confidence,
+		DataCards:          dataCards,
+		SuggestedActions:   actions,
+		MissingSlots:       missingSlots,
+		SlotRetryCount:     payload.SlotRetryCount,
+		HandoffRecommended: payload.HandoffRecommended,
+		HandoffReasonCode:  payload.HandoffReasonCode,
+	}
+}
+
+func toProtoOrderSnapshotCard(card *agentruntime.OrderSnapshotCard) *agentv1.OrderSnapshotCard {
+	// 如果没有订单卡片，就不返回 proto 卡片。
+	if card == nil {
+		return nil
+	}
+	// 把内部订单卡片结构映射成对外协议对象。
+	return &agentv1.OrderSnapshotCard{
+		OrderNo:           card.OrderNo,
+		MainStatus:        card.MainStatus,
+		PaymentStatus:     card.PaymentStatus,
+		FulfillmentStatus: card.FulfillmentStatus,
+		LogisticsStatus:   card.LogisticsStatus,
+		AfterSaleStatus:   card.AfterSaleStatus,
+		LatestUpdateTime:  card.LatestUpdateTime,
+	}
+}
+
+func toProtoAfterSaleDecisionCard(card *agentruntime.AfterSaleDecisionCard) *agentv1.AfterSaleDecisionCard {
+	// 如果没有决策卡片，就不返回 proto 卡片。
+	if card == nil {
+		return nil
+	}
+	// 把内部决策卡片映射成对外协议对象。
+	return &agentv1.AfterSaleDecisionCard{
+		DecisionPathCode: card.DecisionPathCode,
+		ReasonText:       card.ReasonText,
+		ConstraintText:   card.ConstraintText,
+		NextStepText:     card.NextStepText,
+	}
+}
+
 func toProtoConversation(row *entity.AgentConversation) *agentv1.AssistantConversation {
 	// 执行当前业务语句，把本步骤产出的状态或数据继续传递给后续流程。
 	if row == nil || row.Id == 0 {
@@ -546,6 +701,7 @@ func toProtoRun(row *entity.AgentRun) *agentv1.AssistantRun {
 		QueueBlocked:            row.QueueBlocked == 1,
 		QueueHintMessage:        row.QueueHintMessage,
 		DegradedReasonCode:      row.DegradedReasonCode,
+		ReplyPayload:            parseReplyPayload(row),
 	}
 }
 

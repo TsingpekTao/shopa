@@ -228,7 +228,10 @@ func (s *sAgent) GenerateHandoffSummary(ctx context.Context, req *agentv1.Genera
 		return nil, err
 	}
 	// 把内部实体或运行态结构转换成对外协议对象，保证对外契约稳定且隔离内部实现。
-	return &agentv1.GenerateHandoffSummaryRes{Ticket: toProtoTicket(ticket)}, nil
+	return &agentv1.GenerateHandoffSummaryRes{
+		Ticket:            toProtoTicket(ticket),
+		HandoffReasonCode: ticket.EscalationReasonCode,
+	}, nil
 }
 
 func (s *sAgent) UpsertKnowledgeChunks(ctx context.Context, req *agentv1.UpsertKnowledgeChunksReq) (*agentv1.UpsertKnowledgeChunksRes, error) {

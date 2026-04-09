@@ -46,6 +46,10 @@ type RunInput struct {
 	Messages       []*schema.Message
 	UserQuery      string
 	RequestID      string
+	Message        UserMessage
+	PreviousSession TaskSessionState
+	Conversation   ConversationAnchors
+	Security       SecurityContext
 	CheckpointHook CheckpointHook
 }
 
@@ -67,6 +71,8 @@ type RunOutput struct {
 	SelectedToolName    string
 	SelectedAdapterCode string
 	SelectedToolScope   string
+	ReplyPayload        ReplyPayload
+	TaskSession         TaskSessionState
 }
 
 type AnswerSource struct {
@@ -94,9 +100,14 @@ type Runner interface {
 	HandoffSummary(ctx context.Context, summary string, recent []*schema.Message, reasonCode string) (string, error)
 }
 
+type RunnerOptions struct {
+	OrderRepository OrderSnapshotRepository
+}
+
 type einoRunner struct {
-	runFlow  compose.Runnable[*runState, *runState]
-	adapters *AdapterRegistry
+	runFlow         compose.Runnable[*runState, *runState]
+	adapters        *AdapterRegistry
+	orderRepository OrderSnapshotRepository
 }
 
 type runState struct {
@@ -106,6 +117,12 @@ type runState struct {
 	Summary           string          `json:"summary"`
 	UserQuery         string          `json:"user_query"`
 	NormalizedQuery   string          `json:"normalized_query"`
+	Message           UserMessage     `json:"message"`
+	TaskSession       TaskSessionState `json:"task_session"`
+	ReplyPayload      ReplyPayload    `json:"reply_payload"`
+	GuardResultCode   string          `json:"guard_result_code,omitempty"`
+	Conversation      ConversationAnchors `json:"conversation"`
+	Security          SecurityContext `json:"security"`
 	RecentMessages    []messageDigest `json:"recent_messages,omitempty"`
 	IntentCode        string          `json:"intent_code"`
 	NeedKnowledge     bool            `json:"need_knowledge"`
@@ -151,6 +168,20 @@ func NewRunner() Runner {
 		panic(err)
 	}
 	// 在当前分支完成收口并返回结果，避免后续逻辑继续执行造成状态污染。
+return r
+}
+
+func NewRunnerWithOptions(opts RunnerOptions) Runner {
+	// 初始化带依赖注入的 Runner，让测试和生产都能挂上不同的订单查询实现。
+	r := &einoRunner{
+		adapters:        newDefaultAdapterRegistry(),
+		orderRepository: opts.OrderRepository,
+	}
+	// 如果运行图初始化失败，就在启动阶段直接暴露问题而不是带病运行。
+	if err := r.init(); err != nil {
+		panic(err)
+	}
+	// 返回完成初始化的 Runner 实例，供上层业务流程复用。
 	return r
 }
 
@@ -164,7 +195,7 @@ func (r *einoRunner) init() error {
 	// 把当前处理节点接入 Eino 图中，明确每一步执行顺序和职责边界。
 	chain.AppendLambda(compose.InvokableLambda(r.loadSummary), compose.WithNodeKey(nodeLoadSummary))
 	// 把当前处理节点接入 Eino 图中，明确每一步执行顺序和职责边界。
-	chain.AppendLambda(compose.InvokableLambda(r.intentRouter), compose.WithNodeKey(nodeIntentRouter))
+	chain.AppendLambda(compose.InvokableLambda(r.assistantIntentRouter), compose.WithNodeKey(nodeIntentRouter))
 	// 把当前处理节点接入 Eino 图中，明确每一步执行顺序和职责边界。
 	chain.AppendLambda(compose.InvokableLambda(r.knowledgeRetriever), compose.WithNodeKey(nodeKnowledgeRetriever))
 	// 把当前处理节点接入 Eino 图中，明确每一步执行顺序和职责边界。
@@ -172,7 +203,7 @@ func (r *einoRunner) init() error {
 	// 把当前处理节点接入 Eino 图中，明确每一步执行顺序和职责边界。
 	chain.AppendLambda(compose.InvokableLambda(r.callMcpTool), compose.WithNodeKey(nodeCallMcpTool))
 	// 把当前处理节点接入 Eino 图中，明确每一步执行顺序和职责边界。
-	chain.AppendLambda(compose.InvokableLambda(r.generateAnswer), compose.WithNodeKey(nodeGenerateAnswer))
+	chain.AppendLambda(compose.InvokableLambda(r.assistantGenerateAnswer), compose.WithNodeKey(nodeGenerateAnswer))
 	// 把当前处理节点接入 Eino 图中，明确每一步执行顺序和职责边界。
 	chain.AppendLambda(compose.InvokableLambda(r.persistCheckpoint), compose.WithNodeKey(nodePersistCheckpoint))
 
@@ -203,6 +234,10 @@ func (r *einoRunner) Run(ctx context.Context, in RunInput) (*RunOutput, error) {
 		Summary:          strings.TrimSpace(in.Summary),
 		UserQuery:        strings.TrimSpace(in.UserQuery),
 		NormalizedQuery:  strings.ToLower(strings.TrimSpace(in.UserQuery)),
+		Message:          in.Message,
+		TaskSession:      cloneTaskSession(in.PreviousSession),
+		Conversation:     in.Conversation,
+		Security:         in.Security,
 		RunStatusCode:    runStatusPending,
 		RiskDecisionCode: "PASS",
 		ToolResult: toolResult{
@@ -210,6 +245,9 @@ func (r *einoRunner) Run(ctx context.Context, in RunInput) (*RunOutput, error) {
 		},
 	}
 	// 执行当前业务语句，把本步骤产出的状态或数据继续传递给后续流程。
+	if strings.TrimSpace(state.Message.ContentText) == "" {
+		state.Message.ContentText = state.UserQuery
+	}
 	outState, err := r.runFlow.Invoke(ctx, state)
 	// 如果上一步已经出现错误，这里立即中断并向上返回，避免带着脏状态继续推进链路。
 	if err != nil {
@@ -237,6 +275,8 @@ func (r *einoRunner) Run(ctx context.Context, in RunInput) (*RunOutput, error) {
 		SelectedToolName:    outState.SelectedToolName,
 		SelectedAdapterCode: outState.SelectedAdapter,
 		SelectedToolScope:   outState.SelectedScopeCode,
+		ReplyPayload:        outState.ReplyPayload,
+		TaskSession:         outState.TaskSession,
 	}
 	// 在当前分支完成收口并返回结果，避免后续逻辑继续执行造成状态污染。
 	return output, nil

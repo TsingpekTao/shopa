@@ -140,6 +140,7 @@ func (s *sAgent) SendAssistantMessage(ctx context.Context, req *agentv1.SendAssi
 			Run:              toProtoRun(latestRun),
 			UserMessage:      toProtoMessage(existingMsg),
 			IdempotentReplay: true,
+			ReplyPayload:     parseReplyPayload(latestRun),
 		}, nil
 	}
 	// 记录当前业务时间，确保状态流转、排序展示和审计字段使用同一时间基线。
@@ -183,6 +184,7 @@ func (s *sAgent) SendAssistantMessage(ctx context.Context, req *agentv1.SendAssi
 			Conversation: toProtoConversation(updatedConv),
 			Run:          toProtoRun(latestRun),
 			UserMessage:  toProtoMessage(userMsg),
+			ReplyPayload: parseReplyPayload(latestRun),
 		}, nil
 	}
 	// 读取当前会话最近一次 Run，便于复用状态、判断 turn_no 或回传最新执行结果。
@@ -242,6 +244,7 @@ func (s *sAgent) SendAssistantMessage(ctx context.Context, req *agentv1.SendAssi
 		Conversation: toProtoConversation(updatedConv),
 		Run:          toProtoRun(processedRun),
 		UserMessage:  toProtoMessage(userMsg),
+		ReplyPayload: parseReplyPayload(processedRun),
 	}, nil
 }
 
@@ -300,6 +303,7 @@ func (s *sAgent) GetAssistantRunStatus(ctx context.Context, req *agentv1.GetAssi
 		DegradedReply:          strings.TrimSpace(run.DegradedReasonCode) != "",
 		DegradedReasonCode:     run.DegradedReasonCode,
 		Checkpoint:             toProtoCheckpoint(run),
+		ReplyPayload:           parseReplyPayload(run),
 	}, nil
 }
 
@@ -415,7 +419,11 @@ func (s *sAgent) EscalateToHuman(ctx context.Context, req *agentv1.EscalateToHum
 	// 按会话号读取当前会话真相源，避免后续逻辑基于过期内存状态继续执行。
 	updatedConv, _ := s.getConversationByNo(ctx, conv.ConversationNo)
 	// 把内部实体或运行态结构转换成对外协议对象，保证对外契约稳定且隔离内部实现。
-	return &agentv1.EscalateToHumanRes{Ticket: toProtoTicket(ticket), Conversation: toProtoConversation(updatedConv)}, nil
+	return &agentv1.EscalateToHumanRes{
+		Ticket:            toProtoTicket(ticket),
+		Conversation:      toProtoConversation(updatedConv),
+		HandoffReasonCode: ticket.EscalationReasonCode,
+	}, nil
 }
 
 func (s *sAgent) SubmitAnswerFeedback(ctx context.Context, req *agentv1.SubmitAnswerFeedbackReq) (*agentv1.SubmitAnswerFeedbackRes, error) {
