@@ -40,17 +40,17 @@ const (
 type CheckpointHook func(ctx context.Context, cp GraphCheckpointSnapshot) error
 
 type RunInput struct {
-	SecurityPrompt string
-	SceneCode      string
-	Summary        string
-	Messages       []*schema.Message
-	UserQuery      string
-	RequestID      string
-	Message        UserMessage
+	SecurityPrompt  string
+	SceneCode       string
+	Summary         string
+	Messages        []*schema.Message
+	UserQuery       string
+	RequestID       string
+	Message         UserMessage
 	PreviousSession TaskSessionState
-	Conversation   ConversationAnchors
-	Security       SecurityContext
-	CheckpointHook CheckpointHook
+	Conversation    ConversationAnchors
+	Security        SecurityContext
+	CheckpointHook  CheckpointHook
 }
 
 type RunOutput struct {
@@ -102,45 +102,47 @@ type Runner interface {
 
 type RunnerOptions struct {
 	OrderRepository OrderSnapshotRepository
+	RuleEngine      AfterSaleRuleEngine
 }
 
 type einoRunner struct {
 	runFlow         compose.Runnable[*runState, *runState]
 	adapters        *AdapterRegistry
 	orderRepository OrderSnapshotRepository
+	ruleEngine      AfterSaleRuleEngine
 }
 
 type runState struct {
-	Input             RunInput        `json:"-"`
-	SecurityPrompt    string          `json:"security_prompt"`
-	SceneCode         string          `json:"scene_code"`
-	Summary           string          `json:"summary"`
-	UserQuery         string          `json:"user_query"`
-	NormalizedQuery   string          `json:"normalized_query"`
-	Message           UserMessage     `json:"message"`
-	TaskSession       TaskSessionState `json:"task_session"`
-	ReplyPayload      ReplyPayload    `json:"reply_payload"`
-	GuardResultCode   string          `json:"guard_result_code,omitempty"`
+	Input             RunInput            `json:"-"`
+	SecurityPrompt    string              `json:"security_prompt"`
+	SceneCode         string              `json:"scene_code"`
+	Summary           string              `json:"summary"`
+	UserQuery         string              `json:"user_query"`
+	NormalizedQuery   string              `json:"normalized_query"`
+	Message           UserMessage         `json:"message"`
+	TaskSession       TaskSessionState    `json:"task_session"`
+	ReplyPayload      ReplyPayload        `json:"reply_payload"`
+	GuardResultCode   string              `json:"guard_result_code,omitempty"`
 	Conversation      ConversationAnchors `json:"conversation"`
-	Security          SecurityContext `json:"security"`
-	RecentMessages    []messageDigest `json:"recent_messages,omitempty"`
-	IntentCode        string          `json:"intent_code"`
-	NeedKnowledge     bool            `json:"need_knowledge"`
-	NeedTool          bool            `json:"need_tool"`
-	SelectedToolName  string          `json:"selected_tool_name,omitempty"`
-	SelectedAdapter   string          `json:"selected_adapter_code,omitempty"`
-	SelectedScopeCode string          `json:"selected_tool_scope_code,omitempty"`
-	ToolTimeoutAt     *time.Time      `json:"tool_wait_timeout_at,omitempty"`
-	ToolResult        toolResult      `json:"tool_result"`
-	CurrentNodeCode   string          `json:"current_node_code"`
-	RunStatusCode     string          `json:"run_status_code"`
-	RiskDecisionCode  string          `json:"risk_decision_code"`
-	PromptInjection   bool            `json:"prompt_injection"`
-	QueueBlocked      bool            `json:"queue_blocked"`
-	QueueHintMessage  string          `json:"queue_hint_message,omitempty"`
-	DegradedReason    string          `json:"degraded_reason_code,omitempty"`
-	AnswerText        string          `json:"answer_text,omitempty"`
-	AnswerSources     []AnswerSource  `json:"answer_sources,omitempty"`
+	Security          SecurityContext     `json:"security"`
+	RecentMessages    []messageDigest     `json:"recent_messages,omitempty"`
+	IntentCode        string              `json:"intent_code"`
+	NeedKnowledge     bool                `json:"need_knowledge"`
+	NeedTool          bool                `json:"need_tool"`
+	SelectedToolName  string              `json:"selected_tool_name,omitempty"`
+	SelectedAdapter   string              `json:"selected_adapter_code,omitempty"`
+	SelectedScopeCode string              `json:"selected_tool_scope_code,omitempty"`
+	ToolTimeoutAt     *time.Time          `json:"tool_wait_timeout_at,omitempty"`
+	ToolResult        toolResult          `json:"tool_result"`
+	CurrentNodeCode   string              `json:"current_node_code"`
+	RunStatusCode     string              `json:"run_status_code"`
+	RiskDecisionCode  string              `json:"risk_decision_code"`
+	PromptInjection   bool                `json:"prompt_injection"`
+	QueueBlocked      bool                `json:"queue_blocked"`
+	QueueHintMessage  string              `json:"queue_hint_message,omitempty"`
+	DegradedReason    string              `json:"degraded_reason_code,omitempty"`
+	AnswerText        string              `json:"answer_text,omitempty"`
+	AnswerSources     []AnswerSource      `json:"answer_sources,omitempty"`
 }
 
 type messageDigest struct {
@@ -160,7 +162,8 @@ type toolResult struct {
 func NewRunner() Runner {
 	// 执行当前业务语句，把本步骤产出的状态或数据继续传递给后续流程。
 	r := &einoRunner{
-		adapters: newDefaultAdapterRegistry(),
+		adapters:   newDefaultAdapterRegistry(),
+		ruleEngine: NewAfterSaleRuleEngine(nil),
 	}
 	// 执行当前业务语句，把本步骤产出的状态或数据继续传递给后续流程。
 	if err := r.init(); err != nil {
@@ -168,7 +171,7 @@ func NewRunner() Runner {
 		panic(err)
 	}
 	// 在当前分支完成收口并返回结果，避免后续逻辑继续执行造成状态污染。
-return r
+	return r
 }
 
 func NewRunnerWithOptions(opts RunnerOptions) Runner {
@@ -176,6 +179,10 @@ func NewRunnerWithOptions(opts RunnerOptions) Runner {
 	r := &einoRunner{
 		adapters:        newDefaultAdapterRegistry(),
 		orderRepository: opts.OrderRepository,
+		ruleEngine:      opts.RuleEngine,
+	}
+	if r.ruleEngine == nil {
+		r.ruleEngine = NewAfterSaleRuleEngine(nil)
 	}
 	// 如果运行图初始化失败，就在启动阶段直接暴露问题而不是带病运行。
 	if err := r.init(); err != nil {

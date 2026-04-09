@@ -61,13 +61,13 @@ type sAgent struct {
 func New() *sAgent {
 	// 执行当前业务语句，把本步骤产出的状态或数据继续传递给后续流程。
 	svc := &sAgent{runner: agentruntime.NewRunnerWithOptions(agentruntime.RunnerOptions{
-			OrderRepository: newBuyerOrderSnapshotHTTPRepository(func() string {
-				value, err := g.Cfg().Get(context.Background(), "services.orderHttp", "")
-				if err != nil || value == nil {
-					return ""
-				}
-				return value.String()
-			}(), nil),
+		OrderRepository: newBuyerOrderSnapshotHTTPRepository(func() string {
+			value, err := g.Cfg().Get(context.Background(), "services.orderHttp", "")
+			if err != nil || value == nil {
+				return ""
+			}
+			return value.String()
+		}(), nil),
 	})}
 	// 启动后台维护协程，定期清理卡死 Run，避免僵尸执行长期占据会话状态。
 	svc.startRuntimeMaintenance()
@@ -636,6 +636,7 @@ func toProtoAfterSaleDecisionCard(card *agentruntime.AfterSaleDecisionCard) *age
 		ReasonText:       card.ReasonText,
 		ConstraintText:   card.ConstraintText,
 		NextStepText:     card.NextStepText,
+		SceneCode:        card.SceneCode,
 	}
 }
 

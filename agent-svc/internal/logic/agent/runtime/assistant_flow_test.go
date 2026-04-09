@@ -177,6 +177,9 @@ func TestPlanAfterSaleTurnBuildsRefundDecisionFromOrderFacts(t *testing.T) {
 	if out.Reply.DataCards[1].AfterSaleDecisionCard == nil {
 		t.Fatalf("expected decision card in second data card")
 	}
+	if out.Reply.DataCards[1].AfterSaleDecisionCard.SceneCode != sceneCodeRefundBeforeShip {
+		t.Fatalf("expected refund-before-shipment scene code, got %q", out.Reply.DataCards[1].AfterSaleDecisionCard.SceneCode)
+	}
 	if out.Reply.DataCards[1].AfterSaleDecisionCard.DecisionPathCode != decisionPathRefundOnly {
 		t.Fatalf("expected refund decision path, got %q", out.Reply.DataCards[1].AfterSaleDecisionCard.DecisionPathCode)
 	}
@@ -188,5 +191,43 @@ func TestPlanAfterSaleTurnBuildsRefundDecisionFromOrderFacts(t *testing.T) {
 	}
 	if !out.Reply.SuggestedActions[0].Enabled {
 		t.Fatalf("expected refund suggested action to be enabled")
+	}
+}
+
+func TestPlanAfterSaleTurnEscalatesAfterRepeatedUnresolvedLookup(t *testing.T) {
+	repo := &stubOrderSnapshotRepository{}
+
+	out, err := planAfterSaleTurn(context.Background(), AfterSaleTurnInput{
+		Message: UserMessage{
+			ContentText: "订单号 ORD202604090004 现在能处理吗",
+		},
+		PreviousSession: TaskSessionState{
+			SlotValues: map[string]string{
+				slotCodeOrderNo: "ORD202604090004",
+				slotCodeProblem: problemTypeRefund,
+			},
+			UnresolvedTurnCount: 1,
+		},
+		Security: SecurityContext{
+			UserID:         10010,
+			ShopNo:         "SHOP10010",
+			RequestID:      "REQ202604090004",
+			ConversationNo: "ACV202604090004",
+			RunNo:          "ARN202604090004",
+		},
+		OrderRepository: repo,
+	})
+	if err != nil {
+		t.Fatalf("plan after-sale turn returned error: %v", err)
+	}
+
+	if !out.Reply.HandoffRecommended {
+		t.Fatalf("expected repeated unresolved lookup to recommend handoff")
+	}
+	if out.Reply.HandoffReasonCode != escalationReasonHighRiskCase {
+		t.Fatalf("expected repeated unresolved lookup handoff reason %q, got %q", escalationReasonHighRiskCase, out.Reply.HandoffReasonCode)
+	}
+	if out.Session.UnresolvedTurnCount != 2 {
+		t.Fatalf("expected unresolved turn count 2, got %d", out.Session.UnresolvedTurnCount)
 	}
 }

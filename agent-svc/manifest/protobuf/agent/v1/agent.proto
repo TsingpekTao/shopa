@@ -232,6 +232,7 @@ message AfterSaleDecisionCard {
   string reason_text = 2;
   string constraint_text = 3;
   string next_step_text = 4;
+  string scene_code = 5;
 }
 
 message AssistantDataCard {

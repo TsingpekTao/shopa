@@ -8,8 +8,8 @@ import (
 
 func TestToProtoRunIncludesReplyPayloadFromGraphState(t *testing.T) {
 	row := &entity.AgentRun{
-		Id:     1,
-		RunNo:  "ARN202604090201",
+		Id:    1,
+		RunNo: "ARN202604090201",
 		GraphStateJson: `{
 			"reply_payload": {
 				"reply_text": "订单尚未发货，建议直接申请退款。",
@@ -35,7 +35,8 @@ func TestToProtoRunIncludesReplyPayloadFromGraphState(t *testing.T) {
 							"decision_path_code": "refund_only",
 							"reason_text": "订单尚未发货，当前更适合直接申请退款。",
 							"constraint_text": "未发货阶段通常不需要先走退货流程。",
-							"next_step_text": "优先发起退款。"
+							"next_step_text": "优先发起退款。",
+							"scene_code": "refund_before_shipment"
 						}
 					}
 				],
@@ -68,6 +69,9 @@ func TestToProtoRunIncludesReplyPayloadFromGraphState(t *testing.T) {
 	}
 	if got.GetReplyPayload().GetDataCards()[1].GetAfterSaleDecisionCard().GetDecisionPathCode() != "refund_only" {
 		t.Fatalf("expected decision path refund_only, got %q", got.GetReplyPayload().GetDataCards()[1].GetAfterSaleDecisionCard().GetDecisionPathCode())
+	}
+	if got.GetReplyPayload().GetDataCards()[1].GetAfterSaleDecisionCard().GetSceneCode() != "refund_before_shipment" {
+		t.Fatalf("expected scene code refund_before_shipment, got %q", got.GetReplyPayload().GetDataCards()[1].GetAfterSaleDecisionCard().GetSceneCode())
 	}
 	if len(got.GetReplyPayload().GetSuggestedActions()) != 1 {
 		t.Fatalf("expected one suggested action, got %d", len(got.GetReplyPayload().GetSuggestedActions()))

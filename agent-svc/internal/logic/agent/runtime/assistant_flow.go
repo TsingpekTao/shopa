@@ -33,24 +33,27 @@ const (
 	orderLookupErrorDownstream          = "DOWNSTREAM_UNAVAILABLE"
 	orderLookupErrorInsufficientContext = "INSUFFICIENT_CONTEXT"
 
-	escalationReasonUserRequested       = "user_requested_handoff"
-	escalationReasonSlotFillingFailed   = "slot_filling_failed"
-	escalationReasonRuleConflict        = "rule_conflict"
-	escalationReasonDownstream          = "downstream_unavailable"
-	escalationReasonHighRiskCase        = "high_risk_case"
+	escalationReasonUserRequested     = "user_requested_handoff"
+	escalationReasonSlotFillingFailed = "slot_filling_failed"
+	escalationReasonRuleConflict      = "rule_conflict"
+	escalationReasonDownstream        = "downstream_unavailable"
+	escalationReasonHighRiskCase      = "high_risk_case"
 
-	decisionPathRefundOnly            = "refund_only"
-	decisionPathWaitShipment          = "wait_for_shipment"
+	decisionPathRefundOnly             = "refund_only"
+	decisionPathWaitShipment           = "wait_for_shipment"
 	decisionPathReturnRefundOrExchange = "return_refund_or_exchange"
-	decisionPathWaitExistingAfterSale = "wait_existing_after_sale"
+	decisionPathWaitExistingAfterSale  = "wait_existing_after_sale"
 
-	actionCodeRequestRefund    = "request_refund"
-	actionCodeRequestReturn    = "request_return_refund"
-	actionCodeRequestExchange  = "request_exchange"
-	actionCodeWaitForUpdate    = "wait_for_update"
-	actionCodeEscalateToHuman  = "escalate_to_human"
+	actionCodeRequestRefund   = "request_refund"
+	actionCodeRequestReturn   = "request_return_refund"
+	actionCodeRequestExchange = "request_exchange"
+	actionCodeWaitForUpdate   = "wait_for_update"
+	actionCodeEscalateToHuman = "escalate_to_human"
+	actionCodeUrgeShipment    = "urge_shipment"
+	actionCodeViewLogistics   = "view_logistics"
 
-	defaultSlotRetryThreshold = 2
+	defaultSlotRetryThreshold  = 2
+	defaultUnresolvedThreshold = 2
 )
 
 var orderNumberPattern = regexp.MustCompile(`(?i)\b[A-Z]{2,}[A-Z0-9_-]{6,}\b`)
@@ -90,6 +93,7 @@ type OrderSnapshotCard struct {
 }
 
 type AfterSaleDecisionCard struct {
+	SceneCode        string `json:"scene_code,omitempty"`
 	DecisionPathCode string `json:"decision_path_code,omitempty"`
 	ReasonText       string `json:"reason_text,omitempty"`
 	ConstraintText   string `json:"constraint_text,omitempty"`
@@ -189,11 +193,12 @@ type OrderLookupResult struct {
 }
 
 type AfterSaleTurnInput struct {
-	Message          UserMessage
-	Conversation     ConversationAnchors
-	PreviousSession  TaskSessionState
-	Security         SecurityContext
-	OrderRepository  OrderSnapshotRepository
+	Message         UserMessage
+	Conversation    ConversationAnchors
+	PreviousSession TaskSessionState
+	Security        SecurityContext
+	OrderRepository OrderSnapshotRepository
+	RuleEngine      AfterSaleRuleEngine
 }
 
 type AfterSaleTurnOutput struct {
@@ -281,11 +286,23 @@ func planAfterSaleTurn(ctx context.Context, in AfterSaleTurnInput) (AfterSaleTur
 		return handleOrderLookupFailure(session, guard, lookupResult.ErrorCode), nil
 	}
 	// 用实时订单事实做结构化规则判断，给出当前最适合的售后路径。
-	decisionCard, actions, replyText := decideAfterSalePath(activeTaskCode, lookupResult.Snapshot)
+	ruleEngine := in.RuleEngine
+	if ruleEngine == nil {
+		ruleEngine = NewAfterSaleRuleEngine(nil)
+	}
+	ruleOutcome := ruleEngine.Evaluate(AfterSaleRuleContext{
+		TaskCode:    activeTaskCode,
+		ProblemType: session.SlotValues[slotCodeProblem],
+		Snapshot:    lookupResult.Snapshot,
+		Session:     session,
+	})
+	decisionCard := ruleOutcome.DecisionCard
+	actions := ruleOutcome.SuggestedActions
+	replyText := ruleOutcome.ReplyText
 	// 把最新事实和决策摘要写入会话，供下一轮“那我现在能退款吗”复用。
 	session.LatestFactsSummary = summarizeOrderSnapshot(lookupResult.Snapshot)
 	// 把最新规则结论沉淀到会话状态中，便于 handoff 和多轮解释复用。
-	session.LatestDecisionSummary = decisionCard.ReasonText
+	session.LatestDecisionSummary = summarizeDecisionCard(decisionCard, replyText)
 	// 成功查到订单后，清空缺槽和重试计数，避免后续错误熔断。
 	session.MissingSlots = nil
 	// 成功定位订单后，重置追问计数，避免一次成功后仍被视为失败状态。
@@ -293,13 +310,17 @@ func planAfterSaleTurn(ctx context.Context, in AfterSaleTurnInput) (AfterSaleTur
 	// 成功定位订单后，清空上一轮追问码，避免后续重复 prompt 判断失真。
 	session.LastSlotPromptCode = ""
 	// 成功完成规则决策后，明确当前会话不需要立刻转人工。
-	session.HandoffRecommended = false
+	session.HandoffRecommended = ruleOutcome.HandoffRecommended
 	// 当前轮顺利完成查询和建议后，清空熔断标记。
 	session.SlotFillingFailed = false
 	// 当前轮结论稳定后，清空升级原因码。
-	session.EscalationReasonCode = ""
-	// 当前问题已被系统处理一轮，就把未解决轮次重置掉。
-	session.UnresolvedTurnCount = 0
+	session.EscalationReasonCode = ruleOutcome.HandoffReasonCode
+	// 当前命中稳定规则后，未解决轮次清零；规则冲突则保留升级语义。
+	if ruleOutcome.HandoffRecommended {
+		session.UnresolvedTurnCount++
+	} else {
+		session.UnresolvedTurnCount = 0
+	}
 	// 组装固定格式的结构化回复载荷，供前端直接渲染文本、卡片和动作。
 	reply := ReplyPayload{
 		ReplyText:       replyText,
@@ -310,8 +331,10 @@ func planAfterSaleTurn(ctx context.Context, in AfterSaleTurnInput) (AfterSaleTur
 			{OrderSnapshotCard: toOrderSnapshotCard(lookupResult.Snapshot)},
 			{AfterSaleDecisionCard: decisionCard},
 		},
-		SuggestedActions: actions,
-		SlotRetryCount:   session.SlotRetryCount,
+		SuggestedActions:   actions,
+		SlotRetryCount:     session.SlotRetryCount,
+		HandoffRecommended: ruleOutcome.HandoffRecommended,
+		HandoffReasonCode:  ruleOutcome.HandoffReasonCode,
 	}
 	// 把当前轮生成的结构化结果和任务会话一起返回给上层流程。
 	return AfterSaleTurnOutput{Session: session, Reply: reply}, nil
@@ -419,14 +442,16 @@ func handleOrderLookupFailure(session TaskSessionState, guard GuardDecision, err
 	session.UnresolvedTurnCount++
 	// 如果是安全 not found 或 permission denied，就返回不泄露存在性的安全话术。
 	if errorCode == orderLookupErrorNotFound || errorCode == orderLookupErrorPermissionDenied {
+		reply := ReplyPayload{
+			ReplyText:       "暂未查询到与你当前账号匹配的订单信息，请核对订单号后再试。",
+			IntentCode:      intentCodeAfterSaleTask,
+			GuardResultCode: guard.GuardResultCode,
+			Confidence:      0.84,
+		}
+		session, reply = applyUnresolvedTurnEscalation(session, reply)
 		return AfterSaleTurnOutput{
 			Session: session,
-			Reply: ReplyPayload{
-				ReplyText:       "暂未查询到与你当前账号匹配的订单信息，请核对订单号后再试。",
-				IntentCode:      intentCodeAfterSaleTask,
-				GuardResultCode: guard.GuardResultCode,
-				Confidence:      0.84,
-			},
+			Reply:   reply,
 		}
 	}
 	// 如果下游不可用，就建议转人工但不编造订单事实。
@@ -451,14 +476,16 @@ func handleOrderLookupFailure(session TaskSessionState, guard GuardDecision, err
 		}
 	}
 	// 其他情况统一按上下文不足回复，继续引导补充信息。
+	reply := ReplyPayload{
+		ReplyText:       "我还缺少足够的信息来准确判断，请补充订单号或更具体的问题描述。",
+		IntentCode:      intentCodeAfterSaleTask,
+		GuardResultCode: guard.GuardResultCode,
+		Confidence:      0.78,
+	}
+	session, reply = applyUnresolvedTurnEscalation(session, reply)
 	return AfterSaleTurnOutput{
 		Session: session,
-		Reply: ReplyPayload{
-			ReplyText:       "我还缺少足够的信息来准确判断，请补充订单号或更具体的问题描述。",
-			IntentCode:      intentCodeAfterSaleTask,
-			GuardResultCode: guard.GuardResultCode,
-			Confidence:      0.78,
-		},
+		Reply:   reply,
 	}
 }
 
@@ -537,7 +564,7 @@ func mergeSlotValues(session TaskSessionState, query string, anchors Conversatio
 		session.AnchoredSubOrderNo = subOrderNo
 	}
 	// 把本轮识别到的问题类型写入槽位，供规则库和 handoff 复用。
-	session.SlotValues[slotCodeProblem] = activeTaskCode
+	session.SlotValues[slotCodeProblem] = inferProblemType(query, activeTaskCode)
 	// 返回合并后的任务会话。
 	return session
 }
@@ -560,62 +587,41 @@ func extractOrderNumber(query, prefix string) string {
 }
 
 func decideAfterSalePath(taskCode string, snapshot *OrderSnapshot) (*AfterSaleDecisionCard, []SuggestedAction, string) {
-	// 如果当前已存在售后单，就优先建议等待现有流程，避免重复申请。
-	if strings.EqualFold(strings.TrimSpace(snapshot.AfterSaleStatus), "PROCESSING") {
-		return &AfterSaleDecisionCard{
-				DecisionPathCode: decisionPathWaitExistingAfterSale,
-				ReasonText:       "当前订单已经有售后单在处理中，不建议重复发起。",
-				ConstraintText:   "重复提交可能导致客服判断分散。",
-				NextStepText:     "建议等待当前售后单处理进展，必要时转人工跟进。",
-			},
-			[]SuggestedAction{{
-				ActionCode: actionCodeWaitForUpdate,
-				Label:      "等待进展",
-				Enabled:    true,
-			}, {
-				ActionCode: actionCodeEscalateToHuman,
-				Label:      "转人工",
-				Enabled:    true,
-			}},
-			"当前订单已经有售后处理记录，我建议先等待现有售后结果，避免重复提交。"
+	outcome := NewAfterSaleRuleEngine(nil).Evaluate(AfterSaleRuleContext{
+		TaskCode:    taskCode,
+		ProblemType: inferProblemType("", taskCode),
+		Snapshot:    snapshot,
+	})
+	return outcome.DecisionCard, outcome.SuggestedActions, outcome.ReplyText
+}
+
+func summarizeDecisionCard(card *AfterSaleDecisionCard, fallback string) string {
+	if card == nil {
+		return strings.TrimSpace(fallback)
 	}
-	// 未发货场景优先建议直接退款，这是电商售后最稳定的决策路径。
-	if strings.EqualFold(strings.TrimSpace(snapshot.FulfillmentStatus), "UNSHIPPED") || strings.EqualFold(strings.TrimSpace(snapshot.LogisticsStatus), "NOT_SHIPPED") {
-		return &AfterSaleDecisionCard{
-				DecisionPathCode: decisionPathRefundOnly,
-				ReasonText:       "订单尚未发货，当前更适合直接申请退款。",
-				ConstraintText:   "未发货阶段通常不需要先走退货流程。",
-				NextStepText:     "优先发起退款；如果商家长时间未处理，可再考虑转人工。",
-			},
-			[]SuggestedAction{{
-				ActionCode: actionCodeRequestRefund,
-				Label:      "申请退款",
-				Enabled:    true,
-			}, {
-				ActionCode: actionCodeEscalateToHuman,
-				Label:      "转人工",
-				Enabled:    true,
-			}},
-			"根据当前订单事实，这个订单还没有发货，更适合直接申请退款。"
+	if strings.TrimSpace(card.ReasonText) != "" {
+		return strings.TrimSpace(card.ReasonText)
 	}
-	// 已发货或已签收场景，优先建议退货退款或换货。
-	return &AfterSaleDecisionCard{
-			DecisionPathCode: decisionPathReturnRefundOrExchange,
-			ReasonText:       "订单已发货或已进入履约阶段，更适合走退货退款或换货。",
-			ConstraintText:   "如果物流仍在途中，部分动作可能需要等待签收或拒收节点。",
-			NextStepText:     "先确认商品状态和物流节点，再选择退货退款或换货。",
-		},
-		[]SuggestedAction{{
-			ActionCode: actionCodeRequestReturn,
-			Label:      "退货退款",
-			Enabled:    taskCode == taskCodeRefundDecision,
-			ReasonIfDisabled: "当前问题更偏向物流或订单进度，建议先补充场景再决定动作。",
-		}, {
-			ActionCode: actionCodeRequestExchange,
-			Label:      "申请换货",
-			Enabled:    true,
-		}},
-		"这个订单已经进入履约阶段，我更建议你根据商品状态选择退货退款或换货。"
+	return strings.TrimSpace(fallback)
+}
+
+func applyUnresolvedTurnEscalation(session TaskSessionState, reply ReplyPayload) (TaskSessionState, ReplyPayload) {
+	if session.UnresolvedTurnCount < defaultUnresolvedThreshold || reply.HandoffRecommended {
+		return session, reply
+	}
+
+	session.HandoffRecommended = true
+	if strings.TrimSpace(session.EscalationReasonCode) == "" {
+		session.EscalationReasonCode = escalationReasonHighRiskCase
+	}
+	reply.HandoffRecommended = true
+	reply.HandoffReasonCode = session.EscalationReasonCode
+	reply.SuggestedActions = append(reply.SuggestedActions, SuggestedAction{
+		ActionCode: actionCodeEscalateToHuman,
+		Label:      "转人工",
+		Enabled:    true,
+	})
+	return session, reply
 }
 
 func summarizeOrderSnapshot(snapshot *OrderSnapshot) string {

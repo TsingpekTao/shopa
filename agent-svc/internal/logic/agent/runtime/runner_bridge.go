@@ -50,6 +50,7 @@ func (r *einoRunner) assistantGenerateAnswer(ctx context.Context, state *runStat
 		PreviousSession: state.TaskSession,
 		Security:        state.Security,
 		OrderRepository: r.orderRepository,
+		RuleEngine:      r.ruleEngine,
 	})
 	// 如果新的任务规划失败，就继续向上抛出统一错误。
 	if err != nil {
