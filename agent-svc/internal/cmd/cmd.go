@@ -19,6 +19,8 @@ var (
 		Usage: "main",
 		Brief: "start agent grpc/http server",
 		Func: func(ctx context.Context, parser *gcmd.Parser) (err error) {
+			bootstrapConfig(ctx)
+
 			go func() {
 				cfg := grpcx.Server.NewConfig()
 				cfg.Options = append(cfg.Options, []grpc.ServerOption{
