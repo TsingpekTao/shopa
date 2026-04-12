@@ -40,13 +40,18 @@ const (
 type CheckpointHook func(ctx context.Context, cp GraphCheckpointSnapshot) error
 
 type RunInput struct {
-	SecurityPrompt string
-	SceneCode      string
-	Summary        string
-	Messages       []*schema.Message
-	UserQuery      string
-	RequestID      string
-	CheckpointHook CheckpointHook
+	SecurityPrompt  string
+	SceneCode       string
+	Summary         string
+	Messages        []*schema.Message
+	UserQuery       string
+	RequestID       string
+	Message         UserMessage
+	HiddenAction    HiddenAction
+	PreviousSession TaskSessionState
+	Conversation    ConversationAnchors
+	Security        SecurityContext
+	CheckpointHook  CheckpointHook
 }
 
 type RunOutput struct {
@@ -67,6 +72,8 @@ type RunOutput struct {
 	SelectedToolName    string
 	SelectedAdapterCode string
 	SelectedToolScope   string
+	ReplyPayload        ReplyPayload
+	TaskSession         TaskSessionState
 }
 
 type AnswerSource struct {
@@ -94,36 +101,55 @@ type Runner interface {
 	HandoffSummary(ctx context.Context, summary string, recent []*schema.Message, reasonCode string) (string, error)
 }
 
+type RunnerOptions struct {
+	OrderRepository           OrderSnapshotRepository
+	PolicyKnowledgeRepository PolicyKnowledgeRepository
+	ProductSearchRepository   ProductSearchRepository
+	RuleEngine                AfterSaleRuleEngine
+	ModelClient               ModelClient
+}
+
 type einoRunner struct {
-	runFlow  compose.Runnable[*runState, *runState]
-	adapters *AdapterRegistry
+	runFlow                   compose.Runnable[*runState, *runState]
+	adapters                  *AdapterRegistry
+	orderRepository           OrderSnapshotRepository
+	policyKnowledgeRepository PolicyKnowledgeRepository
+	productSearchRepository   ProductSearchRepository
+	ruleEngine                AfterSaleRuleEngine
+	modelClient               ModelClient
 }
 
 type runState struct {
-	Input             RunInput        `json:"-"`
-	SecurityPrompt    string          `json:"security_prompt"`
-	SceneCode         string          `json:"scene_code"`
-	Summary           string          `json:"summary"`
-	UserQuery         string          `json:"user_query"`
-	NormalizedQuery   string          `json:"normalized_query"`
-	RecentMessages    []messageDigest `json:"recent_messages,omitempty"`
-	IntentCode        string          `json:"intent_code"`
-	NeedKnowledge     bool            `json:"need_knowledge"`
-	NeedTool          bool            `json:"need_tool"`
-	SelectedToolName  string          `json:"selected_tool_name,omitempty"`
-	SelectedAdapter   string          `json:"selected_adapter_code,omitempty"`
-	SelectedScopeCode string          `json:"selected_tool_scope_code,omitempty"`
-	ToolTimeoutAt     *time.Time      `json:"tool_wait_timeout_at,omitempty"`
-	ToolResult        toolResult      `json:"tool_result"`
-	CurrentNodeCode   string          `json:"current_node_code"`
-	RunStatusCode     string          `json:"run_status_code"`
-	RiskDecisionCode  string          `json:"risk_decision_code"`
-	PromptInjection   bool            `json:"prompt_injection"`
-	QueueBlocked      bool            `json:"queue_blocked"`
-	QueueHintMessage  string          `json:"queue_hint_message,omitempty"`
-	DegradedReason    string          `json:"degraded_reason_code,omitempty"`
-	AnswerText        string          `json:"answer_text,omitempty"`
-	AnswerSources     []AnswerSource  `json:"answer_sources,omitempty"`
+	Input             RunInput            `json:"-"`
+	SecurityPrompt    string              `json:"security_prompt"`
+	SceneCode         string              `json:"scene_code"`
+	Summary           string              `json:"summary"`
+	UserQuery         string              `json:"user_query"`
+	NormalizedQuery   string              `json:"normalized_query"`
+	Message           UserMessage         `json:"message"`
+	TaskSession       TaskSessionState    `json:"task_session"`
+	ReplyPayload      ReplyPayload        `json:"reply_payload"`
+	GuardResultCode   string              `json:"guard_result_code,omitempty"`
+	Conversation      ConversationAnchors `json:"conversation"`
+	Security          SecurityContext     `json:"security"`
+	RecentMessages    []messageDigest     `json:"recent_messages,omitempty"`
+	IntentCode        string              `json:"intent_code"`
+	NeedKnowledge     bool                `json:"need_knowledge"`
+	NeedTool          bool                `json:"need_tool"`
+	SelectedToolName  string              `json:"selected_tool_name,omitempty"`
+	SelectedAdapter   string              `json:"selected_adapter_code,omitempty"`
+	SelectedScopeCode string              `json:"selected_tool_scope_code,omitempty"`
+	ToolTimeoutAt     *time.Time          `json:"tool_wait_timeout_at,omitempty"`
+	ToolResult        toolResult          `json:"tool_result"`
+	CurrentNodeCode   string              `json:"current_node_code"`
+	RunStatusCode     string              `json:"run_status_code"`
+	RiskDecisionCode  string              `json:"risk_decision_code"`
+	PromptInjection   bool                `json:"prompt_injection"`
+	QueueBlocked      bool                `json:"queue_blocked"`
+	QueueHintMessage  string              `json:"queue_hint_message,omitempty"`
+	DegradedReason    string              `json:"degraded_reason_code,omitempty"`
+	AnswerText        string              `json:"answer_text,omitempty"`
+	AnswerSources     []AnswerSource      `json:"answer_sources,omitempty"`
 }
 
 type messageDigest struct {
@@ -143,7 +169,8 @@ type toolResult struct {
 func NewRunner() Runner {
 	// 执行当前业务语句，把本步骤产出的状态或数据继续传递给后续流程。
 	r := &einoRunner{
-		adapters: newDefaultAdapterRegistry(),
+		adapters:   newDefaultAdapterRegistry(),
+		ruleEngine: NewAfterSaleRuleEngine(nil),
 	}
 	// 执行当前业务语句，把本步骤产出的状态或数据继续传递给后续流程。
 	if err := r.init(); err != nil {
@@ -151,6 +178,27 @@ func NewRunner() Runner {
 		panic(err)
 	}
 	// 在当前分支完成收口并返回结果，避免后续逻辑继续执行造成状态污染。
+	return r
+}
+
+func NewRunnerWithOptions(opts RunnerOptions) Runner {
+	// 初始化带依赖注入的 Runner，让测试和生产都能挂上不同的订单查询实现。
+	r := &einoRunner{
+		adapters:                  newDefaultAdapterRegistry(),
+		orderRepository:           opts.OrderRepository,
+		policyKnowledgeRepository: opts.PolicyKnowledgeRepository,
+		productSearchRepository:   opts.ProductSearchRepository,
+		ruleEngine:                opts.RuleEngine,
+		modelClient:               opts.ModelClient,
+	}
+	if r.ruleEngine == nil {
+		r.ruleEngine = NewAfterSaleRuleEngine(nil)
+	}
+	// 如果运行图初始化失败，就在启动阶段直接暴露问题而不是带病运行。
+	if err := r.init(); err != nil {
+		panic(err)
+	}
+	// 返回完成初始化的 Runner 实例，供上层业务流程复用。
 	return r
 }
 
@@ -164,7 +212,7 @@ func (r *einoRunner) init() error {
 	// 把当前处理节点接入 Eino 图中，明确每一步执行顺序和职责边界。
 	chain.AppendLambda(compose.InvokableLambda(r.loadSummary), compose.WithNodeKey(nodeLoadSummary))
 	// 把当前处理节点接入 Eino 图中，明确每一步执行顺序和职责边界。
-	chain.AppendLambda(compose.InvokableLambda(r.intentRouter), compose.WithNodeKey(nodeIntentRouter))
+	chain.AppendLambda(compose.InvokableLambda(r.assistantIntentRouter), compose.WithNodeKey(nodeIntentRouter))
 	// 把当前处理节点接入 Eino 图中，明确每一步执行顺序和职责边界。
 	chain.AppendLambda(compose.InvokableLambda(r.knowledgeRetriever), compose.WithNodeKey(nodeKnowledgeRetriever))
 	// 把当前处理节点接入 Eino 图中，明确每一步执行顺序和职责边界。
@@ -172,7 +220,7 @@ func (r *einoRunner) init() error {
 	// 把当前处理节点接入 Eino 图中，明确每一步执行顺序和职责边界。
 	chain.AppendLambda(compose.InvokableLambda(r.callMcpTool), compose.WithNodeKey(nodeCallMcpTool))
 	// 把当前处理节点接入 Eino 图中，明确每一步执行顺序和职责边界。
-	chain.AppendLambda(compose.InvokableLambda(r.generateAnswer), compose.WithNodeKey(nodeGenerateAnswer))
+	chain.AppendLambda(compose.InvokableLambda(r.assistantGenerateAnswer), compose.WithNodeKey(nodeGenerateAnswer))
 	// 把当前处理节点接入 Eino 图中，明确每一步执行顺序和职责边界。
 	chain.AppendLambda(compose.InvokableLambda(r.persistCheckpoint), compose.WithNodeKey(nodePersistCheckpoint))
 
@@ -203,13 +251,21 @@ func (r *einoRunner) Run(ctx context.Context, in RunInput) (*RunOutput, error) {
 		Summary:          strings.TrimSpace(in.Summary),
 		UserQuery:        strings.TrimSpace(in.UserQuery),
 		NormalizedQuery:  strings.ToLower(strings.TrimSpace(in.UserQuery)),
+		Message:          in.Message,
+		TaskSession:      copyTaskSession(in.PreviousSession),
+		Conversation:     in.Conversation,
+		Security:         in.Security,
 		RunStatusCode:    runStatusPending,
 		RiskDecisionCode: "PASS",
 		ToolResult: toolResult{
 			Status: toolResultUnspecified,
 		},
 	}
+	state.TaskSession = applyHiddenActionToTaskSession(state.TaskSession, in.HiddenAction)
 	// 执行当前业务语句，把本步骤产出的状态或数据继续传递给后续流程。
+	if strings.TrimSpace(state.Message.ContentText) == "" {
+		state.Message.ContentText = state.UserQuery
+	}
 	outState, err := r.runFlow.Invoke(ctx, state)
 	// 如果上一步已经出现错误，这里立即中断并向上返回，避免带着脏状态继续推进链路。
 	if err != nil {
@@ -237,6 +293,8 @@ func (r *einoRunner) Run(ctx context.Context, in RunInput) (*RunOutput, error) {
 		SelectedToolName:    outState.SelectedToolName,
 		SelectedAdapterCode: outState.SelectedAdapter,
 		SelectedToolScope:   outState.SelectedScopeCode,
+		ReplyPayload:        outState.ReplyPayload,
+		TaskSession:         outState.TaskSession,
 	}
 	// 在当前分支完成收口并返回结果，避免后续逻辑继续执行造成状态污染。
 	return output, nil
