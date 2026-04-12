@@ -50,6 +50,6 @@ export const mallMessages: MessageDict = {
   footer_open_store: { "zh-CN": "免费开店", "en-US": "Open Store" },
   footer_copy: { "zh-CN": "© 2026 Shopa Marketplace. All rights reserved.", "en-US": "© 2026 Shopa Marketplace. All rights reserved." },
 
-  notify_partial: { "zh-CN": "部分数据已降级", "en-US": "Partial data returned" },
-  notify_degraded_fields: { "zh-CN": "降级字段: {fields}", "en-US": "Degraded fields: {fields}" }
+  notify_partial: { "zh-CN": "部分信息暂未同步，请稍后刷新", "en-US": "Some details are still updating. Please refresh shortly." },
+  notify_degraded_fields: { "zh-CN": "以下信息稍后补充：{fields}", "en-US": "These details will update shortly: {fields}" }
 };

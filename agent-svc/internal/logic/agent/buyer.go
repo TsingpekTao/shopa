@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	agentv1 "github.com/TsingpekTao/shopa/agent-svc/api/v1"
 	"github.com/TsingpekTao/shopa/agent-svc/internal/dao"
@@ -30,6 +31,8 @@ func (s *sAgent) CreateOrGetAssistantConversation(ctx context.Context, req *agen
 		// 把当前错误继续向上返回，让调用方通过统一错误链路感知失败原因。
 		return nil, err
 	}
+	persistenceCtx, cancel := context.WithTimeout(conversationPersistenceContext(ctx), 5*time.Second)
+	defer cancel()
 	// 先清洗字符串输入中的空白字符，避免参数脏值影响后续状态判断、查询或落库。
 	sceneCode := strings.ToUpper(strings.TrimSpace(req.GetSceneCode()))
 	// 执行当前业务语句，把本步骤产出的状态或数据继续传递给后续流程。
@@ -47,7 +50,7 @@ func (s *sAgent) CreateOrGetAssistantConversation(ctx context.Context, req *agen
 	// 执行当前业务语句，把本步骤产出的状态或数据继续传递给后续流程。
 	if !req.GetForceNew() {
 		// 优先按场景和锚点查找历史会话，复用既有上下文以满足场景续接策略。
-		existing, err := s.findConversation(ctx, userID, sceneCode, req.GetShopNo(), req.GetOrderNo(), req.GetSubOrderNo(), req.GetAnchorSpuNo(), req.GetAnchorSkuNo())
+		existing, err := s.findConversation(persistenceCtx, userID, sceneCode, req.GetShopNo(), req.GetOrderNo(), req.GetSubOrderNo(), req.GetAnchorSpuNo(), req.GetAnchorSkuNo())
 		// 如果上一步已经出现错误，这里立即中断并向上返回，避免带着脏状态继续推进链路。
 		if err != nil {
 			// 把当前错误继续向上返回，让调用方通过统一错误链路感知失败原因。
@@ -56,7 +59,7 @@ func (s *sAgent) CreateOrGetAssistantConversation(ctx context.Context, req *agen
 		// 执行当前业务语句，把本步骤产出的状态或数据继续传递给后续流程。
 		if existing != nil {
 			// 读取当前会话最近一次 Run，便于复用状态、判断 turn_no 或回传最新执行结果。
-			latestRun, _ := s.getLatestRun(ctx, existing.ConversationNo)
+			latestRun, _ := s.getLatestRun(persistenceCtx, existing.ConversationNo)
 			// 把内部实体或运行态结构转换成对外协议对象，保证对外契约稳定且隔离内部实现。
 			return &agentv1.CreateOrGetAssistantConversationRes{Conversation: toProtoConversation(existing), LatestRun: toProtoRun(latestRun)}, nil
 		}
@@ -66,7 +69,7 @@ func (s *sAgent) CreateOrGetAssistantConversation(ctx context.Context, req *agen
 	// 记录当前业务时间，确保状态流转、排序展示和审计字段使用同一时间基线。
 	now := gtime.Now()
 	// 执行当前业务语句，把本步骤产出的状态或数据继续传递给后续流程。
-	_, err = dao.AgentConversation.Ctx(ctx).Data(do.AgentConversation{
+	_, err = dao.AgentConversation.Ctx(persistenceCtx).Data(do.AgentConversation{
 		ConversationNo:         conversationNo,
 		UserId:                 userID,
 		BotCode:                botCode,
@@ -86,7 +89,7 @@ func (s *sAgent) CreateOrGetAssistantConversation(ctx context.Context, req *agen
 		return nil, gerror.Wrap(err, "create assistant conversation failed")
 	}
 	// 按会话号读取当前会话真相源，避免后续逻辑基于过期内存状态继续执行。
-	conv, err := s.getConversationByNo(ctx, conversationNo)
+	conv, err := s.getConversationByNo(persistenceCtx, conversationNo)
 	// 如果上一步已经出现错误，这里立即中断并向上返回，避免带着脏状态继续推进链路。
 	if err != nil {
 		// 把当前错误继续向上返回，让调用方通过统一错误链路感知失败原因。
@@ -145,6 +148,8 @@ func (s *sAgent) SendAssistantMessage(ctx context.Context, req *agentv1.SendAssi
 	}
 	// 记录当前业务时间，确保状态流转、排序展示和审计字段使用同一时间基线。
 	now := gtime.Now()
+	// 先把显式 hidden_action 合并回 ext_json，保证消息落库后仍能被运行时和历史重放读取。
+	mergedExtJSON := mergeHiddenActionIntoExtJSON(req.GetExtJson(), extractHiddenAction(req))
 	// 生成业务唯一编号，作为后续跨表关联、审计追踪和幂等定位的稳定主键。
 	messageNo := generateBizNo("AMSG")
 	// 执行当前业务语句，把本步骤产出的状态或数据继续传递给后续流程。
@@ -156,7 +161,7 @@ func (s *sAgent) SendAssistantMessage(ctx context.Context, req *agentv1.SendAssi
 		ClientMessageNo: clientMessageNo,
 		ContentText:     strings.TrimSpace(req.GetContentText()),
 		AssetIdsJson:    mustJSON(req.GetAssetIds()),
-		ExtJson:         normalizeJSON(req.GetExtJson()),
+		ExtJson:         mergedExtJSON,
 		SentAt:          now,
 	}).Insert()
 	// 如果上一步已经出现错误，这里立即中断并向上返回，避免带着脏状态继续推进链路。
@@ -291,20 +296,7 @@ func (s *sAgent) GetAssistantRunStatus(ctx context.Context, req *agentv1.GetAssi
 	// 读取当前 Run 或会话下最近一条客服回复，便于前端刷新最终展示内容。
 	latestMsg, _ := s.getLatestAssistantMessage(ctx, conv.ConversationNo, run)
 	// 组装当前步骤的响应结构，把内部结果转换成稳定的对外返回格式。
-	return &agentv1.GetAssistantRunStatusRes{
-		Conversation:           toProtoConversation(conv),
-		Run:                    toProtoRun(run),
-		LatestAssistantMessage: toProtoMessage(latestMsg),
-		AnswerSources:          parseAnswerSources(run),
-		PendingMessageCount:    conv.PendingMessageCount,
-		CurrentNodeCode:        run.CurrentNodeCode,
-		QueueBlocked:           run.QueueBlocked == 1,
-		QueueHintMessage:       run.QueueHintMessage,
-		DegradedReply:          strings.TrimSpace(run.DegradedReasonCode) != "",
-		DegradedReasonCode:     run.DegradedReasonCode,
-		Checkpoint:             toProtoCheckpoint(run),
-		ReplyPayload:           parseReplyPayload(run),
-	}, nil
+	return buildAssistantRunStatusResponse(conv, run, latestMsg), nil
 }
 
 func (s *sAgent) ListAssistantMessages(ctx context.Context, req *agentv1.ListAssistantMessagesReq) (*agentv1.ListAssistantMessagesRes, error) {

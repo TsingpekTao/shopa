@@ -4,3 +4,4 @@ __asar_full/
 __asar_tmp/
 app.fast.asar
 *.asar.bak
+.worktrees/

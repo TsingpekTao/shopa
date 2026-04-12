@@ -43,34 +43,20 @@ func (r *einoRunner) assistantGenerateAnswer(ctx context.Context, state *runStat
 		state.RunStatusCode = runStatusSuccess
 		return state, state.emitCheckpoint(ctx)
 	}
-	// 走新的售后任务规划逻辑，把多轮任务会话和结构化回复一次性算出来。
-	planned, err := planAfterSaleTurn(ctx, AfterSaleTurnInput{
-		Message:         state.Message,
-		Conversation:    state.Conversation,
-		PreviousSession: state.TaskSession,
-		Security:        state.Security,
-		OrderRepository: r.orderRepository,
-		RuleEngine:      r.ruleEngine,
-	})
-	// 如果新的任务规划失败，就继续向上抛出统一错误。
+	replyPayload, taskSession, err := r.generateOfficialReply(ctx, state)
 	if err != nil {
 		return nil, err
 	}
-	// 把规划后的会话状态回写到运行时，供 graph_state_json 和上层状态查询复用。
-	state.TaskSession = planned.Session
-	// 把结构化回复载荷写回运行时，供 SendAssistantMessage/GetAssistantRunStatus 返回。
-	state.ReplyPayload = planned.Reply
-	// 让历史字符串字段继续与结构化回复保持一致，兼容旧调用点。
-	state.AnswerText = planned.Reply.ReplyText
-	state.IntentCode = planned.Reply.IntentCode
-	state.GuardResultCode = planned.Reply.GuardResultCode
-	// 如果本轮建议转人工，就把运行状态标记为正式升级出口。
-	if planned.Reply.HandoffRecommended {
+	taskSession = finalizeTaskSessionState(state.TaskSession, taskSession, state.Security.ConversationNo)
+	state.TaskSession = taskSession
+	state.ReplyPayload = *replyPayload
+	state.AnswerText = replyPayload.ReplyText
+	state.IntentCode = replyPayload.IntentCode
+	state.GuardResultCode = replyPayload.GuardResultCode
+	if replyPayload.HandoffRecommended {
 		state.RunStatusCode = runStatusEscalated
 	} else {
-		// 其余正常完成的情况都落为成功状态。
 		state.RunStatusCode = runStatusSuccess
 	}
-	// 返回带结构化 payload 的新状态，并落最终检查点。
 	return state, state.emitCheckpoint(ctx)
 }

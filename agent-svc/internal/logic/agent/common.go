@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -61,20 +63,37 @@ type sAgent struct {
 func New() *sAgent {
 	// 执行当前业务语句，把本步骤产出的状态或数据继续传递给后续流程。
 	svc := &sAgent{runner: agentruntime.NewRunnerWithOptions(agentruntime.RunnerOptions{
-		OrderRepository: newBuyerOrderSnapshotHTTPRepository(func() string {
-			for _, key := range []string{"upstream.orderHttp", "services.orderHttp"} {
-				value, err := g.Cfg().Get(context.Background(), key, "")
-				if err == nil && value != nil && strings.TrimSpace(value.String()) != "" {
-					return value.String()
-				}
-			}
-			return ""
-		}(), nil),
+		OrderRepository:           newBuyerOrderSnapshotHTTPRepository(resolveConfigString("upstream.orderHttp", "services.orderHttp"), nil),
+		PolicyKnowledgeRepository: newPolicyKnowledgeRepository(),
+		ProductSearchRepository:   newBuyerProductSearchHTTPRepository(resolveConfigString("upstream.searchHttp", "services.searchHttp"), nil),
+		ModelClient: agentruntime.NewOpenAICompatibleModelClient(
+			g.Cfg().MustGet(context.Background(), "agent.model.baseUrl", "").String(),
+			g.Cfg().MustGet(context.Background(), "agent.model.apiKey", "").String(),
+			resolveAgentModelName(),
+			nil,
+		),
 	})}
 	// 启动后台维护协程，定期清理卡死 Run，避免僵尸执行长期占据会话状态。
 	svc.startRuntimeMaintenance()
 	// 在当前分支完成收口并返回结果，避免后续逻辑继续执行造成状态污染。
 	return svc
+}
+func resolveConfigString(keys ...string) string {
+	for _, key := range keys {
+		value, err := g.Cfg().Get(context.Background(), key, "")
+		if err == nil && value != nil && strings.TrimSpace(value.String()) != "" {
+			return value.String()
+		}
+	}
+	return ""
+}
+
+func resolveAgentModelName() string {
+	provider := strings.ToLower(strings.TrimSpace(g.Cfg().MustGet(context.Background(), "agent.model.provider", "stub").String()))
+	if provider == "" || provider == "stub" {
+		return ""
+	}
+	return strings.TrimSpace(g.Cfg().MustGet(context.Background(), "agent.model.model", "").String())
 }
 
 func init() {
@@ -137,6 +156,17 @@ func (s *sAgent) processRun(ctx context.Context, conv *entity.AgentConversation,
 			MessageTypeCode: strings.TrimSpace(userMsg.MessageTypeCode),
 			AssetIDs:        parseUint64Slice(userMsg.AssetIdsJson),
 		},
+		HiddenAction: func() agentruntime.HiddenAction {
+			action := extractHiddenActionFromJSON(userMsg.ExtJson)
+			if action == nil {
+				return agentruntime.HiddenAction{}
+			}
+			return agentruntime.HiddenAction{
+				Type:  action.Type,
+				Key:   action.Key,
+				Value: action.Value,
+			}
+		}(),
 		PreviousSession: previousSession,
 		Conversation: agentruntime.ConversationAnchors{
 			OrderNo:    strings.TrimSpace(conv.OrderNo),
@@ -173,17 +203,18 @@ func (s *sAgent) processRun(ctx context.Context, conv *entity.AgentConversation,
 	// 生成业务唯一编号，作为后续跨表关联、审计追踪和幂等定位的稳定主键。
 	assistantMessageNo := generateBizNo("AMSG")
 	// 执行当前业务语句，把本步骤产出的状态或数据继续传递给后续流程。
-	_, err = dao.AgentMessage.Ctx(ctx).Data(do.AgentMessage{
-		MessageNo:       assistantMessageNo,
-		ConversationNo:  conv.ConversationNo,
-		RunNo:           run.RunNo,
-		ReplyToTurnNo:   run.TurnNo,
-		SenderTypeCode:  "AGENT",
-		MessageTypeCode: "TEXT",
-		ContentText:     out.AnswerText,
-		Interrupted:     boolToInt(out.PromptInjection),
-		SentAt:          now,
-	}).Insert()
+	_, err = dao.AgentMessage.Ctx(ctx).Data(buildInternalMessageDO(
+		assistantMessageNo,
+		conv.ConversationNo,
+		run.RunNo,
+		run.TurnNo,
+		"AGENT",
+		"TEXT",
+		out.AnswerText,
+		"",
+		boolToInt(out.PromptInjection),
+		now,
+	)).Insert()
 	// 如果上一步已经出现错误，这里立即中断并向上返回，避免带着脏状态继续推进链路。
 	if err != nil {
 		// 把当前错误继续向上返回，让调用方通过统一错误链路感知失败原因。
@@ -317,7 +348,7 @@ func (s *sAgent) findConversation(ctx context.Context, userID uint64, sceneCode,
 		Limit(1).
 		Scan(&row)
 	// 如果上一步已经出现错误，这里立即中断并向上返回，避免带着脏状态继续推进链路。
-	if err != nil {
+	if err = normalizeOptionalQueryError(err); err != nil {
 		// 把当前错误继续向上返回，让调用方通过统一错误链路感知失败原因。
 		return nil, gerror.Wrap(err, "query assistant conversation failed")
 	}
@@ -334,9 +365,12 @@ func (s *sAgent) getConversationByNo(ctx context.Context, conversationNo string)
 	// 先集中声明这一段流程会复用的变量，便于后续按顺序填充和统一收口。
 	var row entity.AgentConversation
 	// 从数据库读取最新真相源，避免后续逻辑继续依赖过期内存快照。
-	if err := dao.AgentConversation.Ctx(ctx).Where(dao.AgentConversation.Columns().ConversationNo, conversationNo).Scan(&row); err != nil {
+	if err := normalizeRequiredQueryError(
+		dao.AgentConversation.Ctx(ctx).Where(dao.AgentConversation.Columns().ConversationNo, conversationNo).Scan(&row),
+		"conversation not found",
+	); err != nil {
 		// 把当前错误继续向上返回，让调用方通过统一错误链路感知失败原因。
-		return nil, gerror.Wrap(err, "query conversation failed")
+		return nil, err
 	}
 	// 执行当前业务语句，把本步骤产出的状态或数据继续传递给后续流程。
 	if row.Id == 0 {
@@ -351,7 +385,9 @@ func (s *sAgent) getLatestRun(ctx context.Context, conversationNo string) (*enti
 	// 先集中声明这一段流程会复用的变量，便于后续按顺序填充和统一收口。
 	var row entity.AgentRun
 	// 从数据库读取最新真相源，避免后续逻辑继续依赖过期内存快照。
-	if err := dao.AgentRun.Ctx(ctx).Where(dao.AgentRun.Columns().ConversationNo, conversationNo).OrderDesc(dao.AgentRun.Columns().Id).Limit(1).Scan(&row); err != nil {
+	if err := normalizeOptionalQueryError(
+		dao.AgentRun.Ctx(ctx).Where(dao.AgentRun.Columns().ConversationNo, conversationNo).OrderDesc(dao.AgentRun.Columns().Id).Limit(1).Scan(&row),
+	); err != nil {
 		// 把当前错误继续向上返回，让调用方通过统一错误链路感知失败原因。
 		return nil, gerror.Wrap(err, "query latest run failed")
 	}
@@ -370,32 +406,44 @@ func (s *sAgent) getPreviousRun(ctx context.Context, currentRun *entity.AgentRun
 		return nil, nil
 	}
 	// 先集中声明查询结果变量，便于统一做空值判断和收口。
-	var row entity.AgentRun
-	// 按当前 Run 的主键回溯上一条同会话运行记录，供多轮任务会话复用。
-	if err := dao.AgentRun.Ctx(ctx).
+	var rows []entity.AgentRun
+	// 按当前 Run 的主键回溯最近几条同会话运行记录，优先挑出版本更新或状态更完整的任务会话。
+	if err := normalizeOptionalQueryError(dao.AgentRun.Ctx(ctx).
 		Where(dao.AgentRun.Columns().ConversationNo, currentRun.ConversationNo).
 		WhereLT(dao.AgentRun.Columns().Id, currentRun.Id).
 		OrderDesc(dao.AgentRun.Columns().Id).
-		Limit(1).
-		Scan(&row); err != nil {
+		Limit(5).
+		Scan(&rows)); err != nil {
 		// 查询失败时继续向上返回统一错误，避免拿不到上一轮状态却静默降级。
 		return nil, gerror.Wrap(err, "query previous run failed")
 	}
 	// 如果数据库里没有更早的 Run，就返回空值表示当前是首轮。
-	if row.Id == 0 {
+	if len(rows) == 0 {
 		return nil, nil
 	}
-	// 返回上一轮 Run 真相源，供当前轮恢复任务会话。
-	return &row, nil
+	bestIndex := 0
+	bestSession := resolveConversationTaskSession(rows[:1])
+	for idx := 1; idx < len(rows); idx++ {
+		candidateSession := resolveConversationTaskSession(rows[idx : idx+1])
+		if shouldPreferTaskSession(bestSession, rows[bestIndex].Id, candidateSession, rows[idx].Id) {
+			bestIndex = idx
+			bestSession = candidateSession
+		}
+	}
+	// 返回最适合恢复任务会话的上一轮 Run 真相源，降低并发请求导致的槽位覆盖风险。
+	return &rows[bestIndex], nil
 }
 
 func (s *sAgent) getRunByNo(ctx context.Context, runNo string) (*entity.AgentRun, error) {
 	// 先集中声明这一段流程会复用的变量，便于后续按顺序填充和统一收口。
 	var row entity.AgentRun
 	// 从数据库读取最新真相源，避免后续逻辑继续依赖过期内存快照。
-	if err := dao.AgentRun.Ctx(ctx).Where(dao.AgentRun.Columns().RunNo, runNo).Scan(&row); err != nil {
+	if err := normalizeRequiredQueryError(
+		dao.AgentRun.Ctx(ctx).Where(dao.AgentRun.Columns().RunNo, runNo).Scan(&row),
+		"run not found",
+	); err != nil {
 		// 把当前错误继续向上返回，让调用方通过统一错误链路感知失败原因。
-		return nil, gerror.Wrap(err, "query run failed")
+		return nil, err
 	}
 	// 执行当前业务语句，把本步骤产出的状态或数据继续传递给后续流程。
 	if row.Id == 0 {
@@ -417,7 +465,7 @@ func (s *sAgent) getLatestAssistantMessage(ctx context.Context, conversationNo s
 	// 先集中声明这一段流程会复用的变量，便于后续按顺序填充和统一收口。
 	var row entity.AgentMessage
 	// 从数据库读取最新真相源，避免后续逻辑继续依赖过期内存快照。
-	if err := model.OrderDesc(dao.AgentMessage.Columns().Id).Limit(1).Scan(&row); err != nil {
+	if err := normalizeOptionalQueryError(model.OrderDesc(dao.AgentMessage.Columns().Id).Limit(1).Scan(&row)); err != nil {
 		// 把当前错误继续向上返回，让调用方通过统一错误链路感知失败原因。
 		return nil, gerror.Wrap(err, "query latest assistant message failed")
 	}
@@ -434,9 +482,12 @@ func (s *sAgent) getLatestBuyerMessage(ctx context.Context, conversationNo strin
 	// 先集中声明这一段流程会复用的变量，便于后续按顺序填充和统一收口。
 	var row entity.AgentMessage
 	// 从数据库读取最新真相源，避免后续逻辑继续依赖过期内存快照。
-	if err := dao.AgentMessage.Ctx(ctx).Where(dao.AgentMessage.Columns().ConversationNo, conversationNo).Where(dao.AgentMessage.Columns().SenderTypeCode, "BUYER").OrderDesc(dao.AgentMessage.Columns().Id).Limit(1).Scan(&row); err != nil {
+	if err := normalizeRequiredQueryError(
+		dao.AgentMessage.Ctx(ctx).Where(dao.AgentMessage.Columns().ConversationNo, conversationNo).Where(dao.AgentMessage.Columns().SenderTypeCode, "BUYER").OrderDesc(dao.AgentMessage.Columns().Id).Limit(1).Scan(&row),
+		"buyer message not found",
+	); err != nil {
 		// 把当前错误继续向上返回，让调用方通过统一错误链路感知失败原因。
-		return nil, gerror.Wrap(err, "query latest buyer message failed")
+		return nil, err
 	}
 	// 执行当前业务语句，把本步骤产出的状态或数据继续传递给后续流程。
 	if row.Id == 0 {
@@ -456,7 +507,9 @@ func (s *sAgent) getMessageByClientNo(ctx context.Context, conversationNo, clien
 	// 先集中声明这一段流程会复用的变量，便于后续按顺序填充和统一收口。
 	var row entity.AgentMessage
 	// 从数据库读取最新真相源，避免后续逻辑继续依赖过期内存快照。
-	if err := dao.AgentMessage.Ctx(ctx).Where(dao.AgentMessage.Columns().ConversationNo, conversationNo).Where(dao.AgentMessage.Columns().ClientMessageNo, clientMessageNo).Scan(&row); err != nil {
+	if err := normalizeOptionalQueryError(
+		dao.AgentMessage.Ctx(ctx).Where(dao.AgentMessage.Columns().ConversationNo, conversationNo).Where(dao.AgentMessage.Columns().ClientMessageNo, clientMessageNo).Scan(&row),
+	); err != nil {
 		// 把当前错误继续向上返回，让调用方通过统一错误链路感知失败原因。
 		return nil, gerror.Wrap(err, "query message by client_message_no failed")
 	}
@@ -490,9 +543,12 @@ func (s *sAgent) getKnowledgeDocByNo(ctx context.Context, knowledgeDocNo string)
 	// 先集中声明这一段流程会复用的变量，便于后续按顺序填充和统一收口。
 	var row entity.AgentKnowledgeDoc
 	// 从数据库读取最新真相源，避免后续逻辑继续依赖过期内存快照。
-	if err := dao.AgentKnowledgeDoc.Ctx(ctx).Where(dao.AgentKnowledgeDoc.Columns().KnowledgeDocNo, knowledgeDocNo).Scan(&row); err != nil {
+	if err := normalizeRequiredQueryError(
+		dao.AgentKnowledgeDoc.Ctx(ctx).Where(dao.AgentKnowledgeDoc.Columns().KnowledgeDocNo, knowledgeDocNo).Scan(&row),
+		"knowledge doc not found",
+	); err != nil {
 		// 把当前错误继续向上返回，让调用方通过统一错误链路感知失败原因。
-		return nil, gerror.Wrap(err, "query knowledge doc failed")
+		return nil, err
 	}
 	// 执行当前业务语句，把本步骤产出的状态或数据继续传递给后续流程。
 	if row.Id == 0 {
@@ -570,8 +626,11 @@ func parseReplyPayload(run *entity.AgentRun) *agentv1.AssistantReplyPayload {
 	// 逐项复制卡片内容，避免直接暴露内部运行时结构。
 	for _, card := range payload.DataCards {
 		dataCards = append(dataCards, &agentv1.AssistantDataCard{
-			OrderSnapshotCard:     toProtoOrderSnapshotCard(card.OrderSnapshotCard),
-			AfterSaleDecisionCard: toProtoAfterSaleDecisionCard(card.AfterSaleDecisionCard),
+			OrderSnapshotCard:         toProtoOrderSnapshotCard(card.OrderSnapshotCard),
+			AfterSaleDecisionCard:     toProtoAfterSaleDecisionCard(card.AfterSaleDecisionCard),
+			OrderSelectionCard:        toProtoOrderSelectionCard(card.OrderSelectionCard),
+			LogisticsTrackingCard:     toProtoLogisticsTrackingCard(card.LogisticsTrackingCard),
+			ProductRecommendationCard: toProtoProductRecommendationCard(card.ProductRecommendationCard),
 		})
 	}
 	// 继续把建议动作映射成稳定的协议对象。
@@ -639,6 +698,71 @@ func toProtoAfterSaleDecisionCard(card *agentruntime.AfterSaleDecisionCard) *age
 		ConstraintText:   card.ConstraintText,
 		NextStepText:     card.NextStepText,
 		SceneCode:        card.SceneCode,
+	}
+}
+
+func toProtoOrderSelectionCard(card *agentruntime.OrderSelectionCard) *agentv1.OrderSelectionCard {
+	if card == nil {
+		return nil
+	}
+	candidates := make([]*agentv1.RecentOrderCandidate, 0, len(card.Candidates))
+	for _, candidate := range card.Candidates {
+		candidates = append(candidates, &agentv1.RecentOrderCandidate{
+			OrderNo:           candidate.OrderNo,
+			SubOrderNo:        candidate.SubOrderNo,
+			DisplayTitle:      candidate.DisplayTitle,
+			MainStatus:        candidate.MainStatus,
+			PaymentStatus:     candidate.PaymentStatus,
+			FulfillmentStatus: candidate.FulfillmentStatus,
+			LogisticsStatus:   candidate.LogisticsStatus,
+			AfterSaleStatus:   candidate.AfterSaleStatus,
+			LatestUpdateTime:  candidate.LatestUpdateTime,
+			SelectionHint:     candidate.SelectionHint,
+		})
+	}
+	return &agentv1.OrderSelectionCard{
+		TitleText:     card.TitleText,
+		HelperText:    card.HelperText,
+		OriginalQuery: card.OriginalQuery,
+		TaskCode:      card.TaskCode,
+		Candidates:    candidates,
+	}
+}
+
+func toProtoLogisticsTrackingCard(card *agentruntime.LogisticsTrackingCard) *agentv1.LogisticsTrackingCard {
+	if card == nil {
+		return nil
+	}
+	return &agentv1.LogisticsTrackingCard{
+		OrderNo:           card.OrderNo,
+		SubOrderNo:        card.SubOrderNo,
+		FulfillmentStatus: card.FulfillmentStatus,
+		LogisticsStatus:   card.LogisticsStatus,
+		LatestUpdateTime:  card.LatestUpdateTime,
+		LatestTraceText:   card.LatestTraceText,
+		TimelineSummary:   card.TimelineSummary,
+	}
+}
+
+func toProtoProductRecommendationCard(card *agentruntime.ProductRecommendationCard) *agentv1.ProductRecommendationCard {
+	if card == nil {
+		return nil
+	}
+	items := make([]*agentv1.ProductRecommendationItem, 0, len(card.Items))
+	for _, item := range card.Items {
+		items = append(items, &agentv1.ProductRecommendationItem{
+			SpuNo:      item.SpuNo,
+			Title:      item.Title,
+			CoverUrl:   item.CoverURL,
+			PriceText:  item.PriceText,
+			ShopName:   item.ShopName,
+			ReasonText: item.ReasonText,
+		})
+	}
+	return &agentv1.ProductRecommendationCard{
+		TitleText:  card.TitleText,
+		HelperText: card.HelperText,
+		Items:      items,
 	}
 }
 
@@ -809,6 +933,43 @@ func toProtoKnowledgeChunk(row *entity.AgentKnowledgeChunk) *agentv1.KnowledgeCh
 	}
 }
 
+func buildAssistantRunStatusResponse(conv *entity.AgentConversation, run *entity.AgentRun, latestMsg *entity.AgentMessage) *agentv1.GetAssistantRunStatusRes {
+	var (
+		currentNodeCode     string
+		pendingMessageCount uint64
+		queueBlocked        bool
+		queueHintMessage    string
+		degradedReply       bool
+		degradedReasonCode  string
+	)
+
+	if conv != nil {
+		pendingMessageCount = conv.PendingMessageCount
+	}
+	if run != nil {
+		currentNodeCode = run.CurrentNodeCode
+		queueBlocked = run.QueueBlocked == 1
+		queueHintMessage = run.QueueHintMessage
+		degradedReasonCode = run.DegradedReasonCode
+		degradedReply = strings.TrimSpace(run.DegradedReasonCode) != ""
+	}
+
+	return &agentv1.GetAssistantRunStatusRes{
+		Conversation:           toProtoConversation(conv),
+		Run:                    toProtoRun(run),
+		LatestAssistantMessage: toProtoMessage(latestMsg),
+		AnswerSources:          parseAnswerSources(run),
+		PendingMessageCount:    pendingMessageCount,
+		CurrentNodeCode:        currentNodeCode,
+		QueueBlocked:           queueBlocked,
+		QueueHintMessage:       queueHintMessage,
+		DegradedReply:          degradedReply,
+		DegradedReasonCode:     degradedReasonCode,
+		Checkpoint:             toProtoCheckpoint(run),
+		ReplyPayload:           parseReplyPayload(run),
+	}
+}
+
 func (s *sAgent) handleQueueBlockedMessage(ctx context.Context, conv *entity.AgentConversation, userMsg *entity.AgentMessage) (*entity.AgentMessage, error) {
 	// 执行当前业务语句，把本步骤产出的状态或数据继续传递给后续流程。
 	if conv == nil || userMsg == nil {
@@ -845,17 +1006,18 @@ func (s *sAgent) handleQueueBlockedMessage(ctx context.Context, conv *entity.Age
 	// 生成业务唯一编号，作为后续跨表关联、审计追踪和幂等定位的稳定主键。
 	systemMessageNo := generateBizNo("AMSG")
 	// 执行当前业务语句，把本步骤产出的状态或数据继续传递给后续流程。
-	_, err = dao.AgentMessage.Ctx(ctx).Data(do.AgentMessage{
-		MessageNo:       systemMessageNo,
-		ConversationNo:  conv.ConversationNo,
-		SenderTypeCode:  "SYSTEM",
-		MessageTypeCode: "QUEUE_NOTICE",
-		ContentText:     queueHint,
-		ExtJson:         normalizeJSON(`{"queue_blocked":true}`),
-		SentAt:          now,
-		CreatedAt:       now,
-		UpdatedAt:       now,
-	}).Insert()
+	_, err = dao.AgentMessage.Ctx(ctx).Data(buildInternalMessageDO(
+		systemMessageNo,
+		conv.ConversationNo,
+		"",
+		0,
+		"SYSTEM",
+		"QUEUE_NOTICE",
+		queueHint,
+		normalizeJSON(`{"queue_blocked":true}`),
+		0,
+		now,
+	)).Insert()
 	// 如果上一步已经出现错误，这里立即中断并向上返回，避免带着脏状态继续推进链路。
 	if err != nil {
 		// 把当前错误继续向上返回，让调用方通过统一错误链路感知失败原因。
@@ -1194,6 +1356,35 @@ func requestIDFromContext(ctx context.Context) string {
 	return generateBizNo("REQ")
 }
 
+func buildInternalMessageDO(
+	messageNo string,
+	conversationNo string,
+	runNo string,
+	replyToTurnNo uint64,
+	senderTypeCode string,
+	messageTypeCode string,
+	contentText string,
+	extJSON string,
+	interrupted int,
+	sentAt *gtime.Time,
+) do.AgentMessage {
+	return do.AgentMessage{
+		MessageNo:       messageNo,
+		ConversationNo:  conversationNo,
+		RunNo:           runNo,
+		ReplyToTurnNo:   replyToTurnNo,
+		SenderTypeCode:  senderTypeCode,
+		MessageTypeCode: messageTypeCode,
+		ClientMessageNo: messageNo,
+		ContentText:     contentText,
+		ExtJson:         normalizeJSON(extJSON),
+		Interrupted:     interrupted,
+		SentAt:          sentAt,
+		CreatedAt:       sentAt,
+		UpdatedAt:       sentAt,
+	}
+}
+
 func firstNonEmpty(values ...string) string {
 	// 遍历当前集合或循环条件，逐项推进本段业务处理并累计最终结果。
 	for _, value := range values {
@@ -1207,6 +1398,30 @@ func firstNonEmpty(values ...string) string {
 	}
 	// 在当前分支完成收口并返回结果，避免后续逻辑继续执行造成状态污染。
 	return ""
+}
+
+func conversationPersistenceContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return context.WithoutCancel(ctx)
+}
+
+func normalizeOptionalQueryError(err error) error {
+	if err == nil || errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	return err
+}
+
+func normalizeRequiredQueryError(err error, message string) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return gerror.NewCode(gcode.CodeNotFound, message)
+	}
+	return err
 }
 
 func toGTime(value *time.Time) *gtime.Time {

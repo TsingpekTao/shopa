@@ -19,9 +19,9 @@ type buyerOrderSnapshotHTTPRepository struct {
 }
 
 type buyerOrderDetailEnvelope struct {
-	Code    int                    `json:"code"`
-	Message string                 `json:"message"`
-	Data    map[string]any         `json:"data"`
+	Code    int            `json:"code"`
+	Message string         `json:"message"`
+	Data    map[string]any `json:"data"`
 }
 
 func newBuyerOrderSnapshotHTTPRepository(baseURL string, client *http.Client) *buyerOrderSnapshotHTTPRepository {
@@ -117,6 +117,98 @@ func (r *buyerOrderSnapshotHTTPRepository) QueryOrderSnapshot(ctx context.Contex
 	}, nil
 }
 
+func (r *buyerOrderSnapshotHTTPRepository) ListRecentOrders(ctx context.Context, filter agentruntime.RecentOrderListFilter) ([]agentruntime.RecentOrderCandidate, error) {
+	if r == nil || strings.TrimSpace(r.baseURL) == "" {
+		return nil, &agentruntime.OrderLookupError{Code: "DOWNSTREAM_UNAVAILABLE"}
+	}
+	if filter.UserID == 0 {
+		return nil, &agentruntime.OrderLookupError{Code: "INSUFFICIENT_CONTEXT"}
+	}
+
+	limit := filter.Limit
+	if limit == 0 {
+		limit = 5
+	}
+
+	endpoint := fmt.Sprintf("%s/v1/order/buyer/orders?page_size=%d", r.baseURL, limit)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, &agentruntime.OrderLookupError{Code: "DOWNSTREAM_UNAVAILABLE"}
+	}
+	req.Header.Set("X-User-Id", strconv.FormatUint(filter.UserID, 10))
+	if strings.TrimSpace(filter.RequestID) != "" {
+		req.Header.Set("X-Request-Id", strings.TrimSpace(filter.RequestID))
+	}
+	req.Header.Set("X-Service-Name", "agent-svc")
+
+	resp, err := r.client.Do(req)
+	if err != nil {
+		return nil, &agentruntime.OrderLookupError{Code: "DOWNSTREAM_UNAVAILABLE"}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return nil, &agentruntime.OrderLookupError{Code: "PERMISSION_DENIED"}
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		return nil, &agentruntime.OrderLookupError{Code: "DOWNSTREAM_UNAVAILABLE"}
+	}
+
+	var envelope buyerOrderDetailEnvelope
+	if err = json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return nil, &agentruntime.OrderLookupError{Code: "DOWNSTREAM_UNAVAILABLE"}
+	}
+	if envelope.Code != 0 && envelope.Code != 200 {
+		return nil, &agentruntime.OrderLookupError{Code: "DOWNSTREAM_UNAVAILABLE"}
+	}
+
+	orderList, ok := pickArray(envelope.Data, "orders", "list")
+	if !ok {
+		return nil, nil
+	}
+
+	candidates := make([]agentruntime.RecentOrderCandidate, 0, len(orderList))
+	for _, rawOrder := range orderList {
+		orderMap, mapOK := rawOrder.(map[string]any)
+		if !mapOK {
+			continue
+		}
+		orderNo := pickString(orderMap, "order_no", "orderNo")
+		if strings.TrimSpace(orderNo) == "" {
+			continue
+		}
+
+		candidate := agentruntime.RecentOrderCandidate{
+			OrderNo:          orderNo,
+			DisplayTitle:     extractRecentOrderTitle(orderMap),
+			MainStatus:       strings.ToUpper(pickString(orderMap, "order_status", "orderStatus", "main_status", "mainStatus")),
+			PaymentStatus:    strings.ToUpper(pickString(orderMap, "payment_status", "paymentStatus")),
+			LatestUpdateTime: pickString(orderMap, "updated_at", "updatedAt"),
+		}
+
+		snapshot, detailErr := r.QueryOrderSnapshot(ctx, agentruntime.OrderOwnershipFilter{
+			UserID:         filter.UserID,
+			ShopNo:         filter.ShopNo,
+			OrderNo:        orderNo,
+			RequestID:      filter.RequestID,
+			ConversationNo: filter.ConversationNo,
+			RunNo:          filter.RunNo,
+		})
+		if detailErr == nil && snapshot != nil {
+			candidate.SubOrderNo = snapshot.SubOrderNo
+			candidate.FulfillmentStatus = snapshot.FulfillmentStatus
+			candidate.LogisticsStatus = snapshot.LogisticsStatus
+			candidate.AfterSaleStatus = snapshot.AfterSaleStatus
+			if strings.TrimSpace(candidate.LatestUpdateTime) == "" {
+				candidate.LatestUpdateTime = snapshot.LatestUpdateTime
+			}
+		}
+
+		candidates = append(candidates, candidate)
+	}
+
+	return candidates, nil
+}
+
 func pickMap(source map[string]any, keys ...string) (map[string]any, bool) {
 	// 逐个尝试候选字段名，兼容 snake_case 和 camelCase。
 	for _, key := range keys {
@@ -128,6 +220,17 @@ func pickMap(source map[string]any, keys ...string) (map[string]any, bool) {
 		}
 	}
 	// 没找到可用 map 时返回失败。
+	return nil, false
+}
+
+func pickArray(source map[string]any, keys ...string) ([]any, bool) {
+	for _, key := range keys {
+		if raw, ok := source[key]; ok {
+			if typed, innerOK := raw.([]any); innerOK {
+				return typed, true
+			}
+		}
+	}
 	return nil, false
 }
 
@@ -167,4 +270,31 @@ func normalizeFulfillmentStatus(orderMap map[string]any) string {
 	default:
 		return ""
 	}
+}
+
+func extractRecentOrderTitle(orderMap map[string]any) string {
+	subOrders, ok := pickArray(orderMap, "sub_orders", "subOrders")
+	if ok {
+		for _, rawSubOrder := range subOrders {
+			subOrderMap, mapOK := rawSubOrder.(map[string]any)
+			if !mapOK {
+				continue
+			}
+			items, itemsOK := pickArray(subOrderMap, "items")
+			if !itemsOK {
+				continue
+			}
+			for _, rawItem := range items {
+				itemMap, itemOK := rawItem.(map[string]any)
+				if !itemOK {
+					continue
+				}
+				title := pickString(itemMap, "spu_title", "spuTitle", "sku_name", "skuName")
+				if strings.TrimSpace(title) != "" {
+					return title
+				}
+			}
+		}
+	}
+	return pickString(orderMap, "buyer_remark", "buyerRemark")
 }

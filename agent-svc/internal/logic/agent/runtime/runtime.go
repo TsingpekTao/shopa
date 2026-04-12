@@ -47,6 +47,7 @@ type RunInput struct {
 	UserQuery       string
 	RequestID       string
 	Message         UserMessage
+	HiddenAction    HiddenAction
 	PreviousSession TaskSessionState
 	Conversation    ConversationAnchors
 	Security        SecurityContext
@@ -101,15 +102,21 @@ type Runner interface {
 }
 
 type RunnerOptions struct {
-	OrderRepository OrderSnapshotRepository
-	RuleEngine      AfterSaleRuleEngine
+	OrderRepository           OrderSnapshotRepository
+	PolicyKnowledgeRepository PolicyKnowledgeRepository
+	ProductSearchRepository   ProductSearchRepository
+	RuleEngine                AfterSaleRuleEngine
+	ModelClient               ModelClient
 }
 
 type einoRunner struct {
-	runFlow         compose.Runnable[*runState, *runState]
-	adapters        *AdapterRegistry
-	orderRepository OrderSnapshotRepository
-	ruleEngine      AfterSaleRuleEngine
+	runFlow                   compose.Runnable[*runState, *runState]
+	adapters                  *AdapterRegistry
+	orderRepository           OrderSnapshotRepository
+	policyKnowledgeRepository PolicyKnowledgeRepository
+	productSearchRepository   ProductSearchRepository
+	ruleEngine                AfterSaleRuleEngine
+	modelClient               ModelClient
 }
 
 type runState struct {
@@ -177,9 +184,12 @@ func NewRunner() Runner {
 func NewRunnerWithOptions(opts RunnerOptions) Runner {
 	// 初始化带依赖注入的 Runner，让测试和生产都能挂上不同的订单查询实现。
 	r := &einoRunner{
-		adapters:        newDefaultAdapterRegistry(),
-		orderRepository: opts.OrderRepository,
-		ruleEngine:      opts.RuleEngine,
+		adapters:                  newDefaultAdapterRegistry(),
+		orderRepository:           opts.OrderRepository,
+		policyKnowledgeRepository: opts.PolicyKnowledgeRepository,
+		productSearchRepository:   opts.ProductSearchRepository,
+		ruleEngine:                opts.RuleEngine,
+		modelClient:               opts.ModelClient,
 	}
 	if r.ruleEngine == nil {
 		r.ruleEngine = NewAfterSaleRuleEngine(nil)
@@ -242,7 +252,7 @@ func (r *einoRunner) Run(ctx context.Context, in RunInput) (*RunOutput, error) {
 		UserQuery:        strings.TrimSpace(in.UserQuery),
 		NormalizedQuery:  strings.ToLower(strings.TrimSpace(in.UserQuery)),
 		Message:          in.Message,
-		TaskSession:      cloneTaskSession(in.PreviousSession),
+		TaskSession:      copyTaskSession(in.PreviousSession),
 		Conversation:     in.Conversation,
 		Security:         in.Security,
 		RunStatusCode:    runStatusPending,
@@ -251,6 +261,7 @@ func (r *einoRunner) Run(ctx context.Context, in RunInput) (*RunOutput, error) {
 			Status: toolResultUnspecified,
 		},
 	}
+	state.TaskSession = applyHiddenActionToTaskSession(state.TaskSession, in.HiddenAction)
 	// 执行当前业务语句，把本步骤产出的状态或数据继续传递给后续流程。
 	if strings.TrimSpace(state.Message.ContentText) == "" {
 		state.Message.ContentText = state.UserQuery

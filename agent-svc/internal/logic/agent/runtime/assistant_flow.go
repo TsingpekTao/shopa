@@ -3,7 +3,9 @@ package runtime
 import (
 	"context"
 	"regexp"
+	"sort"
 	"strings"
+	"time"
 )
 
 const (
@@ -26,7 +28,8 @@ const (
 	slotCodeSubOrderNo = "sub_order_no"
 	slotCodeProblem    = "problem_type"
 
-	slotPromptCodeOrderNo = "ask_order_no"
+	slotPromptCodeOrderNo        = "ask_order_no"
+	slotPromptCodeOrderSelection = "select_recent_order"
 
 	orderLookupErrorNotFound            = "NOT_FOUND"
 	orderLookupErrorPermissionDenied    = "PERMISSION_DENIED"
@@ -51,9 +54,11 @@ const (
 	actionCodeEscalateToHuman = "escalate_to_human"
 	actionCodeUrgeShipment    = "urge_shipment"
 	actionCodeViewLogistics   = "view_logistics"
+	actionCodeSelectOrder     = "select_order"
 
-	defaultSlotRetryThreshold  = 2
-	defaultUnresolvedThreshold = 2
+	defaultSlotRetryThreshold        = 2
+	defaultUnresolvedThreshold       = 2
+	defaultRecentOrderCandidateLimit = 5
 )
 
 var orderNumberPattern = regexp.MustCompile(`(?i)\b[A-Z]{2,}[A-Z0-9_-]{6,}\b`)
@@ -62,6 +67,12 @@ type UserMessage struct {
 	ContentText     string   `json:"content_text,omitempty"`
 	MessageTypeCode string   `json:"message_type_code,omitempty"`
 	AssetIDs        []uint64 `json:"asset_ids,omitempty"`
+}
+
+type HiddenAction struct {
+	Type  string `json:"type,omitempty"`
+	Key   string `json:"key,omitempty"`
+	Value string `json:"value,omitempty"`
 }
 
 type GuardDecision struct {
@@ -92,6 +103,27 @@ type OrderSnapshotCard struct {
 	LatestUpdateTime  string `json:"latest_update_time,omitempty"`
 }
 
+type RecentOrderCandidate struct {
+	OrderNo           string `json:"order_no,omitempty"`
+	SubOrderNo        string `json:"sub_order_no,omitempty"`
+	DisplayTitle      string `json:"display_title,omitempty"`
+	MainStatus        string `json:"main_status,omitempty"`
+	PaymentStatus     string `json:"payment_status,omitempty"`
+	FulfillmentStatus string `json:"fulfillment_status,omitempty"`
+	LogisticsStatus   string `json:"logistics_status,omitempty"`
+	AfterSaleStatus   string `json:"after_sale_status,omitempty"`
+	LatestUpdateTime  string `json:"latest_update_time,omitempty"`
+	SelectionHint     string `json:"selection_hint,omitempty"`
+}
+
+type OrderSelectionCard struct {
+	TitleText     string                 `json:"title_text,omitempty"`
+	HelperText    string                 `json:"helper_text,omitempty"`
+	OriginalQuery string                 `json:"original_query,omitempty"`
+	TaskCode      string                 `json:"task_code,omitempty"`
+	Candidates    []RecentOrderCandidate `json:"candidates,omitempty"`
+}
+
 type AfterSaleDecisionCard struct {
 	SceneCode        string `json:"scene_code,omitempty"`
 	DecisionPathCode string `json:"decision_path_code,omitempty"`
@@ -100,9 +132,37 @@ type AfterSaleDecisionCard struct {
 	NextStepText     string `json:"next_step_text,omitempty"`
 }
 
+type LogisticsTrackingCard struct {
+	OrderNo           string `json:"order_no,omitempty"`
+	SubOrderNo        string `json:"sub_order_no,omitempty"`
+	FulfillmentStatus string `json:"fulfillment_status,omitempty"`
+	LogisticsStatus   string `json:"logistics_status,omitempty"`
+	LatestUpdateTime  string `json:"latest_update_time,omitempty"`
+	LatestTraceText   string `json:"latest_trace_text,omitempty"`
+	TimelineSummary   string `json:"timeline_summary,omitempty"`
+}
+
+type ProductRecommendationItem struct {
+	SpuNo      string `json:"spu_no,omitempty"`
+	Title      string `json:"title,omitempty"`
+	CoverURL   string `json:"cover_url,omitempty"`
+	PriceText  string `json:"price_text,omitempty"`
+	ShopName   string `json:"shop_name,omitempty"`
+	ReasonText string `json:"reason_text,omitempty"`
+}
+
+type ProductRecommendationCard struct {
+	TitleText  string                      `json:"title_text,omitempty"`
+	HelperText string                      `json:"helper_text,omitempty"`
+	Items      []ProductRecommendationItem `json:"items,omitempty"`
+}
+
 type ReplyDataCard struct {
-	OrderSnapshotCard     *OrderSnapshotCard     `json:"order_snapshot_card,omitempty"`
-	AfterSaleDecisionCard *AfterSaleDecisionCard `json:"after_sale_decision_card,omitempty"`
+	OrderSnapshotCard         *OrderSnapshotCard         `json:"order_snapshot_card,omitempty"`
+	OrderSelectionCard        *OrderSelectionCard        `json:"order_selection_card,omitempty"`
+	AfterSaleDecisionCard     *AfterSaleDecisionCard     `json:"after_sale_decision_card,omitempty"`
+	LogisticsTrackingCard     *LogisticsTrackingCard     `json:"logistics_tracking_card,omitempty"`
+	ProductRecommendationCard *ProductRecommendationCard `json:"product_recommendation_card,omitempty"`
 }
 
 type ReplyPayload struct {
@@ -119,19 +179,28 @@ type ReplyPayload struct {
 }
 
 type TaskSessionState struct {
-	ActiveTaskCode        string            `json:"active_task_code,omitempty"`
-	SlotValues            map[string]string `json:"slot_values,omitempty"`
-	MissingSlots          []MissingSlot     `json:"missing_slots,omitempty"`
-	SlotRetryCount        uint32            `json:"slot_retry_count,omitempty"`
-	LastSlotPromptCode    string            `json:"last_slot_prompt_code,omitempty"`
-	SlotFillingFailed     bool              `json:"slot_filling_failed,omitempty"`
-	EscalationReasonCode  string            `json:"escalation_reason_code,omitempty"`
-	AnchoredOrderNo       string            `json:"anchored_order_no,omitempty"`
-	AnchoredSubOrderNo    string            `json:"anchored_sub_order_no,omitempty"`
-	LatestFactsSummary    string            `json:"latest_facts_summary,omitempty"`
-	LatestDecisionSummary string            `json:"latest_decision_summary,omitempty"`
-	HandoffRecommended    bool              `json:"handoff_recommended,omitempty"`
-	UnresolvedTurnCount   uint32            `json:"unresolved_turn_count,omitempty"`
+	ConversationNo             string                 `json:"conversation_no,omitempty"`
+	SessionVersion             uint64                 `json:"version,omitempty"`
+	ActiveIntent               string                 `json:"active_intent,omitempty"`
+	ActiveTaskCode             string                 `json:"active_task_code,omitempty"`
+	UserGoal                   string                 `json:"user_goal,omitempty"`
+	SelectedOrderNo            string                 `json:"selected_order_no,omitempty"`
+	SelectedSubOrderNo         string                 `json:"selected_sub_order_no,omitempty"`
+	SlotValues                 map[string]string      `json:"slot_values,omitempty"`
+	MissingSlots               []MissingSlot          `json:"missing_slots,omitempty"`
+	SlotRetryCount             uint32                 `json:"slot_retry_count,omitempty"`
+	LastSlotPromptCode         string                 `json:"last_slot_prompt_code,omitempty"`
+	SlotFillingFailed          bool                   `json:"slot_filling_failed,omitempty"`
+	EscalationReasonCode       string                 `json:"escalation_reason_code,omitempty"`
+	AnchoredOrderNo            string                 `json:"anchored_order_no,omitempty"`
+	AnchoredSubOrderNo         string                 `json:"anchored_sub_order_no,omitempty"`
+	LatestFactsSummary         string                 `json:"latest_facts_summary,omitempty"`
+	LatestDecisionSummary      string                 `json:"latest_decision_summary,omitempty"`
+	HandoffRecommended         bool                   `json:"handoff_recommended,omitempty"`
+	UnresolvedTurnCount        uint32                 `json:"unresolved_turn_count,omitempty"`
+	PendingSelectionQuery      string                 `json:"pending_selection_query,omitempty"`
+	PendingSelectionTaskCode   string                 `json:"pending_selection_task_code,omitempty"`
+	PendingSelectionCandidates []RecentOrderCandidate `json:"pending_selection_candidates,omitempty"`
 }
 
 type SecurityContext struct {
@@ -163,6 +232,15 @@ type OrderOwnershipFilter struct {
 	RunNo          string
 }
 
+type RecentOrderListFilter struct {
+	UserID         uint64
+	ShopNo         string
+	RequestID      string
+	ConversationNo string
+	RunNo          string
+	Limit          uint32
+}
+
 type OrderSnapshot struct {
 	OrderNo            string
 	SubOrderNo         string
@@ -177,6 +255,7 @@ type OrderSnapshot struct {
 
 type OrderSnapshotRepository interface {
 	QueryOrderSnapshot(ctx context.Context, filter OrderOwnershipFilter) (*OrderSnapshot, error)
+	ListRecentOrders(ctx context.Context, filter RecentOrderListFilter) ([]RecentOrderCandidate, error)
 }
 
 type OrderLookupError struct {
@@ -207,45 +286,48 @@ type AfterSaleTurnOutput struct {
 }
 
 func detectGuardIntent(msg UserMessage) GuardDecision {
-	// 先清洗文本输入，避免空白字符影响 Guard 分类。
 	text := strings.TrimSpace(msg.ContentText)
-	// 再统一成小写文本，便于后续做稳定的关键词判断。
 	lowerText := strings.ToLower(text)
-	// 如果只有附件没有有效文本，就直接命中附件补充引导。
+
 	if text == "" && len(msg.AssetIDs) > 0 {
 		return GuardDecision{IntentCode: intentCodeAttachmentOnly, GuardResultCode: guardResultAttachmentOnly}
 	}
-	// 如果文本是典型寒暄，就优先返回欢迎引导而不是进入售后主链路。
-	if containsAny(lowerText, "在吗", "你好", "您好", "有人吗", "hello", "hi") {
+	if hasGreetingIntent(lowerText) {
 		return GuardDecision{IntentCode: intentCodeGreeting, GuardResultCode: guardResultGreeting}
 	}
-	// 如果文本命中售后关键词，就进入查询编排型售后任务。
-	if containsAny(lowerText, "订单", "物流", "发货", "退款", "退货", "换货", "催发货", "售后", "包裹", "快递", "人工") {
+	if hasAfterSaleIntent(lowerText) {
 		return GuardDecision{IntentCode: intentCodeAfterSaleTask, GuardResultCode: guardResultAfterSaleTask}
 	}
-	// 如果文本没有任何售后线索，就按超纲问题安全兜底。
 	return GuardDecision{IntentCode: intentCodeOutOfScope, GuardResultCode: guardResultOutOfScope}
 }
 
 func planAfterSaleTurn(ctx context.Context, in AfterSaleTurnInput) (AfterSaleTurnOutput, error) {
-	// 先复制上一轮任务会话，保证多轮对话状态可以被本轮安全复用。
-	session := cloneTaskSession(in.PreviousSession)
-	// 再对本轮用户消息做 Guard 判断，确保非售后输入不被硬套进主链路。
+	session := copyTaskSession(in.PreviousSession)
 	guard := detectGuardIntent(in.Message)
-	// 如果命中前置 Guard，就直接返回兜底回复，不再查询订单事实。
+	if guard.IntentCode != intentCodeAfterSaleTask && shouldResumePendingSelection(session, in.Message.ContentText) {
+		guard = GuardDecision{IntentCode: intentCodeAfterSaleTask, GuardResultCode: guardResultAfterSaleTask}
+	}
 	if guard.IntentCode != intentCodeAfterSaleTask {
 		return AfterSaleTurnOutput{
 			Session: session,
 			Reply:   buildGuardReply(guard),
 		}, nil
 	}
-	// 识别当前售后任务类型，保证规则决策只在有限任务集合内展开。
-	activeTaskCode := detectTaskCode(in.Message.ContentText, session.ActiveTaskCode)
-	// 把本轮识别出的任务写回会话，供后续多轮追问和复用。
+
+	activeTaskFallback := session.ActiveTaskCode
+	if strings.TrimSpace(activeTaskFallback) == "" {
+		activeTaskFallback = session.PendingSelectionTaskCode
+	}
+
+	activeTaskCode := detectTaskCode(in.Message.ContentText, activeTaskFallback)
 	session.ActiveTaskCode = activeTaskCode
-	// 继续把输入中的订单号、子单号和问题类型合并进任务会话。
-	session = mergeSlotValues(session, in.Message.ContentText, in.Conversation, activeTaskCode)
-	// 如果用户本轮明确要人工，就直接走正式转人工出口。
+	conversationAnchors := in.Conversation
+	if shouldForceFreshOrderSelection(session, in.Conversation, in.Message.ContentText, activeTaskCode) {
+		session = clearOrderSelectionContext(session)
+		conversationAnchors = ConversationAnchors{}
+	}
+	session = mergeSlotValues(session, in.Message.ContentText, conversationAnchors, activeTaskCode)
+
 	if containsAny(strings.ToLower(strings.TrimSpace(in.Message.ContentText)), "转人工", "人工", "人工客服") {
 		session.HandoffRecommended = true
 		session.EscalationReasonCode = escalationReasonUserRequested
@@ -267,102 +349,138 @@ func planAfterSaleTurn(ctx context.Context, in AfterSaleTurnInput) (AfterSaleTur
 			},
 		}, nil
 	}
-	// 如果当前仍然缺少关键订单定位信息，就先走槽位追问或熔断。
+
 	if strings.TrimSpace(session.SlotValues[slotCodeOrderNo]) == "" {
-		return handleMissingOrderSlot(session, guard)
+		return handleMissingOrderSlot(ctx, session, guard, in.OrderRepository, in.Security, in.Message.ContentText)
 	}
-	// 通过安全身份和业务参数做强归属订单查询，不把模型提取结果直接下推到数据库。
+
 	lookupResult, err := secureQueryOrderSnapshot(ctx, in.OrderRepository, in.Security, OrderQuery{
 		OrderNo:     session.SlotValues[slotCodeOrderNo],
 		SubOrderNo:  session.SlotValues[slotCodeSubOrderNo],
 		ProblemType: session.SlotValues[slotCodeProblem],
 	})
-	// 如果安全查询流程本身异常，就继续向上返回统一错误。
 	if err != nil {
 		return AfterSaleTurnOutput{}, err
 	}
-	// 如果工具层返回统一错误码，就按安全语义回复而不是继续规则推断。
 	if lookupResult.ErrorCode != "" {
 		return handleOrderLookupFailure(session, guard, lookupResult.ErrorCode), nil
 	}
-	// 用实时订单事实做结构化规则判断，给出当前最适合的售后路径。
+
 	ruleEngine := in.RuleEngine
 	if ruleEngine == nil {
 		ruleEngine = NewAfterSaleRuleEngine(nil)
 	}
+
 	ruleOutcome := ruleEngine.Evaluate(AfterSaleRuleContext{
 		TaskCode:    activeTaskCode,
 		ProblemType: session.SlotValues[slotCodeProblem],
 		Snapshot:    lookupResult.Snapshot,
 		Session:     session,
 	})
-	decisionCard := ruleOutcome.DecisionCard
-	actions := ruleOutcome.SuggestedActions
-	replyText := ruleOutcome.ReplyText
-	// 把最新事实和决策摘要写入会话，供下一轮“那我现在能退款吗”复用。
+
 	session.LatestFactsSummary = summarizeOrderSnapshot(lookupResult.Snapshot)
-	// 把最新规则结论沉淀到会话状态中，便于 handoff 和多轮解释复用。
-	session.LatestDecisionSummary = summarizeDecisionCard(decisionCard, replyText)
-	// 成功查到订单后，清空缺槽和重试计数，避免后续错误熔断。
+	session.LatestDecisionSummary = summarizeDecisionCard(ruleOutcome.DecisionCard, ruleOutcome.ReplyText)
 	session.MissingSlots = nil
-	// 成功定位订单后，重置追问计数，避免一次成功后仍被视为失败状态。
 	session.SlotRetryCount = 0
-	// 成功定位订单后，清空上一轮追问码，避免后续重复 prompt 判断失真。
 	session.LastSlotPromptCode = ""
-	// 成功完成规则决策后，明确当前会话不需要立刻转人工。
+	session.PendingSelectionQuery = ""
+	session.PendingSelectionTaskCode = ""
+	session.PendingSelectionCandidates = nil
 	session.HandoffRecommended = ruleOutcome.HandoffRecommended
-	// 当前轮顺利完成查询和建议后，清空熔断标记。
 	session.SlotFillingFailed = false
-	// 当前轮结论稳定后，清空升级原因码。
 	session.EscalationReasonCode = ruleOutcome.HandoffReasonCode
-	// 当前命中稳定规则后，未解决轮次清零；规则冲突则保留升级语义。
 	if ruleOutcome.HandoffRecommended {
 		session.UnresolvedTurnCount++
 	} else {
 		session.UnresolvedTurnCount = 0
 	}
-	// 组装固定格式的结构化回复载荷，供前端直接渲染文本、卡片和动作。
+
 	reply := ReplyPayload{
-		ReplyText:       replyText,
+		ReplyText:       ruleOutcome.ReplyText,
 		IntentCode:      intentCodeAfterSaleTask,
 		GuardResultCode: guard.GuardResultCode,
 		Confidence:      0.92,
 		DataCards: []ReplyDataCard{
 			{OrderSnapshotCard: toOrderSnapshotCard(lookupResult.Snapshot)},
-			{AfterSaleDecisionCard: decisionCard},
+			{AfterSaleDecisionCard: ruleOutcome.DecisionCard},
 		},
-		SuggestedActions:   actions,
+		SuggestedActions:   ruleOutcome.SuggestedActions,
 		SlotRetryCount:     session.SlotRetryCount,
 		HandoffRecommended: ruleOutcome.HandoffRecommended,
 		HandoffReasonCode:  ruleOutcome.HandoffReasonCode,
 	}
-	// 把当前轮生成的结构化结果和任务会话一起返回给上层流程。
+
 	return AfterSaleTurnOutput{Session: session, Reply: reply}, nil
 }
 
-func handleMissingOrderSlot(session TaskSessionState, guard GuardDecision) (AfterSaleTurnOutput, error) {
-	// 如果上一轮已经在追问订单号，本轮仍没补齐，就递增追问次数。
+func handleMissingOrderSlot(
+	ctx context.Context,
+	session TaskSessionState,
+	guard GuardDecision,
+	repo OrderSnapshotRepository,
+	security SecurityContext,
+	query string,
+) (AfterSaleTurnOutput, error) {
+	recentOrders, err := secureListRecentOrders(ctx, repo, security, defaultRecentOrderCandidateLimit)
+	if err != nil {
+		return AfterSaleTurnOutput{}, err
+	}
+	rankedOrders := rankRecentOrders(session.ActiveTaskCode, session.SlotValues[slotCodeProblem], query, recentOrders)
+	if len(rankedOrders) > 0 {
+		session.PendingSelectionQuery = strings.TrimSpace(query)
+		session.PendingSelectionTaskCode = session.ActiveTaskCode
+		session.PendingSelectionCandidates = append([]RecentOrderCandidate(nil), rankedOrders...)
+		session.MissingSlots = []MissingSlot{{
+			SlotCode:   slotCodeOrderNo,
+			PromptText: "请选择具体订单，或者直接补充订单号。",
+			Required:   true,
+		}}
+		session.LastSlotPromptCode = slotPromptCodeOrderSelection
+
+		return AfterSaleTurnOutput{
+			Session: session,
+			Reply: ReplyPayload{
+				ReplyText:       buildOrderSelectionReplyText(session.ActiveTaskCode),
+				IntentCode:      intentCodeAfterSaleTask,
+				GuardResultCode: guard.GuardResultCode,
+				Confidence:      0.9,
+				DataCards: []ReplyDataCard{{
+					OrderSelectionCard: &OrderSelectionCard{
+						TitleText:     "找到你最近的订单了，点一个我继续处理",
+						HelperText:    "我会沿着你刚才的问题继续往下查，不需要重新描述。",
+						OriginalQuery: strings.TrimSpace(query),
+						TaskCode:      session.ActiveTaskCode,
+						Candidates:    rankedOrders,
+					},
+				}},
+				MissingSlots:   session.MissingSlots,
+				SlotRetryCount: session.SlotRetryCount,
+				SuggestedActions: []SuggestedAction{{
+					ActionCode: actionCodeEscalateToHuman,
+					Label:      "转人工",
+					Enabled:    true,
+				}},
+			},
+		}, nil
+	}
+
 	if session.LastSlotPromptCode == slotPromptCodeOrderNo {
 		session.SlotRetryCount++
 	} else {
-		// 首次进入关键槽位追问时，把重试次数重置为第一轮。
 		session.SlotRetryCount = 1
 	}
-	// 把当前缺失的关键槽位写回会话，驱动前端和下一轮追问。
-	session.MissingSlots = []MissingSlot{{SlotCode: slotCodeOrderNo, PromptText: "请提供订单号，或告诉我是哪个订单。", Required: true}}
-	// 记录本轮追问码，避免后续重复文案无限循环。
+	session.MissingSlots = []MissingSlot{{
+		SlotCode:   slotCodeOrderNo,
+		PromptText: "请提供订单号，或者告诉我是哪个订单。",
+		Required:   true,
+	}}
 	session.LastSlotPromptCode = slotPromptCodeOrderNo
-	// 缺少关键槽位时先计入未解决轮次，为连续未解决熔断做准备。
 	session.UnresolvedTurnCount++
-	// 如果追问次数已经达到阈值，就直接触发熔断和转人工建议。
+
 	if session.SlotRetryCount >= defaultSlotRetryThreshold {
-		// 到达阈值后标记槽位补齐失败，阻止系统继续复读。
 		session.SlotFillingFailed = true
-		// 熔断后记录统一升级原因码，供 handoff summary 复用。
 		session.EscalationReasonCode = escalationReasonSlotFillingFailed
-		// 熔断后把转人工建议写入任务会话。
 		session.HandoffRecommended = true
-		// 熔断时直接返回正式体验出口，而不是继续追问订单号。
 		return AfterSaleTurnOutput{
 			Session: session,
 			Reply: ReplyPayload{
@@ -382,7 +500,7 @@ func handleMissingOrderSlot(session TaskSessionState, guard GuardDecision) (Afte
 			},
 		}, nil
 	}
-	// 未达到阈值时，只做一次明确追问，不进入订单查询。
+
 	return AfterSaleTurnOutput{
 		Session: session,
 		Reply: ReplyPayload{
@@ -396,16 +514,19 @@ func handleMissingOrderSlot(session TaskSessionState, guard GuardDecision) (Afte
 	}, nil
 }
 
-func secureQueryOrderSnapshot(ctx context.Context, repo OrderSnapshotRepository, security SecurityContext, query OrderQuery) (OrderLookupResult, error) {
-	// 如果缺少安全身份或订单号，就直接返回统一上下文不足错误。
+func secureQueryOrderSnapshot(
+	ctx context.Context,
+	repo OrderSnapshotRepository,
+	security SecurityContext,
+	query OrderQuery,
+) (OrderLookupResult, error) {
 	if security.UserID == 0 || strings.TrimSpace(query.OrderNo) == "" {
 		return OrderLookupResult{ErrorCode: orderLookupErrorInsufficientContext}, nil
 	}
-	// 如果当前环境还没有挂上订单仓储，就直接按下游不可用做安全降级。
 	if repo == nil {
 		return OrderLookupResult{ErrorCode: orderLookupErrorDownstream}, nil
 	}
-	// 组装带安全身份的强过滤条件，确保底层查询永远附带 user_id。
+
 	filter := OrderOwnershipFilter{
 		UserID:         security.UserID,
 		ShopNo:         strings.TrimSpace(security.ShopNo),
@@ -415,32 +536,50 @@ func secureQueryOrderSnapshot(ctx context.Context, repo OrderSnapshotRepository,
 		ConversationNo: strings.TrimSpace(security.ConversationNo),
 		RunNo:          strings.TrimSpace(security.RunNo),
 	}
-	// 通过仓储接口执行订单快照查询，把安全过滤真正压到工具层边界。
+
 	snapshot, err := repo.QueryOrderSnapshot(ctx, filter)
-	// 如果下游显式返回统一错误码，就把它原样映射回工具层语义。
 	if err != nil {
 		if lookupErr, ok := err.(*OrderLookupError); ok {
 			return OrderLookupResult{ErrorCode: lookupErr.Code}, nil
 		}
-		// 其他未知错误统一折叠成下游不可用，避免泄露内部实现细节。
 		return OrderLookupResult{ErrorCode: orderLookupErrorDownstream}, nil
 	}
-	// 如果仓储没有返回任何订单，就按安全 not found 处理。
 	if snapshot == nil {
 		return OrderLookupResult{ErrorCode: orderLookupErrorNotFound}, nil
 	}
-	// 如果仓储返回的结果未确认归属，就按权限失败兜底拦截。
 	if !snapshot.OwnershipConfirmed {
 		return OrderLookupResult{ErrorCode: orderLookupErrorPermissionDenied}, nil
 	}
-	// 查询成功后把订单事实返回给上层规则决策。
 	return OrderLookupResult{Snapshot: snapshot}, nil
 }
 
+func secureListRecentOrders(
+	ctx context.Context,
+	repo OrderSnapshotRepository,
+	security SecurityContext,
+	limit uint32,
+) ([]RecentOrderCandidate, error) {
+	if security.UserID == 0 || repo == nil {
+		return nil, nil
+	}
+
+	candidates, err := repo.ListRecentOrders(ctx, RecentOrderListFilter{
+		UserID:         security.UserID,
+		ShopNo:         strings.TrimSpace(security.ShopNo),
+		RequestID:      strings.TrimSpace(security.RequestID),
+		ConversationNo: strings.TrimSpace(security.ConversationNo),
+		RunNo:          strings.TrimSpace(security.RunNo),
+		Limit:          limit,
+	})
+	if err != nil || len(candidates) == 0 {
+		return nil, nil
+	}
+	return candidates, nil
+}
+
 func handleOrderLookupFailure(session TaskSessionState, guard GuardDecision, errorCode string) AfterSaleTurnOutput {
-	// 先把当前未解决轮次递增，便于统一处理连续未解决问题。
 	session.UnresolvedTurnCount++
-	// 如果是安全 not found 或 permission denied，就返回不泄露存在性的安全话术。
+
 	if errorCode == orderLookupErrorNotFound || errorCode == orderLookupErrorPermissionDenied {
 		reply := ReplyPayload{
 			ReplyText:       "暂未查询到与你当前账号匹配的订单信息，请核对订单号后再试。",
@@ -449,12 +588,9 @@ func handleOrderLookupFailure(session TaskSessionState, guard GuardDecision, err
 			Confidence:      0.84,
 		}
 		session, reply = applyUnresolvedTurnEscalation(session, reply)
-		return AfterSaleTurnOutput{
-			Session: session,
-			Reply:   reply,
-		}
+		return AfterSaleTurnOutput{Session: session, Reply: reply}
 	}
-	// 如果下游不可用，就建议转人工但不编造订单事实。
+
 	if errorCode == orderLookupErrorDownstream {
 		session.HandoffRecommended = true
 		session.EscalationReasonCode = escalationReasonDownstream
@@ -475,7 +611,7 @@ func handleOrderLookupFailure(session TaskSessionState, guard GuardDecision, err
 			},
 		}
 	}
-	// 其他情况统一按上下文不足回复，继续引导补充信息。
+
 	reply := ReplyPayload{
 		ReplyText:       "我还缺少足够的信息来准确判断，请补充订单号或更具体的问题描述。",
 		IntentCode:      intentCodeAfterSaleTask,
@@ -483,14 +619,193 @@ func handleOrderLookupFailure(session TaskSessionState, guard GuardDecision, err
 		Confidence:      0.78,
 	}
 	session, reply = applyUnresolvedTurnEscalation(session, reply)
-	return AfterSaleTurnOutput{
-		Session: session,
-		Reply:   reply,
+	return AfterSaleTurnOutput{Session: session, Reply: reply}
+}
+
+func buildOrderSelectionReplyText(taskCode string) string {
+	switch strings.TrimSpace(taskCode) {
+	case taskCodeLogisticsQuery:
+		return "我先把你最近的订单拉出来，点一个我马上继续查物流和发货进度。"
+	case taskCodeRefundDecision:
+		return "我先把你最近的订单拉出来，点一个我继续帮你判断退款、退货退款还是继续等待。"
+	default:
+		return "我先把你最近的订单拉出来，点一个我继续往下处理。"
 	}
 }
 
+func shouldResumePendingSelection(session TaskSessionState, query string) bool {
+	if strings.TrimSpace(session.PendingSelectionQuery) == "" && len(session.PendingSelectionCandidates) == 0 {
+		return false
+	}
+
+	orderNo := extractOrderNumber(query, "ord")
+	if strings.TrimSpace(orderNo) == "" {
+		return false
+	}
+	if len(session.PendingSelectionCandidates) == 0 {
+		return true
+	}
+	for _, candidate := range session.PendingSelectionCandidates {
+		if strings.EqualFold(strings.TrimSpace(candidate.OrderNo), strings.TrimSpace(orderNo)) {
+			return true
+		}
+	}
+	return false
+}
+
+func rankRecentOrders(taskCode, problemType, query string, candidates []RecentOrderCandidate) []RecentOrderCandidate {
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	type scoredCandidate struct {
+		candidate RecentOrderCandidate
+		score     int
+		updatedAt time.Time
+	}
+
+	scored := make([]scoredCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		scored = append(scored, scoredCandidate{
+			candidate: enrichRecentOrderCandidateHint(taskCode, problemType, candidate),
+			score:     scoreRecentOrderCandidate(taskCode, problemType, query, candidate),
+			updatedAt: parseCandidateTime(candidate.LatestUpdateTime),
+		})
+	}
+
+	sort.SliceStable(scored, func(i, j int) bool {
+		if scored[i].score != scored[j].score {
+			return scored[i].score > scored[j].score
+		}
+		return scored[i].updatedAt.After(scored[j].updatedAt)
+	})
+
+	ranked := make([]RecentOrderCandidate, 0, len(scored))
+	for _, item := range scored {
+		ranked = append(ranked, item.candidate)
+	}
+	return ranked
+}
+
+func scoreRecentOrderCandidate(taskCode, problemType, query string, candidate RecentOrderCandidate) int {
+	intent := strings.TrimSpace(problemType)
+	if intent == "" || intent == problemTypeUnknown {
+		intent = inferProblemType(query, taskCode)
+	}
+
+	score := 0
+	switch intent {
+	case problemTypeUrgeShipment:
+		if isRecentOrderUnshipped(candidate) {
+			score += 120
+		}
+		if isRecentOrderInTransit(candidate) {
+			score -= 20
+		}
+	case problemTypeRefund, problemTypeReturnRefund:
+		if strings.EqualFold(strings.TrimSpace(candidate.AfterSaleStatus), "PROCESSING") {
+			score += 130
+		}
+		if isRecentOrderUnshipped(candidate) {
+			score += 120
+		}
+		if isRecentOrderDelivered(candidate) {
+			score += 90
+		}
+		if isRecentOrderInTransit(candidate) {
+			score += 70
+		}
+	case problemTypeLogistics, problemTypeOrderStatus:
+		if isRecentOrderInTransit(candidate) {
+			score += 120
+		}
+		if isRecentOrderDelivered(candidate) {
+			score += 90
+		}
+		if isRecentOrderUnshipped(candidate) {
+			score += 40
+		}
+	default:
+		if isRecentOrderInTransit(candidate) {
+			score += 80
+		}
+		if isRecentOrderUnshipped(candidate) {
+			score += 60
+		}
+	}
+
+	if strings.TrimSpace(candidate.DisplayTitle) != "" {
+		score++
+	}
+	return score
+}
+
+func enrichRecentOrderCandidateHint(taskCode, problemType string, candidate RecentOrderCandidate) RecentOrderCandidate {
+	if strings.TrimSpace(candidate.SelectionHint) != "" {
+		return candidate
+	}
+
+	intent := strings.TrimSpace(problemType)
+	if intent == "" || intent == problemTypeUnknown {
+		intent = inferProblemType("", taskCode)
+	}
+
+	switch intent {
+	case problemTypeUrgeShipment:
+		if isRecentOrderUnshipped(candidate) {
+			candidate.SelectionHint = "这单还没发货，适合继续催发货或直接退款。"
+		}
+	case problemTypeRefund, problemTypeReturnRefund:
+		if strings.EqualFold(strings.TrimSpace(candidate.AfterSaleStatus), "PROCESSING") {
+			candidate.SelectionHint = "这单已经有售后在处理中，适合先看当前售后进展。"
+		} else if isRecentOrderUnshipped(candidate) {
+			candidate.SelectionHint = "这单还没发货，更适合直接申请退款。"
+		} else if isRecentOrderDelivered(candidate) {
+			candidate.SelectionHint = "这单已经签收，更适合判断退货退款或换货。"
+		}
+	default:
+		if isRecentOrderInTransit(candidate) {
+			candidate.SelectionHint = "这单正在运输中，适合继续查看物流进度。"
+		} else if isRecentOrderUnshipped(candidate) {
+			candidate.SelectionHint = "这单还没发货，适合先看发货状态。"
+		}
+	}
+
+	return candidate
+}
+
+func parseCandidateTime(raw string) time.Time {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}
+	}
+
+	formats := []string{time.RFC3339, "2006-01-02 15:04:05", time.RFC3339Nano}
+	for _, format := range formats {
+		if parsed, err := time.Parse(format, raw); err == nil {
+			return parsed
+		}
+	}
+	return time.Time{}
+}
+
+func isRecentOrderUnshipped(candidate RecentOrderCandidate) bool {
+	return strings.EqualFold(strings.TrimSpace(candidate.FulfillmentStatus), "UNSHIPPED") ||
+		strings.EqualFold(strings.TrimSpace(candidate.LogisticsStatus), "NOT_SHIPPED")
+}
+
+func isRecentOrderInTransit(candidate RecentOrderCandidate) bool {
+	return strings.EqualFold(strings.TrimSpace(candidate.FulfillmentStatus), "SHIPPED") ||
+		strings.EqualFold(strings.TrimSpace(candidate.LogisticsStatus), "IN_TRANSIT")
+}
+
+func isRecentOrderDelivered(candidate RecentOrderCandidate) bool {
+	return strings.EqualFold(strings.TrimSpace(candidate.FulfillmentStatus), "DELIVERED") ||
+		strings.EqualFold(strings.TrimSpace(candidate.LogisticsStatus), "DELIVERED") ||
+		strings.EqualFold(strings.TrimSpace(candidate.LogisticsStatus), "SIGNED")
+}
+
 func buildGuardReply(guard GuardDecision) ReplyPayload {
-	// Greeting 直接返回欢迎语和业务引导。
 	if guard.IntentCode == intentCodeGreeting {
 		return ReplyPayload{
 			ReplyText:       "你好，我是订单售后助手，可以帮你查订单状态、物流进度和退款退货建议。",
@@ -499,7 +814,6 @@ func buildGuardReply(guard GuardDecision) ReplyPayload {
 			Confidence:      0.99,
 		}
 	}
-	// AttachmentOnly 只引导补充有效文本或订单信息。
 	if guard.IntentCode == intentCodeAttachmentOnly {
 		return ReplyPayload{
 			ReplyText:       "我可以帮你处理订单和售后问题，请再补充订单号或问题描述。",
@@ -508,7 +822,6 @@ func buildGuardReply(guard GuardDecision) ReplyPayload {
 			Confidence:      0.95,
 		}
 	}
-	// 其余 Guard 都按超纲问题安全拒答。
 	return ReplyPayload{
 		ReplyText:       "抱歉，我目前主要负责订单和售后问题。如果你要查询订单、物流或退款退货，我可以继续帮你处理。",
 		IntentCode:      guard.IntentCode,
@@ -518,71 +831,264 @@ func buildGuardReply(guard GuardDecision) ReplyPayload {
 }
 
 func detectTaskCode(query, fallback string) string {
-	// 统一清洗和降级文本，避免大小写和空白影响任务分类。
 	lowerText := strings.ToLower(strings.TrimSpace(query))
-	// 退款、退货、换货优先进入售后路径判断任务。
-	if containsAny(lowerText, "退款", "退货", "换货") {
-		return taskCodeRefundDecision
-	}
-	// 发货、物流、快递优先进入物流查询任务。
-	if containsAny(lowerText, "物流", "发货", "快递", "催发货") {
-		return taskCodeLogisticsQuery
-	}
-	// 问订单进度时优先进入订单状态查询任务。
-	if containsAny(lowerText, "订单状态", "订单进度", "什么时候到") {
+
+	if hasShipmentStatusIntent(lowerText) {
 		return taskCodeOrderStatusQuery
 	}
-	// 如果当前轮没有新线索，就尽量复用上一轮任务。
+	if hasLogisticsIntent(lowerText) || hasUrgeShipmentIntent(lowerText) {
+		return taskCodeLogisticsQuery
+	}
+	if hasOrderStatusIntent(lowerText) {
+		return taskCodeOrderStatusQuery
+	}
+	if hasRefundIntent(lowerText) || hasReturnRefundIntent(lowerText) || hasExchangeIntent(lowerText) {
+		return taskCodeRefundDecision
+	}
 	if strings.TrimSpace(fallback) != "" {
 		return strings.TrimSpace(fallback)
 	}
-	// 默认收敛到动作解释型售后任务。
 	return taskCodeActionExplanation
 }
 
+func shouldForceFreshOrderSelection(
+	session TaskSessionState,
+	anchors ConversationAnchors,
+	query string,
+	taskCode string,
+) bool {
+	if strings.TrimSpace(extractOrderNumber(query, "ord")) != "" {
+		return false
+	}
+	if strings.TrimSpace(session.SlotValues[slotCodeOrderNo]) == "" &&
+		strings.TrimSpace(session.AnchoredOrderNo) == "" &&
+		strings.TrimSpace(anchors.OrderNo) == "" &&
+		strings.TrimSpace(anchors.SubOrderNo) == "" {
+		return false
+	}
+	return isFreshOrderQuickPrompt(query, taskCode)
+}
+
+func isFreshOrderQuickPrompt(query, taskCode string) bool {
+	normalized := normalizePromptText(query)
+	if normalized == "" {
+		return false
+	}
+
+	switch strings.TrimSpace(taskCode) {
+	case taskCodeLogisticsQuery:
+		return matchesAnyNormalizedPrompt(normalized,
+			"帮我查一下这个订单现在到哪了",
+			"帮我查一下这个订单的物流进度",
+			"帮我同步一下这个订单的最新进展",
+			"这个订单怎么还没发货",
+			"帮我看下这个订单为什么还没发货",
+			"checkwherethisorderisnow",
+			"checkthelogisticsprogressforthisorder",
+			"sharethelatestupdateforthisorder",
+			"whyhasthisordernotshippedyet",
+		)
+	case taskCodeRefundDecision:
+		return matchesAnyNormalizedPrompt(normalized,
+			"这个订单现在能退款吗",
+			"这个订单现在更适合退货退款吗",
+			"这个订单现在可以申请换货吗",
+			"canthisorderberefundednow",
+			"shouldthisorderusereturnandrefundnow",
+			"canirequestanexchangeforthisorder",
+		)
+	case taskCodeOrderStatusQuery:
+		return matchesAnyNormalizedPrompt(normalized,
+			"帮我同步一下这个订单的最新进展",
+			"sharethelatestupdateforthisorder",
+		)
+	default:
+		return false
+	}
+}
+
+func normalizePromptText(raw string) string {
+	replacer := strings.NewReplacer(
+		" ", "",
+		"\t", "",
+		"\n", "",
+		"\r", "",
+		"，", "",
+		",", "",
+		"。", "",
+		".", "",
+		"？", "",
+		"?", "",
+		"！", "",
+		"!", "",
+		"：", "",
+		":", "",
+	)
+	return strings.ToLower(strings.TrimSpace(replacer.Replace(raw)))
+}
+
+func matchesAnyNormalizedPrompt(normalized string, prompts ...string) bool {
+	for _, prompt := range prompts {
+		if normalized == normalizePromptText(prompt) {
+			return true
+		}
+	}
+	return false
+}
+
+func clearOrderSelectionContext(session TaskSessionState) TaskSessionState {
+	if session.SlotValues != nil {
+		delete(session.SlotValues, slotCodeOrderNo)
+		delete(session.SlotValues, slotCodeSubOrderNo)
+	}
+	session.AnchoredOrderNo = ""
+	session.AnchoredSubOrderNo = ""
+	session.SelectedOrderNo = ""
+	session.SelectedSubOrderNo = ""
+	session.LatestFactsSummary = ""
+	session.LatestDecisionSummary = ""
+	return session
+}
+
+func hasGreetingIntent(text string) bool {
+	return containsAny(text, "在吗", "你好", "您好", "有人吗", "hello", "hi", "hey")
+}
+
+func hasRefundIntent(text string) bool {
+	return containsAny(text, "退款", "退了", "能退吗", "还能退吗", "能不能退", "可以退吗", "退一个", "退款吗")
+}
+
+func hasReturnRefundIntent(text string) bool {
+	return containsAny(text, "退货退款", "退货", "退回去", "寄回", "寄回去", "退货吗")
+}
+
+func hasExchangeIntent(text string) bool {
+	return containsAny(text, "换货", "换一件", "换一个", "换吗", "换新")
+}
+
+func hasUrgeShipmentIntent(text string) bool {
+	return containsAny(
+		text,
+		"催发货", "还没发货", "怎么还不发货", "怎么还没发货", "为什么还没发货",
+		"什么时候发货", "啥时候发货", "何时发货", "发没发", "还不发",
+	)
+}
+
+func hasLogisticsIntent(text string) bool {
+	return containsAny(
+		text,
+		"物流", "快递", "包裹", "到哪", "到哪了", "到哪儿了", "在哪", "走到哪",
+		"查物流", "查快递", "配送", "运输", "运到哪", "进度",
+	)
+}
+
+func hasOrderStatusIntent(text string) bool {
+	return containsAny(
+		text,
+		"订单状态", "订单进度", "什么状态", "现在怎么样", "当前状态", "订单怎么样",
+	)
+}
+
+func hasAfterSaleIntent(text string) bool {
+	if containsAny(text, "订单", "售后", "人工", "客服") {
+		return true
+	}
+	return hasRefundIntent(text) ||
+		hasReturnRefundIntent(text) ||
+		hasExchangeIntent(text) ||
+		hasUrgeShipmentIntent(text) ||
+		hasLogisticsIntent(text) ||
+		hasOrderStatusIntent(text)
+}
+
+func hasShipmentStatusIntent(text string) bool {
+	return containsAny(
+		text,
+		"发货了吗",
+		"是否发货",
+		"有没有发货",
+		"发没发货",
+		"发了没有",
+		"是否已经发货",
+	)
+}
+
 func mergeSlotValues(session TaskSessionState, query string, anchors ConversationAnchors, activeTaskCode string) TaskSessionState {
-	// 先确保会话里的槽位 map 一定可写，避免 nil map 写入异常。
 	if session.SlotValues == nil {
 		session.SlotValues = make(map[string]string)
 	}
-	// 如果会话里还没有锚定订单，就优先复用会话创建时的订单锚点。
+
+	if strings.TrimSpace(session.SlotValues[slotCodeOrderNo]) == "" && strings.TrimSpace(session.SelectedOrderNo) != "" {
+		session.SlotValues[slotCodeOrderNo] = strings.TrimSpace(session.SelectedOrderNo)
+	}
+	if strings.TrimSpace(session.SlotValues[slotCodeSubOrderNo]) == "" && strings.TrimSpace(session.SelectedSubOrderNo) != "" {
+		session.SlotValues[slotCodeSubOrderNo] = strings.TrimSpace(session.SelectedSubOrderNo)
+	}
 	if strings.TrimSpace(session.SlotValues[slotCodeOrderNo]) == "" && strings.TrimSpace(anchors.OrderNo) != "" {
 		session.SlotValues[slotCodeOrderNo] = strings.TrimSpace(anchors.OrderNo)
 	}
-	// 如果会话里还没有锚定子订单，就复用会话创建时的子订单锚点。
 	if strings.TrimSpace(session.SlotValues[slotCodeSubOrderNo]) == "" && strings.TrimSpace(anchors.SubOrderNo) != "" {
 		session.SlotValues[slotCodeSubOrderNo] = strings.TrimSpace(anchors.SubOrderNo)
 	}
-	// 从自然语言里提取订单号，用本轮用户补充覆盖旧值。
 	if orderNo := extractOrderNumber(query, "ord"); orderNo != "" {
 		session.SlotValues[slotCodeOrderNo] = orderNo
 		session.AnchoredOrderNo = orderNo
+		session.SelectedOrderNo = orderNo
 	}
-	// 从自然语言里提取子订单号，便于更细粒度售后定位。
 	if subOrderNo := extractOrderNumber(query, "sub"); subOrderNo != "" {
 		session.SlotValues[slotCodeSubOrderNo] = subOrderNo
 		session.AnchoredSubOrderNo = subOrderNo
+		session.SelectedSubOrderNo = subOrderNo
 	}
-	// 把本轮识别到的问题类型写入槽位，供规则库和 handoff 复用。
+
+	if orderNo := strings.TrimSpace(session.SlotValues[slotCodeOrderNo]); orderNo != "" {
+		session.SelectedOrderNo = orderNo
+	}
+	if subOrderNo := strings.TrimSpace(session.SlotValues[slotCodeSubOrderNo]); subOrderNo != "" {
+		session.SelectedSubOrderNo = subOrderNo
+	}
 	session.SlotValues[slotCodeProblem] = inferProblemType(query, activeTaskCode)
-	// 返回合并后的任务会话。
+	return session
+}
+
+func applyHiddenActionToTaskSession(session TaskSessionState, action HiddenAction) TaskSessionState {
+	if session.SlotValues == nil {
+		session.SlotValues = make(map[string]string)
+	}
+
+	normalizedType := strings.ToUpper(strings.TrimSpace(action.Type))
+	normalizedKey := strings.ToLower(strings.TrimSpace(action.Key))
+	normalizedValue := strings.TrimSpace(action.Value)
+	if normalizedType != "SET_SLOT" || normalizedValue == "" {
+		return session
+	}
+
+	switch normalizedKey {
+	case "selected_order_no":
+		session.SelectedOrderNo = normalizedValue
+		session.AnchoredOrderNo = normalizedValue
+		session.SlotValues[slotCodeOrderNo] = normalizedValue
+	case "selected_sub_order_no":
+		session.SelectedSubOrderNo = normalizedValue
+		session.AnchoredSubOrderNo = normalizedValue
+		session.SlotValues[slotCodeSubOrderNo] = normalizedValue
+	default:
+		return session
+	}
+
 	return session
 }
 
 func extractOrderNumber(query, prefix string) string {
-	// 把文本里的候选编号全部抽出来，尽量适配自然语言中的订单号。
 	matches := orderNumberPattern.FindAllString(strings.ToUpper(strings.TrimSpace(query)), -1)
-	// 逐个检查候选编号，优先挑出符合指定前缀的编号。
 	for _, item := range matches {
 		if strings.HasPrefix(item, strings.ToUpper(prefix)) {
 			return item
 		}
 	}
-	// 如果没指定前缀命中 but 只有一个候选编号，也接受它作为订单号。
 	if len(matches) == 1 {
 		return matches[0]
 	}
-	// 没找到合适编号时返回空串，交给缺槽流程处理。
 	return ""
 }
 
@@ -625,11 +1131,9 @@ func applyUnresolvedTurnEscalation(session TaskSessionState, reply ReplyPayload)
 }
 
 func summarizeOrderSnapshot(snapshot *OrderSnapshot) string {
-	// 如果没有订单快照，就返回空摘要，避免生成伪事实。
 	if snapshot == nil {
 		return ""
 	}
-	// 把关键事实压缩成短摘要，便于后续多轮复用和 handoff。
 	return strings.Join([]string{
 		"order_no=" + strings.TrimSpace(snapshot.OrderNo),
 		"main_status=" + strings.TrimSpace(snapshot.MainStatus),
@@ -641,11 +1145,9 @@ func summarizeOrderSnapshot(snapshot *OrderSnapshot) string {
 }
 
 func toOrderSnapshotCard(snapshot *OrderSnapshot) *OrderSnapshotCard {
-	// 如果没有快照，就不返回卡片，避免前端渲染空结构。
 	if snapshot == nil {
 		return nil
 	}
-	// 把内部订单快照转成前端直接可用的结构化卡片。
 	return &OrderSnapshotCard{
 		OrderNo:           snapshot.OrderNo,
 		MainStatus:        snapshot.MainStatus,
@@ -657,20 +1159,19 @@ func toOrderSnapshotCard(snapshot *OrderSnapshot) *OrderSnapshotCard {
 	}
 }
 
-func cloneTaskSession(in TaskSessionState) TaskSessionState {
-	// 先浅拷贝基础字段，保留上一轮任务语义。
+func copyTaskSession(in TaskSessionState) TaskSessionState {
 	out := in
-	// 再深拷贝槽位 map，避免不同轮次共享同一底层 map。
 	if in.SlotValues != nil {
 		out.SlotValues = make(map[string]string, len(in.SlotValues))
 		for key, value := range in.SlotValues {
 			out.SlotValues[key] = value
 		}
 	}
-	// 也复制缺槽切片，避免后续写入污染上一轮状态。
 	if len(in.MissingSlots) > 0 {
 		out.MissingSlots = append([]MissingSlot(nil), in.MissingSlots...)
 	}
-	// 返回可安全写入的新会话对象。
+	if len(in.PendingSelectionCandidates) > 0 {
+		out.PendingSelectionCandidates = append([]RecentOrderCandidate(nil), in.PendingSelectionCandidates...)
+	}
 	return out
 }
